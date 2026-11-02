@@ -214,6 +214,13 @@ foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -
     }
     if (-not $coversSshPort) { continue }
     $application = $rule | Get-NetFirewallApplicationFilter
+    # Packaged-app rules cannot authorize this unpackaged desktop sshd process,
+    # even when their Program and Service filters both say Any.
+    $packageProperty = $application.PSObject.Properties['Package']
+    if ($null -ne $packageProperty) {
+        $package = ([string]$packageProperty.Value).Trim()
+        if ($package -and $package -ne 'Any') { continue }
+    }
     $service = $rule | Get-NetFirewallServiceFilter
     if ([string]$application.Program -ne 'Any' -and [string]$application.Program -notlike '*\sshd.exe') { continue }
     if ([string]$service.Service -notin @('Any', 'sshd')) { continue }

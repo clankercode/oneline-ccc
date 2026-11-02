@@ -1,7 +1,7 @@
 #requires -Version 5.1
 # Offline contract tests: never run a real capability, service, firewall or ACL command.
 [CmdletBinding()]
-param()
+param([switch]$ParseOnly)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path $PSScriptRoot -Parent
 $installer = Join-Path $repository 'scripts/setup-ssh-server.ps1'
@@ -17,6 +17,7 @@ function Write-Utf8([string]$Path, [string]$Content) {
     [IO.File]::WriteAllText($Path, $Content, (New-Object Text.UTF8Encoding($false)))
 }
 function Test-Case([string]$Name, [scriptblock]$Body) {
+    if ($ParseOnly -and $Name -notin @('SSH installer parses on the running PowerShell engine', 'installer requires PowerShell 5.1 and avoids known PS7-only syntax', 'setup mutation body has bounded native and ACL interception seams')) { return }
     try { & $Body; $script:passed++; Write-Output ('PASS ' + $Name) }
     catch { $script:failures += $Name + ': ' + $_.Exception.Message; Write-Output ('FAIL ' + $script:failures[-1]) }
 }
@@ -24,7 +25,9 @@ function Test-Case([string]$Name, [scriptblock]$Body) {
 if (-not (Test-Path -LiteralPath $installer)) { throw 'Missing scripts/setup-ssh-server.ps1' }
 $parseTokens = $null
 $parseErrors = $null
-$sourceAst = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$parseTokens, [ref]$parseErrors)
+# AST offsets and mutation slices must refer to the identical full file string.
+$sourceText = [IO.File]::ReadAllText($installer)
+$sourceAst = [Management.Automation.Language.Parser]::ParseInput($sourceText, $installer, [ref]$parseTokens, [ref]$parseErrors)
 Test-Case 'SSH installer parses on the running PowerShell engine' {
     Assert-True (@($parseErrors).Count -eq 0) ($parseErrors | Out-String)
 }
@@ -175,13 +178,14 @@ function Get-MockedSetupBody {
     })
     Assert-True ($start.Count -eq 1) 'Cannot locate setup boundary; review harness before executing changed source'
     $offset = $start[0].Extent.StartOffset
-    $body = $sourceAst.Extent.Text.Substring($offset)
+    $extentStart = $sourceAst.Extent.StartOffset
+    $body = $sourceText.Substring($offset)
     $edits = @()
     $aclFunction = @($sourceAst.FindAll({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-RestrictedAcl'
     }, $true))
     Assert-True ($aclFunction.Count -eq 1) 'Expected one mockable ACL boundary'
-    $edits += @{Start = $aclFunction[0].Extent.StartOffset; End = $aclFunction[0].Extent.EndOffset; Text = @'
+    $edits += @{Start = $aclFunction[0].Extent.StartOffset; End = $aclFunction[0].Extent.EndOffset; Original = $aclFunction[0].Extent.Text; Text = @'
 function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     Assert-FixturePath $Path
     $state.Events.Add('ACL:' + $Path) | Out-Null
@@ -195,16 +199,34 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     foreach ($command in $nativeCommands) {
         $target = $command.CommandElements[0].Extent.Text
         Assert-True ($target -eq '$sshd' -or $target -match "^\(Join-Path \(Split-Path \`$sshd\) 'ssh-keygen.exe'\)$") ('Unrecognized native target: ' + $target)
-        $edits += @{Start = $command.Extent.StartOffset; End = $command.Extent.EndOffset; Text = 'Invoke-FixtureNative ' + (($command.CommandElements | ForEach-Object { $_.Extent.Text }) -join ' ')}
+        $edits += @{Start = $command.Extent.StartOffset; End = $command.Extent.EndOffset; Original = $command.Extent.Text; Text = 'Invoke-FixtureNative ' + (($command.CommandElements | ForEach-Object { $_.Extent.Text }) -join ' ')}
     }
     foreach ($edit in @($edits | Sort-Object Start -Descending)) {
         $relative = $edit.Start - $offset
+        Assert-True ($body.Substring($relative, $edit.End - $edit.Start) -ceq $edit.Original) ('AST replacement extent mismatch at source offset ' + $edit.Start)
         $body = $body.Remove($relative, $edit.End - $edit.Start).Insert($relative, $edit.Text)
     }
+    # Save BEFORE parsing so PS5-only reconstruction failures remain inspectable.
+    # This contains source/test code only, never fixture key contents or host secrets.
+    $body = 'Set-StrictMode -Version Latest' + "`n" + $body
+    $mockPath = Join-Path $root 'mocked-setup-body.ps1'
+    Write-Utf8 $mockPath $body
     $mockTokens = $null
     $mockErrors = $null
     $mockAst = [Management.Automation.Language.Parser]::ParseInput($body, [ref]$mockTokens, [ref]$mockErrors)
-    Assert-True (@($mockErrors).Count -eq 0) 'Intercepted setup body does not parse'
+    if (@($mockErrors).Count) {
+        $diagnostics = @($mockErrors | ForEach-Object {
+            '{0} line {1}:{2}-{3}:{4}: {5}; extent=<{6}>' -f $_.ErrorId,
+                $_.Extent.StartLineNumber, $_.Extent.StartColumnNumber,
+                $_.Extent.EndLineNumber, $_.Extent.EndColumnNumber,
+                $_.Message, $_.Extent.Text
+        }) -join "`n"
+        throw ('Intercepted setup body does not parse. Engine=' + $PSVersionTable.PSVersion +
+            '; source extent start=' + $extentStart + '; setup offset=' + $offset +
+            '; source chars=' + $sourceText.Length + '; mock chars=' + $body.Length +
+            '; saved=' + $mockPath + "`n" + $diagnostics)
+    }
+    Write-Host ('Mock body parses on ' + $PSVersionTable.PSVersion + '; source extent start=' + $extentStart + '; setup offset=' + $offset + '; saved=' + $mockPath)
     # Fail closed when the source gains a new command. Every mutator in this
     # allowlist is overridden below; only bounded scratch-file commands pass through.
     $allowed = @('Add-LocalGroupMember', 'Add-Type', 'Add-WindowsCapability', 'Assert-FixturePath',
@@ -215,15 +237,12 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
         'Get-NetIPAddress', 'Get-Service', 'Get-WindowsCapability', 'Invoke-FixtureNative',
         'Join-Path', 'New-Item', 'New-LocalUser', 'New-NetFirewallRule', 'New-Object', 'Out-Null',
         'Read-Host', 'Remove-Item', 'Remove-NetFirewallRule', 'Restart-Service', 'Select-Object',
-        'Set-Acl', 'Set-NetFirewallRule', 'Set-RestrictedAcl', 'Set-Service', 'Split-Path',
+        'Set-Acl', 'Set-NetFirewallRule', 'Set-RestrictedAcl', 'Set-Service', 'Set-StrictMode', 'Split-Path',
         'Start-Service', 'Stop-Service', 'Test-Path', 'Where-Object', 'Write-Host', 'Write-Warning')
     foreach ($command in $mockAst.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] }, $true)) {
         Assert-True ($allowed -contains $command.GetCommandName()) ('Review new/unbounded setup command before executing: ' + $command.Extent.Text)
         Assert-True ($command.InvocationOperator.ToString() -ne 'Dot') 'Dot-sourcing setup code is not permitted in mock execution'
     }
-    $body = 'Set-StrictMode -Version Latest' + "`n" + $body
-    # Persist the precise body exercised, for review and failure diagnostics.
-    Write-Utf8 (Join-Path $root 'mocked-setup-body.ps1') $body
     return [scriptblock]::Create($body)
 }
 
@@ -298,13 +317,13 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
         param($Name, $DisplayName, $Direction, $Action, $Enabled, $Protocol, $LocalPort, $RemoteAddress, $Profile)
         $state.Events.Add('FirewallCreate')
         if ($state.FailFirewall) { throw 'Fixture firewall creation failed' }
-        $rule = [pscustomobject]@{Name = $Name; Profile = ($Profile -join ', '); RemoteAddress = $RemoteAddress; LocalPort = $LocalPort; Protocol = $Protocol; Program = 'Any'; Service = 'Any'; Enabled = $Enabled; Direction = $Direction; Action = $Action}
+        $rule = [pscustomobject]@{Name = $Name; Profile = ($Profile -join ', '); RemoteAddress = $RemoteAddress; LocalPort = $LocalPort; Protocol = $Protocol; Program = 'Any'; Package = 'Any'; Service = 'Any'; Enabled = $Enabled; Direction = $Direction; Action = $Action}
         $state.Rules[$Name] = $rule
         $rule
     }
     function Get-NetFirewallAddressFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{RemoteAddress = $InputObject.RemoteAddress} } }
     function Get-NetFirewallPortFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{LocalPort = $InputObject.LocalPort; Protocol = $InputObject.Protocol} } }
-    function Get-NetFirewallApplicationFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{Program = $InputObject.Program} } }
+    function Get-NetFirewallApplicationFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{Program = $InputObject.Program; Package = $InputObject.Package} } }
     function Get-NetFirewallServiceFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{Service = $InputObject.Service} } }
     function Remove-NetFirewallRule { param($Name) $state.Events.Add('FirewallRemove'); $state.Rules.Remove($Name) }
     function Set-Service { param($Name, $StartupType) $state.Events.Add('ServiceConfigure'); $state.Service.StartType = [string]$StartupType }
@@ -528,6 +547,7 @@ foreach ($serviceCase in @(
     }
 }
 $firewallCases = @(
+    @{Name = 'packaged app catchall'; Program = 'Any'; Package = 'S-1-15-2-12345'; Service = 'Any'; Protocol = 'TCP'; Port = 'Any'; Remote = 'Any'; Profile = 'Any'; Conflict = $false},
     @{Name = 'browser catchall'; Program = 'C:\Apps\browser.exe'; Service = 'Any'; Protocol = 'TCP'; Port = 'Any'; Remote = 'Any'; Profile = 'Any'; Conflict = $false},
     @{Name = 'unrelated service'; Program = 'Any'; Service = 'Dnscache'; Protocol = 'TCP'; Port = 'Any'; Remote = 'Any'; Profile = 'Any'; Conflict = $false},
     @{Name = 'UDP22'; Program = 'Any'; Service = 'Any'; Protocol = 'UDP'; Port = '22'; Remote = 'Any'; Profile = 'Any'; Conflict = $false},
@@ -542,10 +562,12 @@ foreach ($firewallCase in $firewallCases) {
     $firewallIndex++
     Test-Case ('existing firewall scope audit: ' + $firewallCase.Name) {
         $state = New-SetupFixture ('firewall-audit-' + $firewallIndex)
+        $package = 'Any'
+        if ($firewallCase.ContainsKey('Package')) { $package = $firewallCase.Package }
         $operatorRule = [pscustomobject]@{
             Name = 'operator-rule'; Profile = $firewallCase.Profile; RemoteAddress = $firewallCase.Remote
             LocalPort = $firewallCase.Port; Protocol = $firewallCase.Protocol
-            Program = $firewallCase.Program; Service = $firewallCase.Service
+            Program = $firewallCase.Program; Package = $package; Service = $firewallCase.Service
             Enabled = 'True'; Direction = 'Inbound'; Action = 'Allow'
         }
         $state.Rules[$operatorRule.Name] = $operatorRule
