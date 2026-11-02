@@ -90,19 +90,27 @@ func TestPOSIXCleanupAcrossRootWait(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer owner.Close()
+			started, waited, cleanupComplete := false, false, false
+			var rootWait chan error
+			defer func() {
+				// Early readiness failures retain the unreaped root as an
+				// ownership anchor until cleanup. After the measured Close,
+				// retire all deferred group signals, including fatal exits.
+				if !cleanupComplete {
+					_ = owner.Close()
+				}
+				if started && !waited {
+					if rootWait == nil {
+						_ = cmd.Wait()
+					} else {
+						<-rootWait
+					}
+				}
+			}()
 			if err := owner.Start(); err != nil {
 				t.Fatal(err)
 			}
-			rootWait := make(chan error, 1)
-			go func() { rootWait <- cmd.Wait() }()
-			waited := false
-			defer func() {
-				_ = owner.Terminate()
-				if !waited {
-					<-rootWait
-				}
-			}()
+			started = true
 			ready := make(chan string, 1)
 			go func() {
 				line, _ := bufio.NewReader(output).ReadString('\n')
@@ -125,6 +133,8 @@ func TestPOSIXCleanupAcrossRootWait(t *testing.T) {
 				}
 			}()
 			_ = input.Close()
+			rootWait = make(chan error, 1)
+			go func() { rootWait <- cmd.Wait() }()
 			forced := false
 			var waitErr error
 			select {
@@ -143,6 +153,7 @@ func TestPOSIXCleanupAcrossRootWait(t *testing.T) {
 			}
 			waited = true
 			err = owner.Close()
+			cleanupComplete = true
 			var errno syscall.Errno
 			_ = errors.As(err, &errno)
 			t.Logf("forced=%t root_wait_error=%t close_native_errno=%d", forced, waitErr != nil, errno)
