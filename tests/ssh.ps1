@@ -870,8 +870,12 @@ Test-Case 'default hostkey ACLs are restricted before native checks and SYSTEM s
     Assert-True ($state.Events -contains 'ServiceRestart') 'Restricted hostkeys never reached service startup'
     Assert-True ($state.Acls[$custom] -eq 'fixture-custom-acl' -and -not ($state.Events -contains ('ACL:' + $custom))) 'Custom HostKey metadata was changed'
     # Only synthetic sentinel files are read here. Production must never read them.
-    $beforeFiles = @($before | ConvertFrom-Json | Where-Object { $_.Path -match 'ssh_host_|operator_host_key' })
-    $afterFiles = @((Get-FixtureSnapshot $state.Root) | ConvertFrom-Json | Where-Object { $_.Path -match 'ssh_host_|operator_host_key' })
+    # PS5.1 emits a parsed JSON array as one pipeline object. Store it first so
+    # the next pipeline enumerates files before selecting host-key sentinels.
+    $beforeItems = ConvertFrom-Json $before
+    $afterItems = ConvertFrom-Json (Get-FixtureSnapshot $state.Root)
+    $beforeFiles = @($beforeItems | Where-Object { $_.Path -match 'ssh_host_|operator_host_key' })
+    $afterFiles = @($afterItems | Where-Object { $_.Path -match 'ssh_host_|operator_host_key' })
     # Real Windows fixture ACLs are untouched by the doubles; bytes/timestamps
     # detect replacement or rewriting in the actual setup statements.
     Assert-True (($afterFiles | ConvertTo-Json -Compress) -ceq ($beforeFiles | ConvertTo-Json -Compress)) 'Hostkey sentinel bytes or timestamps changed'
