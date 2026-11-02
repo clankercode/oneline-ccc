@@ -24,14 +24,17 @@ Execution started **2026-11-03** under the active full-backlog goal. The
 [product completion campaign](product-completion-campaign.md) records ordered
 milestones and task boundaries. Reviewed navigation, Linux terminal-input and
 no-color and bounded startup/error corrections are integrated through `418283a`;
-current work covers item 18's composition, item 20's constructor/platform gaps
-and item 21's capture-evidence fixes. See the
+Models field/disclosure source and grouped Help are now integrated through
+`889ace7`, with fresh full Go normal/race/vet gates passing. Their independent
+source approvals and sampled actual-image inspections do not close visual
+acceptance. Current work covers the remaining item 18 bodies/layers, item 20's
+constructor/platform gaps and item 21's capture-evidence fixes. See the
 [native remediation checkpoint](../verification/native-remediation-progress.md)
 for the exact integrated gates and their limits.
 All checkboxes remain open until the complete corresponding acceptance evidence
 exists.
 Discovered work is appended below with stable IDs; it is part of the same goal.
-There are now **21 tracked areas**. The P0 remains open after the first source
+There are now **22 tracked areas**. The P0 remains open after the first source
 corrections: improved navigation and added color do not establish preview fidelity,
 comfortable compact layouts or complete interaction acceptance.
 The item 19 implementation is integrated at `cbbaf77` with Linux PTY follow-ups
@@ -68,6 +71,8 @@ for shipped capabilities; older plans retain their original planning baselines.
 | [Native screen and navigation inventory](../review/native-tui-screen-inventory.md) | Source-backed inventory of 10 screens, 7 modal variants, 7 editors, current control inconsistencies and missing mockup counterparts; no visual PASS claimed |
 | [Native capture infrastructure and limits](../verification/tui-native-captures.md) | Real PTY/ANSI/PNG tooling, controller fault gates, independent semantic/legacy reviews and outstanding final-capture requirements |
 | [Interim native composition visual review](../review/native-tui-composition-vision.md) | Ten actual integrated screen images, inspected crops, specific page-body failures and bounded independent review links; no final visual acceptance |
+| [Models composition source review](../review/native-models-composition-review.md) | Independent visible-keyboard, disclosure, authority and five-size geometry review; selector/Advanced pixel acceptance remains open |
+| [Grouped Help source review](../review/native-help-design-review.md) | Independent contextual-key, wrapped pagination, focus and geometry review; no PNG or whole-product PASS |
 | [Stack and identity research](../research/tui-stack.md) | Framework choices, model metadata and client/utility identity evidence |
 | [Existing-project research](../research/existing-projects.md) | Prior art and reuse options to consult before duplicating functionality |
 | [Stage-zero verification](../verification/tui-stage-zero.md) | Native Codex contract and isolated existing-tool adoption trials |
@@ -363,14 +368,31 @@ improved. A colored header above the old text listing does not meet the target.
   concise model, context-budget and default-tier fields, deliberate Advanced
   disclosure, a readable applied/draft summary and useful Review/Back actions.
   Avoid requiring traversal through every option to reach the next step. A9
-  implementation is in progress; the integrated native page is not yet fixed.
+  source is independently reviewed and integrated through `c37ca30`; visual
+  acceptance remains open.
   Include the candidate's model/budget/tier selector panels, Advanced collapsed
   and expanded states, explicit commit/cancel, reverse traversal and editor
   return in the capture and interaction matrix. Hidden semantic fixture actions
   are not proof that the visible keyboard path works.
+- [ ] **Keep inline choice context visible at minimum size.** Actual A2c captures
+  of the reviewed Models candidate at **40x12** fail for the model and budget
+  selectors: scrolling to the focused choice removes the chooser title from
+  the frame. Keep the selected client, which field is being chosen, the focused
+  value, commit/cancel behavior and a useful return route understandable together.
+  Reproduce with the strict `inline-model` and `inline-budget` capture variants,
+  fix the production presentation, then re-render and inspect full frames and
+  crops. Retain the evidence predicate; accepting an unlabeled choice list is
+  not a fix. Review tier selection, long/Unicode IDs, reverse traversal and
+  resize alongside them. Discovery loading/error/empty/reorder/disappearance
+  and source-qualified identities still need real captured states.
 - [ ] **Review:** distinguish plan identity, desired settings, field labels and
   before/after values with consistent weight, spacing, color and non-color cues.
   Preserve complete values, all pages, acknowledgment and exact-plan safeguards.
+  Preserve semantic blank lines inside values, including at minimum height and
+  page boundaries; only explicitly decorative spacers may be removed. An
+  independent A11 probe found Before `alpha\n\nomega` losing its distinction
+  from After `alpha\nomega` at 40x12. Keep newline provenance in the document
+  and verify exact reconstruction before acknowledgment.
   Obtain a matching populated mockup; an empty preview is not a valid populated
   plan comparison.
 - [ ] **Jobs:** replace the single pipe-separated receipt line with readable
@@ -378,6 +400,11 @@ improved. A colored header above the old text listing does not meet the target.
   idle path. The observed initial focus emphasizes an unavailable cancellation
   command despite no active job. Compare matching receipt/progress states and
   preserve cancellation-request versus final-outcome distinctions.
+  Show the newest receipt on initial entry, including when an older snapshot
+  success precedes a newer session conflict; a single-receipt screenshot is
+  insufficient. Preserve every history value and its scroll access. A11's first
+  compact composer exposed the older success while hiding the latest conflict;
+  its independently requested correction remains open until reviewed.
 - [ ] **Gateway:** group connection, credential storage and verification state;
   align field/value presentation and separate endpoint and hidden-key actions.
   The current summary-sentence/action stack does not match the reference. Keep
@@ -603,4 +630,36 @@ review loops, real keyboard journeys or final installed-revision acceptance.
     that those setup keys arrived through the PTY; later round-trip keys are
     separate evidence. The original retained positive captures are not thereby
     shown incorrect, and their provenance must not be rewritten.
+    Follow the composed production rows, including multiline client identity,
+    truncated names, checkbox state, selected-client summary and the visible
+    filter cue. The old single-label projection fails against the new layout;
+    preserve a strict association with actual production body rows rather than
+    relaxing the check. A2c's bounded implementation and five Models variants
+    are awaiting independent review. Synchronized false choice/focus identities
+    must also disagree with, and be rejected against, the actual focused row.
+    Two minimum-size chooser captures currently fail and remain production
+    presentation work above; missing discovery fixtures stay explicit gaps.
     This supports P0 acceptance; artifact integrity alone is not a visual PASS.
+
+22. [ ] **Reduce unnecessary CPU load from TUI verification.**
+    Requested by the operator during the visual campaign. Measure the Go tests,
+    race detector, compilation and browser captures separately; retain wall time,
+    CPU time, peak resource use, commands and coverage when comparing changes.
+    Profile actual hotspots before changing application behavior. Respect an
+    explicitly lower build budget, use a modest default, and coordinate heavy
+    verification across worktrees so independent agents do not saturate the
+    machine with simultaneous suites and browser matrices. Current capture
+    tooling hard-codes two Go workers and overrides a lower `GOMAXPROCS`; correct
+    that behavior. Use blocking resource coordination, never CPU polling loops,
+    with safe release on errors and independent repositories remaining separate.
+    Reuse warm compiler caches; avoid fresh cache directories and repeated full
+    race/matrix runs for every presentation edit. Run focused checks during
+    iteration and the required complete gates for the integrated revision.
+    Preserve the full required screen/state matrix, meaningful assertions,
+    secret/terminal/process checks and independent visual/source reviews.
+    Any reused binary or artifact must remain bound to exact source, fixture,
+    toolchain and relevant build inputs; an unverifiable cache hit must fail
+    closed. Demonstrate the reduction or a measured peak bound, distinguish peak
+    concurrency from total work, document the resulting commands and report
+    remaining costs honestly. A16 is implementing profiling and bounded resource
+    controls; completion and independent review remain open.

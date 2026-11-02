@@ -1,6 +1,7 @@
 # Native remediation checkpoint
 
 Recorded 2026-11-03. Integrated terminal source: `418283a`.
+Latest verified composition checkpoint: `889ace7`.
 
 **Native visual and interaction acceptance remains open.** This checkpoint
 records the reviewed navigation and terminal corrections. The rejected
@@ -20,6 +21,9 @@ work and full screen-by-screen visual campaign are still in progress.
 | Native capture integrity and semantics | `cb936e6` | Reviewed opacity, state/outcome, provenance, cleanup and legacy-proof checks; controller fault, real-legacy and tagged TUI race gates pass. [Evidence and remaining integration/type/coverage limits](tui-native-captures.md); no visual PASS |
 | Shared shell and client composition | `cc76758` through `1ee8fc5` | Multiline clients, list/detail layout, action/default-tier hierarchy and compact draft/filter visibility; [initial source review](../review/native-composition-review.md), [resolved compact-state rereview](../review/native-composition-rereview.md) and [interim actual-image review](../review/native-tui-composition-vision.md). Other bodies and full visual acceptance remain open |
 | Help wrapped-row pagination | `40ba57b` | [Independent readability review](../review/native-help-readability-review.md) approves measured viewport and boundary/resize coverage. Useful grouped shortcut design remains open |
+| Concise Models fields and Advanced disclosure | `7ec3738` through `c37ca30` | [Independent source/geometry review](../review/native-models-composition-review.md) approves actual keyboard paths, explicit choices and retained review/attestation guards. Sampled native full images and crops show improved fields/summary and compact Review access; chooser/Advanced/discovery and full visual acceptance remain open |
+| Grouped, contextual shortcut Help | `df9404d`, `889ace7` | [Independent source/geometry review](../review/native-help-design-review.md) approves useful first-page bindings, contextual explanations and measured pagination. Sampled native first/last pages and crops were compared with reference bodies; all-origin and final integrated acceptance remains open |
+| Prepared-frame capture association | `257468a` | Original independent reviewer approves the old-UI R1 correction. Composed multiline production-row integration and new Models variants are a separate candidate under review; no final composed-fixture compatibility or visual PASS is inferred |
 
 The terminal correction uses licensed, pinned module mirrors because the checked
 upstream revisions did not contain the required dispatch/join fix. The isolated
@@ -82,18 +86,38 @@ the coordinator inspected every individual image and two relevant crops.
 The resulting [visual findings](../review/native-tui-composition-vision.md) keep
 the page-body and broader acceptance gates explicitly open.
 
+After integrating Models and grouped Help, fresh full Go normal/race/vet gates
+all pass at `889ace7`. The Models main path uses three field selectors and
+Advanced disclosure; normal Tab traversal does not walk every hidden option.
+The independently reviewed full keyboard journey still retains staging,
+attestations, Review/Back, acknowledgment, Apply and reconciliation checks.
+
+The corrected native console fixture candidate `e6fee8e` passed hosted run
+[41536849674](https://github.com/clankercode/oneline-ccc/actions/runs/41536849674):
+Windows ConPTY, macOS PTY, Linux and all six static builds. This is evidence for
+that exact candidate's input/masking/restoration journeys, not physical-terminal
+appearance or all-screen acceptance. A later combined candidate `30d2ffc` in
+[41537608013](https://github.com/clankercode/oneline-ccc/actions/runs/41537608013)
+fails both Windows interactive resize cases: its expected endpoint caret window
+does not match the new inset viewport. Original-author diagnosis must distinguish
+a stale expectation from input loss or replay defects while retaining full-value,
+masking and restoration checks. Its approval remains open; the earlier green
+run cannot stand in for this integrated gate.
+
 ## Remaining acceptance
 
 - Shared shell and client Dashboard composition are integrated with bounded
   source/geometry approval and interim image inspection. They, every other
   screen, editor and overlay still need the complete alternating review against
   pinned matching-state mockups on the exact final installed revision.
-- Reviewed capture tooling is integrated; the inherited observation-type guard,
-  integrated More semantics and compact draft/filter fixture coverage remain
-  follow-ups. Reviewed secondary references are available; compare every native
+- Reviewed capture tooling is integrated; composed multiline prepared-row and
+  new Models fixture association remain under independent review. Two actual
+  minimum-size Models chooser captures lack a visible chooser title and fail
+  the strict predicate; fix presentation instead of accepting the failed frames.
+  Reviewed secondary references are available; compare every native
   surface with those targets. Existing captures retain their original provenance.
-- Wrapped-row Help readability is corrected in source. Final integrated page
-  captures and useful grouped shortcut presentation remain acceptance work.
+- Wrapped-row Help and useful grouped shortcuts are corrected in source.
+  Final integrated and per-origin captures remain acceptance work.
 - Bounded startup/error cleanup is integrated. Failed-reader constructor-private
   descriptors, native platform failures and uncooperative external I/O remain
   outside that approval; this does not certify every panic/callback combination.
