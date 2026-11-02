@@ -1,0 +1,84 @@
+name: Publish site and installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify Windows installer
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test installer
+        shell: ${{ matrix.shell }}
+        run: ./tests/run.ps1
+      - name: Install and load native Codex with a dummy credential
+        shell: ${{ matrix.shell }}
+        env:
+          LLMP_API_KEY: fixture-only-not-a-real-credential
+        run: |
+          $env:CODEX_HOME = Join-Path $PWD '.cache/native-codex-smoke'
+          ./scripts/setup-codex.ps1 -BaseUrl 'https://fixture.invalid/v1' -Model 'fixture-model' -ContextWindow 500000 -NonInteractive -SkipPersistCredential
+          if ($LASTEXITCODE -ne 0) { throw 'Native Codex installation failed' }
+          $npmPrefix = Join-Path $env:APPDATA 'npm'
+          & (Join-Path $npmPrefix 'codex.cmd') --profile llmp debug prompt-input 'Offline configuration smoke test' | Out-File -Encoding utf8 .cache/native-prompt.json
+          if ($LASTEXITCODE -ne 0) { throw 'Native Codex profile loading failed' }
+
+  deploy:
+    name: Deploy verified site
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stage standalone installer
+        run: cp scripts/setup-codex.ps1 site/setup-codex.ps1
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Publish GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify-download:
+    name: Verify public one-liner
+    needs: deploy
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Load the hosted installer as a scriptblock
+        shell: ${{ matrix.shell }}
+        run: |
+          $uri = 'https://clankercode.github.io/oneline-ccc/setup-codex.ps1'
+          $downloaded = Invoke-RestMethod $uri
+          $local = [IO.File]::ReadAllText((Join-Path $PWD 'scripts/setup-codex.ps1'))
+          if ($downloaded.Replace("`r`n", "`n") -cne $local.Replace("`r`n", "`n")) { throw 'Hosted installer differs from checkout' }
+          $env:CODEX_HOME = Join-Path $PWD '.cache/public-download'
+          & ([scriptblock]::Create($downloaded)) -BaseUrl 'https://fixture.invalid/v1' -Model 'fixture-model' -ContextWindow 500000 -DryRun -NonInteractive
+          if (Test-Path $env:CODEX_HOME) { throw 'Dry run modified configuration' }

@@ -1,0 +1,52 @@
+# Windows Codex / LLMP MVP
+
+## Scope and authorization
+
+Build the urgently requested Windows installer now. Defer the broader Go binary,
+TUI, service, automatic maintenance, multi-client setup and agent-driven repair to
+research and a subsequent design discussion. Do not use real API credentials or
+modify the operator's Codex configuration during development.
+
+## Acceptance criteria
+
+- A PowerShell one-liner downloads a standalone installer and runs an interactive
+  setup on Windows; a local-file invocation also works.
+- Setup accepts a proxy base URL, a privately entered API key and an exact model ID.
+- Install native Codex when necessary or give actionable dependency instructions.
+- Write valid Codex configuration using the Responses API and environment-based
+  credentials, preserving unrelated settings and backing up configuration changes.
+- Make reruns predictable and support an isolated configuration home for testing.
+- Let the user choose a context budget and an earlier compaction threshold. Never
+  claim a context cap expands the model's actual capacity.
+- Represent eligible service tiers using actual supported Codex configuration and
+  capability metadata; do not invent models or tier eligibility.
+- Verify PowerShell parsing, generated TOML, reruns, preservation, validation,
+  error handling and real Codex configuration loading without paid inference.
+- Independently review and fix material findings before reporting completion.
+- Document hosting and use honestly: a public one-liner needs an actual hosted URL.
+
+## Work lanes
+
+1. Research official Codex configuration, catalog and tier capabilities.
+2. Implement the standalone Windows PowerShell installer.
+3. Research existing multi-client/proxy configuration projects for the later design.
+4. Integrate documentation and an executable isolated test harness.
+5. Independent review, fixes and final validation.
+
+## Design decisions to verify
+
+Use a dedicated `$CODEX_HOME/llmp.config.toml` profile file for Codex 0.134.0 or
+later, with root-level context and compaction fields. Current official docs say
+legacy `[profiles.llmp]` tables and the root `profile` selector are no longer read.
+Leave the base `config.toml` untouched. Print the exact launch command. Store the API
+key in the Windows user environment and process environment; keep it out of TOML.
+Use explicit model/context choices when proxy metadata is insufficient. Test with
+dummy credentials and local fixtures only. No service is installed by the MVP.
+
+## Status
+
+Installer, executable test harness, independent review, official documentation
+research, existing-project comparison and static setup page are implemented.
+Portable PowerShell tests and actual Codex strict parsing/profile loading pass.
+Native Windows verification and public download checks are publication gates;
+their final results belong in the release verification report.

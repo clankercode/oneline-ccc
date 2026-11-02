@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Set up Codex on Windows with your own model gateway, API key, and context budget.">
+  <title>oneline-ccc — Codex, pointed at your gateway</title>
+  <style>
+    :root { color-scheme: light dark; --paper:#faf9f5; --ink:#172c29; --muted:#52645f; --line:#cbd4cd; --accent:#14664d; --panel:#eef2eb; --code:#e3ebe1; }
+    @media(prefers-color-scheme:dark) { :root { --paper:#14211e; --ink:#eef3e9; --muted:#b4c5b9; --line:#496057; --accent:#a4dfb5; --panel:#20342c; --code:#294137; } }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:17px/1.65 system-ui,sans-serif; }
+    a { color:var(--accent); text-underline-offset:4px; }
+    a:hover { text-decoration-thickness:2px; }
+    a:focus-visible,button:focus-visible { outline:3px solid var(--accent); outline-offset:5px; }
+    .wrap { width:min(100% - 48px,960px); margin:auto; }
+    header { display:flex; justify-content:space-between; gap:20px; align-items:center; padding:25px 0; border-bottom:1px solid var(--line); }
+    .brand { color:var(--ink); font:700 18px ui-monospace,monospace; text-decoration:none; }
+    header nav { display:flex; gap:22px; font-size:14px; }
+    main { padding:65px 0 40px; }
+    .eyebrow { margin:0 0 15px; color:var(--accent); font:600 12px ui-monospace,monospace; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { max-width:740px; font-size:clamp(38px,6vw,62px); line-height:1.08; letter-spacing:-.045em; margin:0 0 24px; font-weight:650; }
+    .intro { max-width:650px; margin:0 0 32px; color:var(--muted); font-size:20px; line-height:1.5; }
+    .command { border:1px solid var(--line); background:var(--panel); }
+    .command-head { display:flex; justify-content:space-between; gap:15px; align-items:center; padding:12px 18px; border-bottom:1px solid var(--line); font:13px ui-monospace,monospace; }
+    button { font:600 14px system-ui,sans-serif; padding:9px 17px; min-height:44px; color:var(--paper); background:var(--accent); border:0; border-radius:3px; cursor:pointer; }
+    pre { margin:0; padding:22px 18px; overflow-x:auto; font:14px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .note { color:var(--muted); font-size:14px; max-width:740px; }
+    #copy-status { min-height:1.5em; margin:8px 0 0; font-size:14px; color:var(--accent); }
+    section { padding-top:38px; }
+    h2 { font-size:25px; line-height:1.3; letter-spacing:-.025em; margin:0 0 16px; }
+    h3 { font-size:17px; margin:0 0 5px; }
+    p { margin:0 0 15px; }
+    .steps { counter-reset:step; list-style:none; padding:0; margin:0; border-top:1px solid var(--line); }
+    .steps li { counter-increment:step; display:grid; grid-template-columns:40px 1fr; gap:12px; padding:21px 0; border-bottom:1px solid var(--line); }
+    .steps li::before { content:'0' counter(step); color:var(--accent); font:14px ui-monospace,monospace; padding-top:4px; }
+    .steps p { color:var(--muted); max-width:730px; margin:0; }
+    code { font: .86em ui-monospace,SFMono-Regular,Consolas,monospace; background:var(--code); padding:2px 5px; border-radius:3px; overflow-wrap:anywhere; }
+    pre code { background:transparent; padding:0; font:inherit; overflow-wrap:normal; }
+    .details { display:grid; grid-template-columns:1fr 1fr; gap:44px; }
+    .details p { color:var(--muted); font-size:15px; }
+    footer { border-top:1px solid var(--line); margin-top:30px; padding:24px 0 36px; color:var(--muted); font-size:14px; }
+    .skip { position:absolute; top:-70px; padding:10px; background:var(--paper); }
+    .skip:focus { top:0; }
+    @media(max-width:600px) { .wrap { width:calc(100% - 32px); } main { padding-top:40px; } .intro { font-size:18px; } .details { grid-template-columns:1fr; gap:0; } header nav { gap:15px; } pre { font-size:13px; } }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#setup">Skip to setup</a>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="./">oneline-ccc</a>
+      <nav aria-label="Main navigation"><a href="#details">Details</a><a href="https://github.com/clankercode/oneline-ccc">Source ↗</a></nav>
+    </header>
+    <main id="setup">
+      <p class="eyebrow">Windows · Codex · First release</p>
+      <h1>Your coding client.<br>Your model gateway.</h1>
+      <p class="intro">Point Codex at your proxy with one PowerShell command. Bring a URL and an API key; choose your model and context budget.</p>
+      <div class="command">
+        <div class="command-head"><span>Paste into PowerShell</span><button id="copy" type="button">Copy command</button></div>
+        <pre tabindex="0" aria-label="PowerShell setup command"><code id="install-command">&amp; ([scriptblock]::Create((Invoke-RestMethod 'https://clankercode.github.io/oneline-ccc/setup-codex.ps1')))</code></pre>
+      </div>
+      <p id="copy-status" role="status" aria-live="polite"></p>
+      <p class="note">Runs the <a href="https://github.com/clankercode/oneline-ccc/blob/main/scripts/setup-codex.ps1">standalone installer</a> as your user. Windows PowerShell 5.1 or PowerShell 7. Your gateway must support the Responses API.</p>
+      <section aria-labelledby="next-heading">
+        <h2 id="next-heading">A few choices. Then start coding.</h2>
+        <ol class="steps">
+          <li><div><h3>Connect your gateway</h3><p>Enter your base URL, including <code>/v1</code> if needed, and your API key at a private prompt. No deployment URL or key is bundled in this project.</p></div></li>
+          <li><div><h3>Choose a model and a budget</h3><p>Select <code>gpt-6.1-sol</code>, <code>glm-5.3</code>, <code>glm-5.3-flash</code>, or a custom ID. Enter a context budget, such as 272000, 353000, or 500000 tokens, within your model’s capacity. Compaction starts at 90% by default.</p></div></li>
+          <li><div><h3>Launch the LLMP profile</h3><p>Setup prints your launch command, usually <code>codex.cmd --profile llmp</code>. It installs Codex if needed and leaves your main configuration untouched.</p></div></li>
+        </ol>
+      </section>
+      <div class="details" id="details">
+        <section aria-labelledby="config-heading"><h2 id="config-heading">A separate configuration</h2><p>Settings live in <code>llmp.config.toml</code> under your Codex home. Managed updates get a backup; manual edits are preserved by refusing to overwrite them.</p><p>The key goes into your Windows user environment, not TOML. This is persistent environment storage, not an encrypted vault. Reopen other terminals to inherit it.</p><p>If Node.js is missing, setup offers a winget LTS installation, which may request administrator approval.</p></section>
+        <section aria-labelledby="control-heading"><h2 id="control-heading">Explicit model controls</h2><p>Optional discovery lists model IDs. A complete Codex-native gateway catalog can provide eligible service tiers; otherwise tier selection requires an explicit manual capability override.</p><p>A context setting cannot expand a model’s capacity. The selected budget applies to this profile, including when you switch models within it.</p><p>Read the <a href="https://github.com/clankercode/oneline-ccc#readme">usage and advanced options</a> before adding catalogs or tiers.</p></section>
+      </div>
+      <section aria-labelledby="scope-heading"><h2 id="scope-heading">Windows first. Broader utility next.</h2><p class="note">This release configures Codex. Multi-client setup, macOS and Linux installers, a Go TUI, and an optional maintenance service are future design work. Our <a href="https://github.com/clankercode/oneline-ccc/blob/main/docs/research/existing-projects.md">existing-project research</a> will guide what we build and what we reuse.</p></section>
+    </main>
+    <footer>oneline-ccc · <a href="https://github.com/clankercode/oneline-ccc/issues">Report an issue</a> · No analytics or external assets.</footer>
+  </div>
+  <script>
+    document.getElementById('copy').addEventListener('click', async () => {
+      const status = document.getElementById('copy-status');
+      try {
+        await navigator.clipboard.writeText(document.getElementById('install-command').textContent);
+        status.textContent = 'Copied. Paste into PowerShell on your Windows machine.';
+      } catch {
+        status.textContent = 'Clipboard unavailable. Select the command above and copy it manually.';
+      }
+    });
+  </script>
+</body>
+</html>
