@@ -141,6 +141,12 @@ func (e *Engine) Discover(ctx context.Context, id string) ([]core.ModelInfo, err
 	if err != nil {
 		return nil, errors.New("discovery credential unavailable; enter a session key")
 	}
+	if _, _, err = e.readState(); err != nil {
+		return nil, err
+	}
+	if ctx.Err() != nil {
+		return nil, canceled()
+	}
 	base, err := e.deps.discover(ctx, c.Profile.BaseURL, key)
 	if ctx.Err() != nil {
 		return nil, canceled()
@@ -157,6 +163,9 @@ func (e *Engine) Discover(ctx context.Context, id string) ([]core.ModelInfo, err
 	enriched, metadataErr := e.deps.enrich(ctx, append([]core.ModelInfo{}, base...))
 	if ctx.Err() != nil {
 		return nil, canceled()
+	}
+	if _, _, err = e.readState(); err != nil {
+		return nil, err
 	}
 	if metadataErr == nil && validModels(enriched) && len(enriched) == len(base) {
 		for i := range base {

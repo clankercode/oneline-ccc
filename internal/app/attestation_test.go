@@ -77,9 +77,10 @@ func TestAttestedApplyRestoresOnlyExactManagedFingerprintAndNoop(t *testing.T) {
 	// existing proven confirmations for exactly the same values.
 	got.CapacityConfirmed = false
 	got.TiersConfirmed = false
-	same := plan(t, e, core.Desired{Enabled: true, Profile: got})
-	if !same.Noop || !same.Desired.Profile.CapacityConfirmed || !same.Desired.Profile.TiersConfirmed {
-		t.Fatal("exact no-op lost proven confirmation")
+	requested := core.Desired{Enabled: true, Profile: got}
+	same := plan(t, e, requested)
+	if !same.Noop || same.Desired != requested {
+		t.Fatal("exact no-op lost proof or changed the frozen request")
 	}
 	if _, err := e.Apply(context.Background(), same.ID, same.Revision); err != nil {
 		t.Fatal(err)

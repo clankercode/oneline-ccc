@@ -43,6 +43,9 @@ type transactionStore interface {
 	Apply(context.Context, []configtxn.Write) (configtxn.Result, error)
 	Recover(context.Context) ([]configtxn.Result, error)
 }
+type activeApply struct {
+	cancel context.CancelFunc
+}
 type dependencies struct {
 	adapter     adapter
 	program     func() codexrpc.Program
@@ -61,6 +64,7 @@ type Engine struct {
 	mu       sync.Mutex
 	pending  map[string]*review
 	epoch    map[string]uint64
+	applying map[string]*activeApply
 	mutating chan struct{}
 	store    transactionStore
 }
@@ -121,7 +125,7 @@ func newEngine(o Options, d dependencies) (*Engine, error) {
 	if configtxn.PrivateDir(o.StateRoot) != nil {
 		return nil, errors.New("application state root must be private and safely owned")
 	}
-	e := &Engine{options: o, deps: d, pending: map[string]*review{}, epoch: map[string]uint64{}, mutating: make(chan struct{}, 1), store: configtxn.New(filepath.Join(o.StateRoot, "transactions"))}
+	e := &Engine{options: o, deps: d, pending: map[string]*review{}, epoch: map[string]uint64{}, applying: map[string]*activeApply{}, mutating: make(chan struct{}, 1), store: configtxn.New(filepath.Join(o.StateRoot, "transactions"))}
 	if _, _, err = e.readState(); err != nil {
 		return nil, err
 	}

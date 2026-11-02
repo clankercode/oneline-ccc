@@ -20,6 +20,7 @@ import (
 
 type review struct {
 	Plan     core.Plan
+	Desired  core.Desired
 	Epoch    uint64
 	Program  codexrpc.Program
 	Identity string
@@ -67,6 +68,9 @@ func (e *Engine) Plan(ctx context.Context, id string, desired core.Desired) (cor
 	e.mu.Lock()
 	e.epoch[id]++
 	epoch := e.epoch[id]
+	if operation := e.applying[id]; operation != nil {
+		operation.cancel()
+	}
 	delete(e.pending, id)
 	e.mu.Unlock()
 	s, stateWrite, err := e.readState()
@@ -175,7 +179,10 @@ func (e *Engine) Plan(ctx context.Context, id string, desired core.Desired) (cor
 	if err != nil {
 		return core.Plan{}, err
 	}
-	p := core.Plan{ID: idToken, ClientID: id, Desired: desired, Changes: changes(before, desired, s.Managed[id]), Noop: s.Managed[id] == desired.Enabled && s.Attestations[id] == nextEvidence}
+	// The UI compares Desired with its exact frozen request. Canonical inputs,
+	// restored proof and generated catalog paths remain private to this review.
+	r.Desired = desired
+	p := core.Plan{ID: idToken, ClientID: id, Desired: original, Changes: changes(before, desired, s.Managed[id]), Noop: s.Managed[id] == desired.Enabled && s.Attestations[id] == nextEvidence}
 	for _, w := range r.Writes {
 		if changed(w) {
 			p.Noop = false
@@ -285,10 +292,28 @@ func (e *Engine) Apply(ctx context.Context, id, revision string) (core.Receipt, 
 			break
 		}
 	}
-	e.mu.Unlock()
 	if r == nil || revision != r.Plan.Revision {
+		e.mu.Unlock()
 		return core.Receipt{}, errors.New("review is invalid, stale or already used; create a new plan")
 	}
+	if e.epoch[r.Plan.ClientID] != r.Epoch {
+		e.mu.Unlock()
+		return core.Receipt{}, errors.New("a newer review superseded this plan")
+	}
+	// Register revocation before any wait, including our mutation gate and the
+	// transaction coordinator. Plan cancels this same context under e.mu.
+	ctx, cancel := context.WithCancel(ctx)
+	operation := &activeApply{cancel: cancel}
+	e.applying[r.Plan.ClientID] = operation
+	e.mu.Unlock()
+	defer func() {
+		cancel()
+		e.mu.Lock()
+		if e.applying[r.Plan.ClientID] == operation {
+			delete(e.applying, r.Plan.ClientID)
+		}
+		e.mu.Unlock()
+	}()
 	if err := e.lockMutation(ctx); err != nil {
 		return core.Receipt{}, err
 	}
@@ -296,7 +321,7 @@ func (e *Engine) Apply(ctx context.Context, id, revision string) (core.Receipt, 
 	if ctx.Err() != nil {
 		return core.Receipt{}, canceled()
 	}
-	if r.Plan.Desired.Enabled {
+	if r.Desired.Enabled {
 		identity, err := e.deps.identity(r.Program)
 		if ctx.Err() != nil {
 			return core.Receipt{}, canceled()
@@ -328,7 +353,7 @@ func (e *Engine) Apply(ctx context.Context, id, revision string) (core.Receipt, 
 		out.Summary = "No configuration or management changes."
 		return out, nil
 	}
-	if r.Plan.Desired.Enabled {
+	if r.Desired.Enabled {
 		if err := configtxn.PrivateDir(e.options.CodexHome); err != nil {
 			return core.Receipt{}, errors.New("Codex configuration root must be private and safely owned")
 		}
