@@ -7,7 +7,10 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
+
+var credentialReferenceName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func ValidateEndpoint(raw string) error {
 	u, err := url.Parse(raw)
@@ -28,8 +31,8 @@ func ValidateProfile(p Profile) error {
 	if err := ValidateEndpoint(p.BaseURL); err != nil {
 		return err
 	}
-	if p.Model == "" || len(p.Model) > 256 || strings.IndexFunc(p.Model, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-		return errors.New("choose an exact model ID without spaces or control characters")
+	if p.Model == "" || len(p.Model) > 256 || !utf8.ValidString(p.Model) || strings.IndexFunc(p.Model, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return errors.New("choose an exact UTF-8 model ID without spaces or control characters")
 	}
 	if p.Budget <= 0 || p.Compact <= 0 || p.Compact >= p.Budget {
 		return errors.New("budget must be positive; compaction must be positive and below the budget")
@@ -37,8 +40,8 @@ func ValidateProfile(p Profile) error {
 	if !p.CapacityConfirmed {
 		return errors.New("confirm this route supports the selected context budget")
 	}
-	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(p.EnvKey) {
-		return errors.New("credential reference must be an environment-variable name")
+	if !validCredentialReference(p.EnvKey) {
+		return errors.New("credential reference must be an environment variable name that is not reserved by the runtime")
 	}
 	switch p.Tier {
 	case "", "Standard", "default":
@@ -51,6 +54,22 @@ func ValidateProfile(p Profile) error {
 	}
 	return nil
 }
+
+// Mirror credentials.ChildEnv's reference policy without coupling domain
+// validation to OS credential access. The cross-package contract test checks
+// this list against the launcher for all reserved names and their case variants.
+func validCredentialReference(name string) bool {
+	if !credentialReferenceName.MatchString(name) {
+		return false
+	}
+	switch strings.ToUpper(name) {
+	case "PATH", "HOME", "USER", "LOGNAME", "USERNAME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_COLLATE", "LC_NUMERIC", "LC_TIME", "LC_MONETARY", "TERM", "COLORTERM", "TERMINFO", "TERMINFO_DIRS", "TZ", "SHELL", "XDG_RUNTIME_DIR",
+		"CODEX_PROFILE", "CODEX_HOME", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "NODE_OPTIONS", "NODE_PATH", "BASH_ENV", "ENV", "PYTHONPATH", "PYTHONHOME", "GIT_CONFIG", "GIT_CONFIG_COUNT":
+		return false
+	}
+	return true
+}
+
 func Defaults() Profile {
 	return Profile{Model: "gpt-6.1-sol", Budget: 500000, Compact: 450000, Tier: "Standard", EnvKey: "LLMP_API_KEY"}
 }

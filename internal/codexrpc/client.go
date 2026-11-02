@@ -95,8 +95,22 @@ func Run(parent context.Context, program Program, stage string, action func(*Cli
 }
 
 func (c *Client) Call(method string, params any, result any) error {
-	c.next++
-	if err := json.NewEncoder(c.input).Encode(map[string]any{"jsonrpc": "2.0", "id": c.next, "method": method, "params": params}); err != nil {
+	if c.ctx.Err() != nil {
+		return errors.New("Codex configuration operation cancelled or timed out")
+	}
+	next := c.next + 1
+	request, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": next, "method": method, "params": params})
+	if err != nil {
+		return errors.New("configuration transport closed")
+	}
+	request = append(request, '\n')
+	// Parameter encoding can call custom marshalers. Recheck immediately at
+	// dispatch so cancellation during encoding sends nothing and consumes no ID.
+	if c.ctx.Err() != nil {
+		return errors.New("Codex configuration operation cancelled or timed out")
+	}
+	c.next = next
+	if n, err := c.input.Write(request); err != nil || n != len(request) {
 		return errors.New("configuration transport closed")
 	}
 	for {

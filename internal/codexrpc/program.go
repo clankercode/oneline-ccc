@@ -9,8 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -73,21 +73,48 @@ func nativeProgram(path string) (Program, error) {
 	}
 	return Program{Path: resolved}, nil
 }
+
+const versionNumber = `(?:0|[1-9][0-9]*)`
+const prereleasePart = `(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`
+
+var versionIdentity = regexp.MustCompile(`^codex-cli (` + versionNumber + `\.` + versionNumber + `\.` + versionNumber + `(?:-` + prereleasePart + `(?:\.` + prereleasePart + `)*)?)(?:\r?\n)?$`)
+
+// versionOutput cancels the owned process as soon as stdout exceeds the cap;
+// neither a noisy child nor its diagnostic text can grow the result buffer.
+type versionOutput struct {
+	data   []byte
+	cancel context.CancelFunc
+}
+
+func (o *versionOutput) Write(data []byte) (int, error) {
+	if len(data) > 256-len(o.data) {
+		o.cancel()
+		return 0, errors.New("Codex version output exceeded its size limit")
+	}
+	o.data = append(o.data, data...)
+	return len(data), nil
+}
+
 func Version(ctx context.Context, p Program, stage string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, p.Path, append(append([]string{}, p.Args...), "--version")...)
 	c.Env = ConfigEnvironment(stage)
 	c.Dir = stage
-	data, err := c.Output()
-	if err != nil {
+	// Descendants can inherit the output pipes even after the direct child
+	// exits. Bound both process cancellation and the subsequent pipe drain.
+	c.WaitDelay = 100 * time.Millisecond
+	output := &versionOutput{cancel: cancel}
+	c.Stdout = output
+	c.Stderr = io.Discard
+	if err := c.Run(); err != nil || ctx.Err() != nil {
 		return "", errors.New("Codex version probe failed")
 	}
-	value := strings.TrimSpace(string(data))
-	if !strings.HasPrefix(value, "codex-cli ") {
+	match := versionIdentity.FindSubmatch(output.data)
+	if match == nil || len(match[1]) > 128 {
 		return "", errors.New("unsupported Codex identity")
 	}
-	return strings.TrimPrefix(value, "codex-cli "), nil
+	return string(match[1]), nil
 }
 func Identity(p Program) (string, error) {
 	f, err := os.Open(p.Path)

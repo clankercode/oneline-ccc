@@ -2,6 +2,7 @@ package codexrpc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -87,5 +88,74 @@ func TestConfigEnvironmentExcludesInheritedSecrets(t *testing.T) {
 	env := strings.Join(ConfigEnvironment("fixture-root"), "\n")
 	if strings.Contains(env, "private-fixture-marker") || strings.Contains(env, "private-profile") {
 		t.Fatal("inherited secret/profile reached config process")
+	}
+}
+
+type rpcTestInput struct{ bytes.Buffer }
+
+func (*rpcTestInput) Close() error { return nil }
+
+func TestCanceledCallDoesNotDispatchOrAdvanceID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	input := &rpcTestInput{}
+	c := &Client{ctx: ctx, input: input, output: make(chan []byte), next: 7}
+	err := c.Call("config/batchWrite", map[string]string{"fixture": "mutation"}, nil)
+	if err == nil || input.Len() != 0 || c.next != 7 {
+		t.Fatalf("canceled RPC changed dispatch state: bytes=%d next=%d error=%v", input.Len(), c.next, err)
+	}
+}
+
+func TestCancellationBetweenRequestsDoesNotSendNextMutation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	input := &rpcTestInput{}
+	responses := make(chan []byte, 1)
+	responses <- []byte(`{"id":1,"result":{"ok":true}}`)
+	c := &Client{ctx: ctx, input: input, output: responses}
+	var result struct{ OK bool }
+	if err := c.Call("config/read", nil, &result); err != nil || !result.OK {
+		t.Fatalf("initial RPC failed: %v", err)
+	}
+	before := input.String()
+	ready, proceed := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(ready)
+		<-proceed
+		done <- c.Call("config/batchWrite", map[string]string{"fixture": "mutation"}, nil)
+	}()
+	<-ready
+	cancel()
+	close(proceed)
+	if err := <-done; err == nil || input.String() != before || c.next != 1 {
+		t.Fatalf("next canceled mutation dispatched: next=%d error=%v", c.next, err)
+	}
+}
+
+type blockedRPCParams struct {
+	entered chan struct{}
+	proceed chan struct{}
+}
+
+func (p blockedRPCParams) MarshalJSON() ([]byte, error) {
+	close(p.entered)
+	<-p.proceed
+	return []byte(`{"fixture":"mutation"}`), nil
+}
+
+func TestCancellationDuringEncodingDoesNotDispatchOrAdvanceID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	input := &rpcTestInput{}
+	c := &Client{ctx: ctx, input: input, output: make(chan []byte)}
+	params := blockedRPCParams{entered: make(chan struct{}), proceed: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { done <- c.Call("config/batchWrite", params, nil) }()
+	<-params.entered
+	cancel()
+	close(params.proceed)
+	if err := <-done; err == nil || input.Len() != 0 || c.next != 0 {
+		t.Fatalf("mutation dispatched after encoding was canceled: bytes=%d next=%d error=%v", input.Len(), c.next, err)
 	}
 }
