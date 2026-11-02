@@ -81,3 +81,16 @@ func TestSemanticStatusColorsKeepWordsAndDowngrade(t *testing.T) {
 		t.Fatal("NO_COLOR emitted styling")
 	}
 }
+
+func TestInspectedTierCannotEmitTerminalControls(t *testing.T) {
+	m, _ := loaded(t)
+	m.options.NoColor = true
+	m.snapshot.Clients[0].Profile.Tier = "Standard\x1b]52;c;c3ludGhldGljLW9ubHk=\a"
+	for _, width := range []int{80, 100, 120} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+		m.goTo("Dashboard")
+		if strings.ContainsAny(m.View().Content, "\x1b\a") {
+			t.Fatalf("untrusted terminal control at width%d", width)
+		}
+	}
+}

@@ -18,7 +18,7 @@ func (m *model) dashboardRows() []row {
 	right := []row{{text: m.heading("SELECTED CLIENT")}, {}}
 	c, ok := m.client()
 	if ok {
-		right = append(right, row{text: m.heading(m.public(c.Name))}, row{text: m.public(c.Profile.Model) + " / " + tierLabel(c.Profile.Tier)},
+		right = append(right, row{text: m.heading(m.public(c.Name))}, row{text: m.public(c.Profile.Model + " / " + tierLabel(c.Profile.Tier))},
 			row{text: fmt.Sprintf("Budget %d / Compact %d", c.Profile.Budget, c.Profile.Compact)},
 			row{text: "Available tiers: " + tierAvailability(m.appliedTiers())},
 			row{text: "Local configuration: " + m.statusText(c.Status)},
