@@ -93,6 +93,27 @@ func TestReviewCompositionNoopRemainsUnavailable(t *testing.T) {
 	}
 }
 
+func TestReviewPreservesSemanticEmptyValueLines(t *testing.T) {
+	for _, size := range [][2]int{{120, 40}, {100, 30}, {80, 24}, {60, 20}, {40, 12}} {
+		m, _ := loaded(t)
+		m.width, m.height = size[0], size[1]
+		m.plan = &core.Plan{ID: "p", Revision: "r", ClientID: "codex", Desired: m.draft(), Changes: []core.Change{{Field: "model", Before: "alpha\n\nomega", After: "alpha\nomega"}}}
+		var before, after []string
+		for _, page := range m.reviewDocumentPages() {
+			for _, line := range page {
+				if line.role == reviewBefore {
+					before = append(before, line.text)
+				} else if line.role == reviewAfter {
+					after = append(after, line.text)
+				}
+			}
+		}
+		if strings.Join(before, "\n") != "  Before: alpha\n\nomega" || strings.Join(after, "\n") != "  After: alpha\nomega" {
+			t.Fatalf("%dx%d review changes semantic newlines: before=%q after=%q", size[0], size[1], before, after)
+		}
+	}
+}
+
 func TestJobsCompositionIdleStartsAtUsefulAction(t *testing.T) {
 	m, _ := loaded(t)
 	m.goTo("Jobs")
@@ -115,10 +136,23 @@ func TestJobsCompositionIdleStartsAtUsefulAction(t *testing.T) {
 	}
 	m, _ = loaded(t)
 	m.width, m.height = 40, 12
-	m.receipts = []core.Receipt{{ID: "receipt1", ClientID: "codex", Outcome: "Succeeded", Summary: "Saved reviewed profile"}}
+	m.snapshot.Receipts = []core.Receipt{{ID: "olderReceipt", ClientID: "codex", Outcome: "Succeeded", Summary: "Earlier profile"}}
+	m.receipts = []core.Receipt{{ID: "latestReceipt", ClientID: "codex", Outcome: "Conflict", Summary: "Latest apply conflicted"}}
 	m.goTo("Jobs")
-	if !strings.Contains(ansi.Strip(m.View().Content), "Succeeded") {
+	if !strings.Contains(ansi.Strip(m.View().Content), "Conflict") {
 		t.Fatal("tiny Jobs hides the latest outcome behind unavailable actions")
+	}
+	var history strings.Builder
+	for n := 0; n < 20; n++ {
+		history.WriteString(ansi.Strip(m.View().Content))
+		history.WriteByte('\n')
+		press(m, "pgdown")
+	}
+	readable := strings.Join(strings.Fields(history.String()), " ")
+	for _, value := range []string{"olderReceipt", "latestReceipt", "Succeeded", "Conflict", "Earlier profile", "Latest apply conflicted"} {
+		if !strings.Contains(readable, value) {
+			t.Fatalf("history loses %q", value)
+		}
 	}
 }
 

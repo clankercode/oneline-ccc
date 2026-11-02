@@ -42,8 +42,10 @@ func (m *model) jobsRows() []row {
 	if len(receipts) == 0 {
 		rs = append(rs, row{text: "No receipts yet. Configure a client, review its changes, then apply."})
 	}
-	for i, receipt := range receipts {
-		rs = append(rs, row{text: m.heading(fmt.Sprintf("Receipt %02d", i+1)) + " / " + m.statusText(receipt.Outcome)})
+	// Both sources append chronologically; show the newest outcome first.
+	for i := len(receipts) - 1; i >= 0; i-- {
+		receipt := receipts[i]
+		rs = append(rs, row{text: m.heading(fmt.Sprintf("Receipt %02d", len(receipts)-i)) + " / " + m.statusText(receipt.Outcome)})
 		rs = append(rs, m.detailRows("Client", m.public(receipt.ClientID), width)...)
 		rs = append(rs, m.detailRows("Receipt", m.public(receipt.ID), width)...)
 		rs = append(rs, m.detailRows("Result", m.public(receipt.Summary), width)...)

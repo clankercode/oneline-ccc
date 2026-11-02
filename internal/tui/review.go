@@ -20,6 +20,7 @@ const (
 type reviewLine struct {
 	text, scope string
 	role        reviewRole
+	decoration  bool
 }
 
 // Pagination operates on sanitized, unstyled values. Rendering applies roles
@@ -45,7 +46,7 @@ func (m *model) reviewDocumentPages() [][]reviewLine {
 			scope = "After / " + field
 		}
 		for _, line := range strings.Split(ansi.Wrap(m.public(text), max(1, m.width), ""), "\n") {
-			document = append(document, reviewLine{text: line, scope: scope, role: role})
+			document = append(document, reviewLine{text: line, scope: scope, role: role, decoration: role == reviewSection || text == ""})
 		}
 	}
 	add(reviewSection, "PLAN / EXACT VALUES")
@@ -82,7 +83,7 @@ func (m *model) reviewDocumentPages() [][]reviewLine {
 		// Do not make the operator acknowledge pages containing only decoration.
 		compact := document[:0]
 		for _, line := range document {
-			if line.role != reviewSection && line.text != "" {
+			if !line.decoration {
 				compact = append(compact, line)
 			}
 		}
@@ -90,12 +91,12 @@ func (m *model) reviewDocumentPages() [][]reviewLine {
 	}
 	var pages [][]reviewLine
 	for i := 0; i < len(document); {
-		if document[i].text == "" {
+		if document[i].decoration && document[i].text == "" {
 			i++
 			continue
 		}
 		end := min(i+count, len(document))
-		for end > i+1 && (document[end-1].text == "" || document[end-1].role == reviewSection) {
+		for end > i+1 && document[end-1].decoration {
 			end--
 		}
 		pages = append(pages, document[i:end])
