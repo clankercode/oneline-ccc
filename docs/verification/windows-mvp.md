@@ -17,14 +17,21 @@ Existing-project research is available before the broader design conversation.
 
 ## Local evidence
 
-- Coordinator's final integrated Codex run: **76 passed, 0 failed**, portable PowerShell
-  7.6.9 with Python `tomllib`. This includes four new complete-catalog tests; the same tests fail against
-  the preceding checkpoint because catalog generation is absent there.
+- Coordinator's final integrated Codex run: **84 passed, 0 failed**, portable PowerShell
+  7.6.9 with Python `tomllib`. This includes complete-catalog tests and eight final seam regressions.
+  The catalog tests fail against the earlier checkpoint without generation;
+  the final regressions reproduced conflicting tier inputs and mixed executable
+  versions before their fixes.
   The final run covers rich TOML/comment preservation, exact backups, and four
   injected second-file failure states with config, credential and PATH rollback.
 - Actual Codex CLI 0.165.0 loaded LLMP using bare `codex debug prompt-input`,
   without profile or config overrides. The smoke test also queried the effective
   native app-server configuration. The test owner independently checked 0.166.0.
+- Native 0.166.0 app-server checks passed for generated Sol and Astra catalogs,
+  preserving every non-tier model field. A fresh fixture TUI displayed the exact
+  `/ultrafast` command and toggled to ultrafast then back to default (two opposite
+  transitions, exit 0, no model prompt submitted). An initial automation attempt
+  assumed the starting state and timed out; a corrected state-aware probe passed.
 - Independent review found no unresolved major findings after fixes and targeted
   repros. See [the review](../review/windows-mvp-review.md).
 - Chromium screenshots were visually inspected at desktop/light and mobile/dark.
@@ -37,13 +44,22 @@ Existing-project research is available before the broader design conversation.
 
 ## Native Windows and publication evidence
 
-The [core publication workflow](https://github.com/clankercode/oneline-ccc/actions/runs/41384021098)
-passed in Windows PowerShell 5.1 and PowerShell 7 with the then-current 63-case suite:
-installs official native Codex through npm using a dummy credential, loads the
-generated profile without inference, deploys Pages only after those pass, and
-then compares/downloads/executes the hosted installer in dry-run mode in both
-PowerShell editions. The initial Pages environment allowed `master`; it was
-corrected to `main` and the failed deployment jobs rerun successfully.
+The [full publication workflow](https://github.com/clankercode/oneline-ccc/actions/runs/41397670175)
+passed at corrective checkpoint `143006f`: Windows PowerShell 5.1 and PowerShell 7 each
+passed **84 Codex cases and 87 SSH cases**, installed official native Codex with
+a dummy credential, and loaded LLMP through bare `codex`. The new catalog cases
+exercise complete version-matched metadata, native `model/list` Ultrafast name,
+automatic catalog creation, explicit tier restrictions, immutable reruns, and
+tamper refusal. The real SSH integration also passed in this same run. Conflicting supplied
+catalog/tier restrictions refuse without changing state; mixed executable
+fixtures verify that one selected native binary supplies version, catalog,
+staging and bare-command activation.
+
+Deployment then succeeded, followed by public download/byte comparison and
+scriptblock dry-run execution in both Windows PowerShell editions. A separate
+coordinator fetch confirmed the hosted Codex script SHA256 equals the tested
+source: `4a0cc4cc35700f5d066304bc703e93ae092a68d8eae7303110ed2f9593e8540e`.
+The site is https://clankercode.github.io/oneline-ccc/.
 
 Optional SSH adds a separate Windows integration gate for capability, service,
 firewall, account, effective authentication policy, actual loopback key login,
@@ -60,8 +76,12 @@ app/firewall rules requiring operator review.
 No real API key or inference request was used. Provider availability, actual
 Responses streaming/tool behavior, the selected model's capacity and gateway tier
 eligibility require an authorized deployment test. Optional supplied catalogs
-need to be complete and compatible with the target Codex version; installer
-fixtures exercise metadata checks, not every native catalog field.
+need to be complete and compatible with the target Codex version. Automatic
+Sol/Astra presets clone the complete official selected-model entry for the
+installed release; they require its public version tag to remain available.
+Preset Fast/Ultrafast metadata reflects operator-confirmed LLMP routing, not
+automatic subscription entitlement discovery. Other routes can restrict tiers
+or supply their own complete catalog.
 
 Native configuration validation uses private temporary staging storage. The
 installer stops and reaps its owned native processes and removes the copied
@@ -76,3 +96,16 @@ reviewed but is not exercised by that installation smoke test. Windows user
 credential persistence/rollback uses the standard environment API; test suites
 skip persistent user-key mutation. No test claims that user-environment storage
 is an encrypted credential vault.
+
+## Final workflow closeout
+
+The fresh whole-source review found two Important seams and two Minor doc
+issues. A fresh implementer fixed all four in one isolated pass; new tests
+reproduced five failures before the fix, then all eight focused cases passed.
+The same independent reviewer approved the scoped correction with no new
+findings. Coordinator merged-tree gates passed before the corrective Windows
+publication run above. [Ledger](../ledgers/windows-mvp-finalization-ledger.md),
+[final review](../ledgers/windows-mvp-finalization-final-review.md),
+[fix report](../ledgers/windows-mvp-finalization-final-fix.md), and
+[scoped approval](../ledgers/windows-mvp-finalization-final-rereview.md) retain the
+evidence and workflow adaptations. No broader TUI/daemon implementation began.

@@ -6,19 +6,11 @@ Reviewer changed this report only, apart from isolated cache artifacts.
 
 ## Status
 
-Current default-main-config targeted review is complete: the NullString fix
-passed same-process rollback tests in all four original-file states. No unresolved
-Important or Critical findings remain from this review. Native CI remains pending.
-
-Scope update: the operator now requires LLMP for bare `codex`, including a
-preserving merge into main `config.toml`. The previous profile-only clearance
-below does not cover that forthcoming implementation. Two-file/credential
-transaction and Windows bare-command resolution require a new review once ready.
-
-**No unresolved Important or Critical findings in the reviewed frozen source.**
-The material preservation, credential, policy, firewall, and transaction findings
-were corrected. Source can proceed to native CI verification; this does not claim
-native Windows or hosted deployment has passed.
+Focused integrated catalog/cleanup re-review, 2026-11-02: approved with no
+unresolved Important or Critical findings in this bounded review. Cleanup and
+snapshot findings are resolved; I1 is closed by the operator's explicit preset
+capability ruling recorded below. Native Windows execution remains the
+coordinator's CI verification; independent probes here ran on Linux pwsh.
 
 ## Independent evidence
 
@@ -306,12 +298,54 @@ absent; GUID-root/no-reparse and private DACL are checked at warning boundary.
 Only IO sharing/lock violations can become nonfatal after bounded retries.
 ACL, reparse, config-delete, and process-stop failures do not qualify.
 
-### Current Important: silent discovery failures can still report complete
+### Resolved: snapshot uncertainty must remain partial
 
-The collector's inner child catch and parent/edge mismatch exits can omit unknown
-descendants without marking Snapshot partial. This flag previously described
-diagnostic quality; it now authorizes nonfatal residue, so uncertainty must be
-fatal to that fallback. Shared partial state is now sticky, but every uncertain
-discovery branch must set it. Author and coordinator notified; no other concrete
-fallback blocker found in this focused pass. Catalog final-delta coordination
-with Jason is pending his response.
+Current `Get-CodexConfigDescendants` marks every inner observation exception,
+exited/mismatched parent, unverifiable edge, older child/cycle, and traversal
+cutoff partial. A later successful scan cannot clear that state. Independent
+actual-source AST extraction with a mismatched parent start time set partial;
+a subsequent successful empty CIM fixture preserved partial. The earlier
+Important snapshot finding is closed.
+
+## Final focused integrated catalog/cleanup verdict
+
+Spec and cleanup: approved under the binding preset capability ruling below,
+with no unresolved Important or Critical finding in the reviewed delta.
+No implementation or test files were edited. This is the bounded task re-review
+under ultra-code-workflows; the coordinator owns the fresh final release review.
+
+Catalog download is fixed to the installed version's official source, refuses
+redirects, bounds response bytes, and uses no API credential. Complete selected
+model metadata is preserved; content-addressed cache files are verified and not
+overwritten. Catalog creation precedes configuration/credential publication, so
+a later failure may leave an unreferenced public-metadata cache file without
+changing an existing catalog pointer. The existing two-file/key rollback remains
+in place. The cleanup warning remains restricted to sharing/lock failures after
+private-root, config-removal, validation, two reaps and complete-snapshot gates;
+unsafe or uncertain cases remain fatal.
+
+Independent focused probes: integrated source parsed; exact model metadata and
+tiers survived transformation; uncertain identity and sticky partial checks
+passed. Prior standalone probes also passed tier deduplication/case refusal,
+immutable reuse and tamper refusal without overwrite. These are Linux pwsh
+fixture results, not native PS5.1/Windows execution or paid inference.
+
+### Resolved I1: operator-confirmed preset tier defaults
+
+Location: `scripts/setup-codex.ps1:1023-1024`, consumed at 1056 and 1077.
+
+The original concern was that selecting either exact preset without explicit
+tiers advertises fast/ultrafast without discovering account entitlement. The
+operator has now supplied the binding clarification: missing `/ultrafast` must
+be supported for Codex, the local configuration supports it, and the target is
+LLMP Sol. The coordinator explicitly directed Fast+Ultrafast defaults for the
+exact Sol/Astra presets as operator-confirmed LLMP capability. This closes I1
+as authorized behavior; no implementation change is requested.
+
+The reviewed assignment applies only to exact `gpt-6.1-sol` and `gpt-6-astra`
+presets when no catalog or explicit SupportedServiceTiers argument is supplied.
+Explicit tiers and catalogs take precedence. Generic custom and GLM models do
+not receive these defaults. This is an operator-confirmed preset, not account
+entitlement discovery or a guarantee that arbitrary endpoints accept the tiers.
+The coordinator reports README wording makes that distinction; the fresh final
+reviewer will independently assess the public-default concern.
