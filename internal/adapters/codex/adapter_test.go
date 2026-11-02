@@ -87,7 +87,9 @@ func TestNativePreservationApplyAndNoop(t *testing.T) {
 	if err != nil || c.Profile.Model != fixtureProfile().Model || c.Profile.Tier != "Standard" || c.Profile.Budget != 500000 {
 		t.Fatalf("effective %+v %v", c, err)
 	}
-	again, err := a.Prepare(context.Background(), c.Profile, nil)
+	confirmed := c.Profile
+	confirmed.CapacityConfirmed = true // Adapter imports alone are not route evidence.
+	again, err := a.Prepare(context.Background(), confirmed, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

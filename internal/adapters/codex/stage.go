@@ -162,8 +162,8 @@ func (a *Adapter) edit(ctx context.Context, before []byte, values map[string]any
 	if err != nil {
 		return nil, err
 	}
-	if values["features.ultrafast_mode"] == true {
-		if err = a.validateCatalog(ctx, stage, text(values["model"])); err != nil {
+	if catalogPath := text(values["model_catalog_json"]); catalogPath != "" {
+		if err = a.validateCatalog(ctx, stage, text(values["model"]), values["features.ultrafast_mode"] == true); err != nil {
 			return nil, err
 		}
 	}
@@ -200,6 +200,11 @@ func ownedProfile(data []byte) bool {
 			return false
 		}
 	}
+	if raw, exists := doc["features"]; exists {
+		if _, ok := raw.(map[string]any); !ok {
+			return false
+		}
+	}
 	for key := range table(doc["features"]) {
 		if key != "ultrafast_mode" {
 			return false
@@ -209,7 +214,11 @@ func ownedProfile(data []byte) bool {
 	if len(providers) != 1 {
 		return false
 	}
-	for key := range table(providers["oneline_llmp"]) {
+	provider, ok := providers["oneline_llmp"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for key := range provider {
 		switch key {
 		case "name", "base_url", "wire_api", "env_key", "requires_openai_auth":
 		default:

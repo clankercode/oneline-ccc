@@ -9,7 +9,7 @@ import (
 
 // validateCatalog asks a fresh native model manager to deserialize the full
 // catalog. A config/read result alone does not establish usable model metadata.
-func (a *Adapter) validateCatalog(ctx context.Context, stage, model string) error {
+func (a *Adapter) validateCatalog(ctx context.Context, stage, model string, confirmedBoth bool) error {
 	return codexrpc.Run(ctx, a.Program, stage, func(c *codexrpc.Client) error {
 		var response struct {
 			Data []struct {
@@ -29,10 +29,10 @@ func (a *Adapter) validateCatalog(ctx context.Context, stage, model string) erro
 				fast = fast || tier.ID == "priority"
 				ultra = ultra || tier.ID == "ultrafast"
 			}
-			if fast && ultra {
+			if !confirmedBoth || fast && ultra {
 				return nil
 			}
 		}
-		return errors.New("Fresh native model catalog did not expose the confirmed Fast and Ultrafast tiers")
+		return errors.New("Fresh native model catalog did not expose the selected model and confirmed tiers")
 	})
 }

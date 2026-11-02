@@ -81,7 +81,6 @@ func (a *Adapter) Inspect(ctx context.Context) (core.Client, error) {
 	p.EnvKey = first(text(provider["env_key"]), p.EnvKey)
 	if n, ok := values["model_context_window"].(int64); ok && n > 0 {
 		p.Budget = n
-		p.CapacityConfirmed = true
 	}
 	if n, ok := values["model_auto_compact_token_limit"].(int64); ok && n > 0 {
 		p.Compact = n
@@ -90,8 +89,8 @@ func (a *Adapter) Inspect(ctx context.Context) (core.Client, error) {
 	}
 	p.Tier = displayTier(text(values["service_tier"]))
 	p.Catalog = text(values["model_catalog_json"])
-	features := table(values["features"])
-	p.TiersConfirmed = features["ultrafast_mode"] == true && text(values["model_provider"]) == "oneline_llmp"
+	// Native overrides prefill choices; only app evidence bound to this exact
+	// route/model/version can restore an operator's prior confirmations.
 	if p.BaseURL != "" {
 		c.Status = "CONFIGURED"
 	}
@@ -102,30 +101,7 @@ func (a *Adapter) Inspect(ctx context.Context) (core.Client, error) {
 // readConfig can plan a first setup without creating the client directory.
 // Apply revalidates the snapshot after explicitly creating the private home.
 func (a *Adapter) readConfig(name string) (configtxn.Write, error) {
-	path, err := filepath.Abs(filepath.Join(a.Home, name))
-	if err != nil {
-		return configtxn.Write{}, configtxn.ErrUnsafe
-	}
-	_, err = os.Lstat(filepath.Dir(path))
-	if err == nil {
-		return configtxn.Read(path)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return configtxn.Write{}, configtxn.ErrUnsafe
-	}
-	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
-		info, e := os.Lstat(dir)
-		if e != nil && !errors.Is(e, os.ErrNotExist) {
-			return configtxn.Write{}, configtxn.ErrUnsafe
-		}
-		if e == nil && (!info.IsDir() || info.Mode()&os.ModeSymlink != 0) {
-			return configtxn.Write{}, configtxn.ErrUnsafe
-		}
-		if filepath.Dir(dir) == dir {
-			break
-		}
-	}
-	return configtxn.Write{Path: path, Mode: 0600}, nil
+	return configtxn.ReadUncreated(filepath.Join(a.Home, name))
 }
 func (a *Adapter) stage() (string, error) {
 	if err := configtxn.PrivateDir(a.Scratch); err != nil {
