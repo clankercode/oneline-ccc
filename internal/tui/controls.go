@@ -70,8 +70,8 @@ func (m *model) controls() []control {
 			add("review:apply", "Apply exact reviewed plan", reason)
 		}
 	case "Jobs":
-		add("cancel", "Request cancellation", idleReason(m))
 		add("back", "Back; keep draft", "")
+		add("cancel", "Request cancellation", idleReason(m))
 	case "Gateway":
 		add("advanced:endpoint", "Edit local endpoint", why)
 		add("key", "Enter API key (hidden)", "")

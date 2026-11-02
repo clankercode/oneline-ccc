@@ -110,27 +110,9 @@ func (m *model) screenRows() []row {
 	case "Models":
 		return m.modelsRows()
 	case "Review":
-		if m.plan == nil {
-			text("No active review. Request a plan for the selected draft.")
-		} else {
-			pages := m.reviewPages()
-			page := min(m.reviewPage, len(pages)-1)
-			text(fmt.Sprintf("Exact changes | Page %d of %d", page+1, len(pages)))
-			for _, s := range pages[page] {
-				text(s)
-			}
-		}
+		return m.reviewRows()
 	case "Jobs":
-		if m.busy == "" {
-			text("No running action")
-		} else {
-			text("Running: " + m.busy)
-			text("Cancellation requests await the backend's final outcome.")
-		}
-		receipts := append(append([]coreReceipt(nil), receiptRows(m.snapshot.Receipts)...), receiptRows(m.receipts)...)
-		for _, r := range receipts {
-			text(r.text)
-		}
+		return m.jobsRows()
 	case "Gateway":
 		text("Gateway A | Endpoint edit is local only")
 		text("Credential: " + m.snapshot.Credential)

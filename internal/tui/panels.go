@@ -5,32 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/clankercode/oneline-ccc/internal/core"
 )
-
-func (m *model) reviewPages() [][]string {
-	if m.plan == nil {
-		return [][]string{{"No plan"}}
-	}
-	p := m.plan
-	lines := []string{"Client: " + p.ClientID, "Plan: " + p.ID, "Revision: " + p.Revision, fmt.Sprintf("Manage: %t", p.Desired.Enabled), "Exact model: " + p.Desired.Profile.Model, fmt.Sprintf("Budget: %d | Compact: %d", p.Desired.Profile.Budget, p.Desired.Profile.Compact), "Default tier: " + tierLabel(p.Desired.Profile.Tier), "Available tiers: " + tierAvailability(p.Desired.Profile.TiersConfirmed)}
-	for _, c := range p.Changes {
-		lines = append(lines, "Field: "+c.Field, "  Before: "+c.Before, "  After: "+c.After)
-	}
-	if p.Noop {
-		lines = append(lines, "No changes; Apply is unavailable")
-	}
-	var wrapped []string
-	for _, line := range lines {
-		wrapped = append(wrapped, strings.Split(ansi.Wrap(m.public(line), max(1, m.width), ""), "\n")...)
-	}
-	count := max(1, m.height-11)
-	var pages [][]string
-	for i := 0; i < len(wrapped); i += count {
-		pages = append(pages, wrapped[i:min(i+count, len(wrapped))])
-	}
-	return pages
-}
 
 func (m *model) modalRows() []row {
 	var rs []row
@@ -135,14 +110,4 @@ func (m *model) editorRows() []row {
 	after = ansi.Truncate(after, max(0, space-ansi.StringWidth(before)), "")
 	rs = append(rs, row{text: "> " + before + "|" + after, focus: true}, row{text: "Enter commits this field to the draft only."})
 	return rs
-}
-
-type coreReceipt struct{ text string }
-
-func receiptRows(rs []core.Receipt) []coreReceipt {
-	out := make([]coreReceipt, 0, len(rs))
-	for _, r := range rs {
-		out = append(out, coreReceipt{fmt.Sprintf("Receipt %s | %s | %s | %s", r.ID, r.ClientID, r.Outcome, r.Summary)})
-	}
-	return out
 }
