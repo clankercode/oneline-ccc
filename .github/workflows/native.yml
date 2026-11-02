@@ -20,6 +20,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-14]
     env:
       GOMAXPROCS: '2'
+      ONELINE_TEST_NATIVE_VAULT: disposable-ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
