@@ -3,7 +3,7 @@ package tui
 import "runtime"
 
 func (m *model) sshRows() []row {
-	status := "Not requested / helper not verified"
+	status := "Availability / not verified"
 	if runtime.GOOS != "windows" {
 		status = "Unavailable / Windows command only"
 	}
