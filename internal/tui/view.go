@@ -118,18 +118,14 @@ func (m *model) screenRows() []row {
 	case "Gateway":
 		return m.gatewayRows()
 	case "Service":
-		text("Optional background observation; setup works without it.")
-		text("Backend: " + m.snapshot.Service.Backend)
-		text("Observed: " + m.snapshot.Service.Status)
-		text(m.snapshot.Service.Detail)
+		return m.serviceRows()
 	case "Repair":
 		text("Manual repair brief only; no automatic agent execution.")
 		if m.repair != "" {
 			text(m.repair)
 		}
 	case "SSH":
-		text("Explicit handoff only. This does not enable a server.")
-		text("The backend may report this action unavailable.")
+		return m.sshRows()
 	case "Utilities":
 		text("Utility install/update is unavailable: no verified installer.")
 		text("No broader adapters are promised by this build.")
