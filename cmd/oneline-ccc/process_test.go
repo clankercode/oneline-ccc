@@ -133,3 +133,14 @@ func TestCancelledLaunchNormalizesRacingNativeWaitError(t *testing.T) {
 		t.Fatalf("cancelled native wait projected exit %d, want 130", got)
 	}
 }
+
+func TestRunProcessStartFailureDoesNotWaitForAssignment(t *testing.T) {
+	cmd := exec.Command(filepath.Join(t.TempDir(), "nonexistent-native-client"))
+	cmd.Env = []string{}
+	if err := runProcess(context.Background(), cmd, nil, io.Discard, io.Discard); err == nil {
+		t.Fatal("missing executable succeeded")
+	}
+	if cmd.Process != nil {
+		t.Fatal("missing executable started")
+	}
+}

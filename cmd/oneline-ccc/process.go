@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -50,8 +51,8 @@ func launch(ctx context.Context, o flags, e engine, d dependencies) int {
 // runProcess retains the backend's command and context configuration. The
 // explicit cancellation path also covers injected commands not built with
 // exec.CommandContext. An empty non-nil Env deliberately inherits nothing.
-func runProcess(ctx context.Context, cmd *exec.Cmd, in io.Reader, out, errout io.Writer) error {
-	if cmd == nil || cmd.Env == nil {
+func runProcess(ctx context.Context, cmd *exec.Cmd, in io.Reader, out, errout io.Writer) (result error) {
+	if cmd == nil || cmd.Env == nil || cmd.Process != nil {
 		return errArguments
 	}
 	if err := ctx.Err(); err != nil {
@@ -60,18 +61,38 @@ func runProcess(ctx context.Context, cmd *exec.Cmd, in io.Reader, out, errout io
 	cmd.Stdin = in
 	cmd.Stdout = out
 	cmd.Stderr = errout
+	tree, err := prepareProcessTree(cmd)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, tree.close()) }()
+	if cmd.Cancel != nil {
+		cmd.Cancel = tree.terminate
+	}
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if err := tree.started(); err != nil {
+		_ = tree.terminate()
+		_ = cmd.Process.Kill() // Also covers a failed suspended Windows assignment.
+		_ = cmd.Wait()
 		return err
 	}
 	finished := make(chan error, 1)
 	go func() { finished <- cmd.Wait() }()
 	select {
 	case err := <-finished:
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	case <-ctx.Done():
-		_ = cmd.Process.Kill()
+		cleanupErr := tree.terminate()
 		<-finished
-		return ctx.Err()
+		if errors.Is(cleanupErr, os.ErrProcessDone) {
+			cleanupErr = nil
+		}
+		return errors.Join(ctx.Err(), cleanupErr)
 	}
 }

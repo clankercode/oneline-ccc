@@ -29,27 +29,39 @@ func cleanText(s string) string {
 func safe(s string) string {
 	return credentialText.ReplaceAllString(urls.ReplaceAllString(cleanText(s), "[private route]"), "[credential hidden]")
 }
-func publicSnapshot(s core.Snapshot) core.Snapshot {
+func publicSnapshot(s core.Snapshot, terminal bool) core.Snapshot {
 	// Copy slices before redaction so a reusable backend snapshot is unchanged.
 	s.Clients = append([]core.Client(nil), s.Clients...)
 	s.Receipts = append([]core.Receipt(nil), s.Receipts...)
-	var private []string
+	var private, diagnosticPrivate []string
 	for _, c := range s.Clients {
 		for _, value := range []string{c.Executable, c.Profile.BaseURL, c.Profile.Catalog} {
 			if value != "" {
 				private = append(private, value)
+				if normalized := cleanText(value); normalized != "" {
+					diagnosticPrivate = append(diagnosticPrivate, normalized)
+				}
 			}
 		}
 	}
 	sort.Slice(private, func(i, j int) bool { return len(private[i]) > len(private[j]) })
+	sort.Slice(diagnosticPrivate, func(i, j int) bool { return len(diagnosticPrivate[i]) > len(diagnosticPrivate[j]) })
+	// JSON identities retain Unicode format characters such as ZWJ. Terminal
+	// presentation is cleaned separately, after this copied snapshot is redacted.
 	exact := func(value string) string {
-		for _, p := range private {
+		patterns := private
+		if terminal {
+			value = cleanText(value)
+			patterns = diagnosticPrivate
+		}
+		for _, p := range patterns {
 			value = strings.ReplaceAll(value, p, "[private]")
 		}
-		return cleanText(value)
+		return value
 	}
 	scrub := func(value string) string {
-		for _, p := range private {
+		value = cleanText(value)
+		for _, p := range diagnosticPrivate {
 			value = strings.ReplaceAll(value, p, "[private]")
 		}
 		return safe(value)
@@ -86,12 +98,14 @@ func publicSnapshot(s core.Snapshot) core.Snapshot {
 	return s
 }
 func printStatus(w io.Writer, s core.Snapshot, jsonOutput, doctor bool) error {
-	s = publicSnapshot(s)
+	s = publicSnapshot(s, !jsonOutput)
 	if jsonOutput {
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(s)
 	}
+	writes := &firstErrorWriter{writer: w}
+	w = writes
 	if doctor {
 		fmt.Fprintln(w, "Native Codex readiness; no authentication or inference check")
 	}
@@ -107,6 +121,25 @@ func printStatus(w io.Writer, s core.Snapshot, jsonOutput, doctor bool) error {
 	}
 	fmt.Fprintf(w, "Credential: %s\nMonitor: %s (%s)\n", s.Credential, s.Service.Status, s.Service.Backend)
 	fmt.Fprintln(w, "Verified native configuration path: Codex only. Inference: not verified.")
-	_, err := fmt.Fprintln(w, "TUI: use a terminal; Tab/Enter/Space, ? help, Ctrl+P commands.\nSource build: go build -o oneline-ccc ./cmd/oneline-ccc")
-	return err
+	fmt.Fprintln(w, "TUI: use a terminal; Tab/Enter/Space, ? help, Ctrl+P commands.\nSource build: go build -o oneline-ccc ./cmd/oneline-ccc")
+	return writes.err
+}
+
+// Retain the first failure even if a writer would accept later writes. Stop
+// rendering to it after failure, and treat a short write as an output failure.
+type firstErrorWriter struct {
+	writer io.Writer
+	err    error
+}
+
+func (w *firstErrorWriter) Write(p []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	n, err := w.writer.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	w.err = err
+	return n, err
 }
