@@ -22,6 +22,44 @@ for(const [variant,path] of Object.entries(paths)) {
       bad.entry.fixture.semantic_before=structuredClone(bad.entry.fixture.semantic_outcomes);
       await assert.rejects(check(bad),/Models|focus|identity/i);
     });
+    if(variant.startsWith('inline-'))test(`${variant}/${entry.cols} synchronized real nonfocused production row rejects (R1)`,async()=>{
+      const bad=clone(),o=bad.entry.fixture.semantic_outcomes.models,field=variant.slice(7);
+      const alternative={model:'glm-5.3',budget:272000,tier:'Fast'}[field];
+      const row=d.frame.text.find(line=>line.includes('( ) '+{model:'Model ',budget:'Budget ',tier:'Default tier '}[field]+alternative));
+      assert.ok(row,'real nonfocused production row exists');
+      o[field]=alternative;o.focused_id=field+':'+alternative;o.focused_row=row;
+      bad.entry.fixture.semantic_before=structuredClone(bad.entry.fixture.semantic_outcomes);
+      const view=structuredClone(bad.entry.fixture.expected_view);
+      await assert.rejects(check(bad),/Models.*focus|focused.*row|focus.*identity/i);
+      assert.deepEqual(bad.entry.fixture.expected_view,view);assert.equal(bad.frame,d.frame);assert.equal(bad.ansi,d.ansi);assert.equal(bad.png,d.png);
+    });
+    if(variant.startsWith('inline-'))test(`${variant}/${entry.cols} supplied focus marker cannot be removed`,async()=>{
+      const bad=clone();bad.entry.fixture.semantic_outcomes.models.focused_row=bad.entry.fixture.semantic_outcomes.models.focused_row.replace('> ','  ');
+      bad.entry.fixture.semantic_before=structuredClone(bad.entry.fixture.semantic_outcomes);
+      await assert.rejects(check(bad),/Models.*focus|marker/i);
+    });
+    if(variant.startsWith('inline-'))test(`${variant}/${entry.cols} synchronized forged focus marker on an ordinary row rejects`,async()=>{
+      const bad=clone(),o=bad.entry.fixture.semantic_outcomes.models,field=variant.slice(7),alternative={model:'glm-5.3',budget:272000,tier:'Fast'}[field];
+      const ordinary=d.frame.text.find(line=>line.includes('( ) '+{model:'Model ',budget:'Budget ',tier:'Default tier '}[field]+alternative));
+      assert.ok(ordinary);
+      const forged=ordinary.trim().replace(/^\( /,'> ( ');
+      o[field]=alternative;o.focused_id=field+':'+alternative;o.focused_row=forged;
+      o.body_rows=o.body_rows.map(row=>row.trim().startsWith('> ')?row.replace('> ','  '):row.trim()===ordinary.trim()?forged:row);
+      bad.entry.fixture.semantic_before=structuredClone(bad.entry.fixture.semantic_outcomes);
+      await assert.rejects(check(bad),/Models.*focus|marker/i);
+    });
+    if(variant.startsWith('inline-') && paths['advanced-collapsed'])test(`${variant}/${entry.cols} genuine collapsed-form bytes reject borrowed inline observations`,async()=>{
+      const path=paths['advanced-collapsed'],manifest=JSON.parse(await readFile(path,'utf8'));
+      const baseline=structuredClone(manifest.captures.find(e=>e.cols===entry.cols));assert.ok(baseline);
+      const file=kind=>readFile(join(dirname(path),baseline.files[kind].path));
+      const view=structuredClone(baseline.fixture.expected_view);
+      baseline.variant=baseline.fixture.variant=variant;
+      baseline.fixture.semantic_outcomes=structuredClone(entry.fixture.semantic_outcomes);
+      baseline.fixture.semantic_before=structuredClone(entry.fixture.semantic_before);
+      const native={entry:baseline,frame:JSON.parse(await file('frame')),png:await file('png'),ansi:await file('ansi')};
+      await assert.rejects(check(native),/Models|focus|production|frame/i);
+      assert.deepEqual(baseline.fixture.expected_view,view);
+    });
     if(variant.startsWith('advanced-'))test(`${variant}/${entry.cols} relabeling disclosure rejects actual marker`,async()=>{
       const bad=clone();bad.entry.variant=bad.entry.fixture.variant=variant==='advanced-expanded'?'advanced-collapsed':'advanced-expanded';
       bad.entry.fixture.semantic_outcomes.models.advanced=!bad.entry.fixture.semantic_outcomes.models.advanced;

@@ -185,6 +185,18 @@ function preparedDashboard(entry,frame,o) {
   }
 }
 
+// The rendered marker supplies focus, not the observer's chosen substring.
+// Compare complete production/frame rows before decoding their exact identity.
+function modelsFocusedChoice(frame,m,field,identity) {
+  const focused=frame.text.map(line=>line.trim()).filter(line=>/^>\s/u.test(line));
+  const production=Array.isArray(m.body_rows)?m.body_rows.map(line=>line.trim()).filter(line=>/^>\s/u.test(line)):[];
+  if(focused.length!==1 || production.length!==1 || focused[0]!==production[0]
+    || typeof m.focused_row!=='string' || m.focused_row.trim()!==focused[0])throw new Error('Models focused production row/marker disagrees with actual frame');
+  const patterns={model:/^> \([o ]\) (?:Model|Current exact ID) (.+)$/u,budget:/^> \([o ]\) Budget ([0-9]+)$/u,tier:/^> \([o ]\) Default tier (Standard|Fast|Ultrafast)$/u};
+  const match=patterns[field].exec(focused[0]);
+  if(!match || match[1]!==identity || m.focused_id!==field+':'+match[1])throw new Error('Models focused row exact identity differs from observations');
+}
+
 function semanticOutcomes(entry,frame) {
   const legacy=entry.validation_schema<3 || !entry.validation_schema;
   const hasClients=Object.hasOwn(entry.fixture,'clients');
@@ -212,7 +224,8 @@ function semanticOutcomes(entry,frame) {
         || !/^[0-9a-f]{64}$/.test(m.draft_sha256))throw new Error('Models selector/identity/unchanged draft observations missing');
       if(entry.variant.startsWith('inline-')) {
         const field=entry.variant.slice(7),prefix=field+':',identity={model:m.model,budget:String(m.budget),tier:m.tier || 'Standard'}[field];
-        if(m.focused_id!==prefix+identity || typeof m.focused_row!=='string' || !m.focused_row.includes(identity) || !text.replace(/\s+/gu,' ').includes(m.focused_row.replace(/\s+/gu,' ').trim()) || m.chooser!==field || !(m.focused_id.startsWith(prefix) || field==='model' && m.focused_id.startsWith('discovered:'))
+        modelsFocusedChoice(frame,m,field,identity);
+        if(m.focused_id!==prefix+identity || typeof m.focused_row!=='string' || m.chooser!==field || !(m.focused_id.startsWith(prefix) || field==='model' && m.focused_id.startsWith('discovered:'))
           || !text.includes({model:'Choose model ID',budget:'Choose context budget',tier:'Choose default request tier'}[field]))throw new Error('Models inline chooser/focus not visible');
       } else {
         if(m.focused_id!=='models:advanced' || m.chooser!=='' || m.advanced!==(entry.variant==='advanced-expanded'))throw new Error('Models Advanced disclosure state differs');
