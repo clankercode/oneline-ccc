@@ -8,8 +8,69 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestRepairWideFocusDoesNotRestyleExactBrief(t *testing.T) {
+	for _, size := range [][2]int{{120, 40}, {100, 30}} {
+		for _, appearance := range []string{"dark", "light", "mono", "no-color"} {
+			for _, state := range []string{"empty", "preparing", "prepared"} {
+				t.Run(fmt.Sprintf("%dx%d/%s/%s", size[0], size[1], appearance, state), func(t *testing.T) {
+					m, _ := loaded(t)
+					m.width, m.height = size[0], size[1]
+					m.options.Theme, m.options.NoColor, m.options.ASCII = appearance, appearance == "no-color", appearance == "no-color"
+					if m.options.NoColor {
+						m.options.Theme = "dark"
+					}
+					m.goTo("Repair")
+					if state != "empty" {
+						m.repair = strings.Repeat("exact public brief evidence row\n", 24)
+					}
+					if state == "preparing" {
+						m.busy = "repair"
+					}
+					m.focus, m.scroll = 0, 0
+					plain := strings.Split(m.View().Content, "\n")
+					selected, draft, brief := m.selected, m.draft(), m.repair
+					controls := append([]control(nil), m.controls()...)
+					leftWidth := (m.contentWidth() - 3) / 2
+					first, last := m.inset()+leftWidth+3, m.width-m.inset()
+					for i, c := range controls {
+						if i < navCount {
+							continue
+						}
+						m.focus = i
+						focused := strings.Split(m.View().Content, "\n")
+						found := false
+						for y := len(m.shellHeader()); y < m.height-len(m.shellFooter("")); y++ {
+							a := uv.NewStyledString(focused[y]).Lines(ansi.GraphemeWidth)[0]
+							b := uv.NewStyledString(plain[y]).Lines(ansi.GraphemeWidth)[0]
+							for x := first; x < last; x++ {
+								if !reflect.DeepEqual(a[x], b[x]) {
+									t.Fatalf("%s focus changed exact-brief cell (%d,%d): focused=%#v plain=%#v", c.id, x, y, a[x], b[x])
+								}
+							}
+							if strings.Contains(ansi.Strip(focused[y]), "> "+c.label) {
+								found = true
+								if !m.options.NoColor && reflect.DeepEqual(a[m.inset()+leftWidth-1].Style, b[m.inset()+leftWidth-1].Style) {
+									t.Fatalf("%s lost its action-panel focus fill", c.id)
+								}
+							}
+						}
+						if !found {
+							t.Fatalf("%s focused action/marker missing", c.id)
+						}
+						assertFrame(t, m)
+					}
+					if m.selected != selected || m.draft() != draft || m.repair != brief || m.scroll != 0 || !reflect.DeepEqual(controls, m.controls()) {
+						t.Fatal("focus rendering changed document, selection, draft, paging or controls")
+					}
+				})
+			}
+		}
+	}
+}
 
 func TestRepairBriefPagingPreservesPublicAuthorityAndDraft(t *testing.T) {
 	for _, size := range [][2]int{{120, 40}, {100, 30}, {80, 24}, {60, 20}, {40, 12}} {

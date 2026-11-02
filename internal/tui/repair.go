@@ -1,6 +1,10 @@
 package tui
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 // RepairBrief has no target argument: selection is context, while the backend
 // inspects the whole snapshot. A retained brief has no selected-client binding.
@@ -67,9 +71,26 @@ func (m *model) repairRows() []row {
 		if i < len(right) {
 			r = right[i]
 		}
-		rs = append(rs, row{text: m.fill(l.text, leftWidth, surfaceBase) + m.note(separator) + r.text, focus: l.focus || r.focus})
+		rs = append(rs, row{text: m.repairPanelCell(l, leftWidth) + m.repairPanelCell(row{text: m.note(separator)}, 3) + m.repairPanelCell(r, width-leftWidth-3), focus: l.focus || r.focus})
 	}
 	return rs
+}
+
+// The outer column keeps the combined row focused for paging. Give each panel
+// its own colors and intensity so that focus cannot restyle the exact brief.
+func (m *model) repairPanelCell(r row, width int) string {
+	role := surfaceBase
+	if r.focus {
+		role = surfaceActive
+	}
+	text := m.fill(r.text, width, role)
+	if !m.options.NoColor && !r.focus {
+		// Base colors alone inherit the outer focus's bold SGR. Restore
+		// normal intensity at the boundary and after nested style resets.
+		normal := ansi.Style{}.Normal().String()
+		text = normal + strings.NewReplacer(ansi.ResetStyle, ansi.ResetStyle+normal, "\x1b[0m", "\x1b[0m"+normal).Replace(text)
+	}
+	return text
 }
 
 // Wrap before filling: notice text must remain available at narrow widths.
