@@ -315,8 +315,8 @@ func TestCompositionSmallDashboardStartsWithClientScope(t *testing.T) {
 	m := compositionFixture(t)
 	m.width, m.height = 40, 12
 	frame := strings.Split(ansi.Strip(m.View().Content), "\n")
-	if !strings.Contains(frame[3], "Your clients") {
-		t.Fatalf("small Dashboard starts with an orphaned summary: %q", frame[3])
+	if !strings.Contains(frame[3], "Codex") {
+		t.Fatalf("small Dashboard starts without its selected client: %q", frame[3])
 	}
 	assertFrame(t, m)
 }
@@ -379,4 +379,62 @@ func TestCompositionUnicodeModelTierAndClientActionLabels(t *testing.T) {
 		}
 	}
 	assertFrame(t, m)
+}
+
+func TestCompositionCompactDefaultShowsSummaryAndPrimaryActions(t *testing.T) {
+	m := compositionFixture(t)
+	for _, dirty := range []bool{false, true} {
+		m.drafts["codex"] = m.baselines["codex"]
+		if dirty {
+			d := m.draft()
+			d.Profile.Budget++
+			m.drafts["codex"] = d
+		}
+		for _, size := range [][2]int{{80, 24}, {60, 20}, {40, 12}} {
+			m.width, m.height = size[0], size[1]
+			m.focusID("client:codex")
+			m.scroll = -1
+			frame := ansi.Strip(m.View().Content)
+			for _, value := range []string{"Codex", "gpt-6.1-sol / Standard", "Configure Codex", "Review Codex draft", "Launch Codex"} {
+				if !strings.Contains(frame, value) {
+					t.Errorf("%dx%d dirty=%t compact view hides %q", m.width, m.height, dirty, value)
+				}
+			}
+			if dirty && !strings.Contains(frame, "Draft") {
+				t.Fatal("compact summary hides pending draft")
+			}
+			assertFrame(t, m)
+		}
+	}
+}
+
+func TestCompositionCompactWindowFollowsLocalArrowsWithoutStaging(t *testing.T) {
+	m := compositionFixture(t)
+	m.width, m.height = 40, 12
+	before := make(map[string]core.Desired)
+	for id, d := range m.drafts {
+		before[id] = d
+	}
+	for _, c := range m.snapshot.Clients {
+		frame := ansi.Strip(m.View().Content)
+		if m.selected != c.ID || !strings.Contains(frame, c.Name) {
+			t.Fatalf("compact client window did not follow %s", c.Name)
+		}
+		assertFrame(t, m)
+		press(m, "down")
+	}
+	for id, d := range before {
+		if m.drafts[id] != d {
+			t.Fatalf("compact traversal staged %s", id)
+		}
+	}
+}
+
+func TestCompositionFooterSeparatesCurrentRegionFromF6Action(t *testing.T) {
+	m := compositionFixture(t)
+	m.width, m.height = 40, 12
+	frame := ansi.Strip(m.View().Content)
+	if !strings.Contains(frame, "In Clients") || !strings.Contains(frame, "F6 next") {
+		t.Fatal("current region reads as the target of F6")
+	}
 }

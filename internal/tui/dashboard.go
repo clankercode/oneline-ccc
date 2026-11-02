@@ -58,8 +58,11 @@ func (m *model) dashboardRows() []row {
 	} else {
 		right = append(right, row{text: "No client selected. Inspect or refresh local settings."})
 	}
+	if !m.wideDashboard() {
+		return m.compactDashboardRows(right, matches, managed)
+	}
 	right = append(right, row{})
-	right = append(right, m.dashboardNotice(rightWidth)...)
+	right = append(right, m.dashboardNotice(rightWidth, false)...)
 	right = append(right, row{}, row{text: m.heading("NEXT ACTIONS")})
 	aux := false
 	for i, control := range m.controls() {
@@ -96,12 +99,6 @@ func (m *model) dashboardRows() []row {
 		selected = m.public(c.Name)
 	}
 	left = append(left, row{text: m.note(fmt.Sprintf("Selected: %s / %d matching clients", selected, matches))})
-	if !m.wideDashboard() {
-		// Full list remains traversable; focus follow keeps each entry readable.
-		rs = append(rs, left...)
-		rs = append(rs, row{}, row{text: m.rule(width)}, row{})
-		return append(rs, right...)
-	}
 	left, right = m.column(left, leftWidth), m.column(right, rightWidth)
 	for i := 0; i < max(len(left), len(right)); i++ {
 		l, r := row{text: strings.Repeat(" ", leftWidth)}, row{}
@@ -181,4 +178,111 @@ func (m *model) column(rows []row, width int) []row {
 		}
 	}
 	return result
+}
+
+// Compact terminals show a window on the logical client list, then the selected
+// summary and primary actions. All control IDs/order stay in controls(); local
+// arrows move this window, and full applied detail remains in the document.
+func (m *model) compactDashboardRows(details []row, matches, managed int) []row {
+	width := m.contentWidth()
+	cs := m.controls()
+	chosen, position := -1, 0
+	var clients []int
+	for i, c := range cs {
+		if strings.HasPrefix(c.id, "client:") {
+			clients = append(clients, i)
+			if chosen < 0 || c.id == "client:"+m.selected {
+				chosen = i
+			}
+		}
+	}
+	for p, i := range clients {
+		if i == m.focus {
+			chosen = i
+			position = p
+			break
+		}
+		if i == chosen {
+			position = p
+		}
+	}
+	var rs []row
+	tiny := m.height <= 12
+	if !tiny {
+		rs = append(rs, row{text: m.heading("Your clients") + m.note(fmt.Sprintf(" / %d of %d / %d managed", min(matches, position+1), matches, managed))}, row{text: m.note("Up/Down clients / Space manage / / filter")})
+		if m.filter != "" {
+			rs = append(rs, row{text: m.note(ansi.Truncate("Filter: "+m.public(m.filter), width, m.ellipsis()))})
+		}
+	}
+	if chosen >= 0 {
+		id := strings.TrimPrefix(cs[chosen].id, "client:")
+		for _, c := range m.snapshot.Clients {
+			if c.ID != id {
+				continue
+			}
+			other := c.ID != m.selected
+			if other {
+				selected, _ := m.client()
+				rs = append(rs, row{text: m.note(ansi.Truncate("Selected: "+m.public(selected.Name)+" / applied settings", width, m.ellipsis()))})
+			}
+			entry := m.clientRows(c, chosen, width)
+			if tiny && other {
+				management := "not managed"
+				if c.Managed {
+					management = "managed"
+				}
+				tier := m.public(tierLabel(c.Profile.Tier))
+				name := ansi.Truncate(m.public(c.Profile.Model), max(1, width-8-ansi.StringWidth(tier)-len(management)), m.ellipsis())
+				entry = []row{entry[0], {text: "  " + m.modelDefault(name, tier) + " / " + m.note(management)}}
+			} else if tiny {
+				management := "not managed / Selected"
+				if c.Managed {
+					management = "Applied: managed / Selected"
+				}
+				if m.drafts[c.ID] != m.baselines[c.ID] {
+					management = "not managed / Selected / Draft"
+					if c.Managed {
+						management = "managed / Selected / Draft"
+					}
+				}
+				entry = []row{entry[0], entry[1], {text: "  " + m.note(fmt.Sprintf("%s %d/%d", management, position+1, matches)), selected: true}}
+			} else {
+				entry = entry[:len(entry)-1]
+			}
+			rs = append(rs, entry...)
+			break
+		}
+	} else {
+		message := "No matching clients. Clear filter or refresh."
+		if len(m.snapshot.Clients) == 0 {
+			message = "No clients found. r refresh inspection."
+		}
+		rs = append(rs, row{text: m.note(message)})
+		for i, c := range cs {
+			if c.id == "filter:clear" {
+				rs = append(rs, m.controlRow(c, i))
+			}
+		}
+	}
+	if !tiny {
+		if c, ok := m.client(); ok {
+			rs = append(rs, row{text: m.note(fmt.Sprintf("Budget %d / Compact %d", c.Profile.Budget, c.Profile.Compact))}, row{text: m.note("Available tiers: " + tierAvailability(m.appliedTiers()))})
+		}
+		rs = append(rs, m.dashboardNotice(width, true)...)
+		rs = append(rs, row{text: m.heading("NEXT ACTIONS")})
+	}
+	for i, c := range cs {
+		if c.id == "configure" || c.id == "plan" || c.id == "launch" {
+			rs = append(rs, m.actionRows(c, i, width, true)...)
+		}
+	}
+	rs = append(rs, row{}, row{text: m.heading("Optional monitor / Help")})
+	for i, c := range cs {
+		if i < navCount || strings.HasPrefix(c.id, "client:") || c.id == "filter:clear" || c.id == "configure" || c.id == "plan" || c.id == "launch" {
+			continue
+		}
+		rs = append(rs, m.actionRows(c, i, width, false)...)
+	}
+	rs = append(rs, row{}, row{text: m.rule(width)})
+	return append(rs, details...)
 }

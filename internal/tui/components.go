@@ -157,12 +157,19 @@ func (m *model) shellHeader() []string {
 
 func (m *model) footerHints() []string {
 	c := m.focused()
-	hints := []string{"F6 " + m.region(m.focus, c) + "  [ ] section  Tab/Shift+Tab", "Up/Down local  Enter act  Esc back"}
+	regionHint := "In " + m.region(m.focus, c) + " | F6 next  Tab/Shift+Tab"
+	if m.width >= 60 {
+		regionHint = "In " + m.region(m.focus, c) + " | F6 next  [ ] section  Tab/Shift+Tab"
+	}
+	hints := []string{regionHint, "Up/Down local  Enter act  Esc back"}
 	if m.focus < navCount {
 		hints[1] = "Left/Right tabs  Enter open  Esc back"
 	}
 	if strings.HasPrefix(c.id, "client:") || c.id == "enabled" || c.id == "capacity" || c.id == "tiers" || c.id == "ascii" || c.id == "color" || c.id == "motion" {
 		hints[1] = "Space toggle  Enter act  Esc back"
+	}
+	if strings.HasPrefix(c.id, "client:") {
+		hints[1] = "Up/Down  Space toggle  Enter  Esc back"
 	}
 	if m.modal == "more" {
 		hints = []string{"Tab/Shift+Tab menu", "Up/Down menu  Enter open  Esc back"}
@@ -312,7 +319,7 @@ func (m *model) modelDefault(model, tier string) string {
 	return m.public(model) + separator + m.heading(m.public(tierLabel(tier)))
 }
 
-func (m *model) dashboardNotice(width int) []row {
+func (m *model) dashboardNotice(width int, concise bool) []row {
 	title, message := "Select a client", "Choose a client or r refresh local inspection."
 	if c, ok := m.client(); ok {
 		switch {
@@ -332,6 +339,21 @@ func (m *model) dashboardNotice(width int) []row {
 			title = "Ready to configure"
 			message = "Configure this client, enable management and review the draft before applying."
 		}
+	}
+	if concise {
+		switch title {
+		case "Inspection only":
+			message = "Read only; Configure to inspect. Detail below."
+		case "Draft waiting for review":
+			message = "Review draft before applying; current settings stay."
+		case "Configured / no pending draft":
+			message = "Local settings applied; Auth / API unverified."
+		case "Managed / no pending draft":
+			message = "Inspect local settings; Auth / API unverified."
+		case "Ready to configure":
+			message = "Configure, enable management, then review."
+		}
+		message = ansi.Truncate(message, max(1, width-2), m.ellipsis())
 	}
 	edge := "│ "
 	if m.options.ASCII {
