@@ -229,6 +229,11 @@ exit $probeExit
         if (Test-Path -LiteralPath $probeDirectory) { Remove-Item -LiteralPath $probeDirectory -Force }
     }
 }
+function Assert-SshAccessListsSupported([string]$ConfigurationText) {
+    if ($ConfigurationText -match '(?im)^[ \t]*(AllowUsers|DenyUsers|AllowGroups|DenyGroups)[ \t]+') {
+        throw 'Existing SSH account/group access lists require manual review (AllowUsers, DenyUsers, AllowGroups or DenyGroups). Confirm the intended user is permitted and reconcile this policy manually before rerunning; no access list was changed.'
+    }
+}
 function Assert-NoReparse([string]$Path) {
     $current = $Path
     while ($current) {
@@ -246,6 +251,7 @@ $sshRoot = Join-Path $env:ProgramData 'ssh'
 Assert-NoReparse $sshRoot
 $configPath = Join-Path $sshRoot 'sshd_config'
 Assert-NoReparse $configPath
+if (Test-Path -LiteralPath $configPath) { Assert-SshAccessListsSupported ([IO.File]::ReadAllText($configPath)) }
 $previousRules = @(Get-NetFirewallRule -PolicyStore ActiveStore | Select-Object -ExpandProperty Name)
 $freshRuleCreated = $false
 $capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
@@ -273,6 +279,7 @@ if (-not (Test-Path -LiteralPath $sshRoot)) { New-Item -ItemType Directory -Path
 if (Test-Path -LiteralPath $configPath) { $original = [IO.File]::ReadAllText($configPath) }
 else { $original = [IO.File]::ReadAllText((Join-Path (Split-Path $sshd) 'sshd_config_default')) }
 if ($original -match '(?im)^\s*Include\s+') { throw 'Existing Include directives require manual review; included authentication policy is outside this MVP.' }
+Assert-SshAccessListsSupported $original
 # Address-dependent Match policies cannot be proven safe using a localhost -T probe.
 foreach ($line in ($original -split '\r?\n')) {
     if ($line -match '^\s*Match\s+' -and $line -notmatch '(?i)^\s*Match\s+(all|(?:User|Group)\s+[^\s#]+)\s*(?:#.*)?$') {

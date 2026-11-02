@@ -256,7 +256,7 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     # Fail closed when the source gains a new command. Every mutator in this
     # allowlist is overridden below; only bounded scratch-file commands pass through.
     $allowed = @('Add-LocalGroupMember', 'Add-Type', 'Add-WindowsCapability', 'Assert-FixturePath',
-        'Assert-NoReparse', 'ConvertTo-SecureString', 'Copy-Item', 'Get-Acl', 'Get-ChildItem',
+        'Assert-NoReparse', 'Assert-SshAccessListsSupported', 'ConvertTo-SecureString', 'Copy-Item', 'Get-Acl', 'Get-ChildItem',
         'ForEach-Object', 'Get-SshEffectivePolicy', 'Get-ScheduledTask', 'New-ScheduledTaskAction', 'New-ScheduledTaskPrincipal', 'New-ScheduledTaskSettingsSet', 'New-TimeSpan', 'Register-ScheduledTask', 'Start-ScheduledTask', 'Stop-ScheduledTask', 'Unregister-ScheduledTask', 'Start-Sleep', 'Get-CimInstance', 'Get-Item', 'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser',
         'Get-NetConnectionProfile', 'Get-NetFirewallProfile', 'Get-NetFirewallAddressFilter', 'Get-NetFirewallApplicationFilter',
         'Get-NetFirewallPortFilter', 'Get-NetFirewallServiceFilter', 'Get-NetFirewallRule',
@@ -733,7 +733,7 @@ foreach ($markerCase in $markerCases) {
         Write-Utf8 (Join-Path $state.ProgramData 'ssh/sshd_config') ("Port 22`n" + $markerCase.Text)
         $before = Get-LiveFixtureState $state
         $result = Invoke-MockedSetup $state -Failure
-        Assert-True ($result.Error -match 'managed block|marker') ('Wrong managed block refusal: ' + $result.Error)
+        Assert-True ($result.Error -match 'managed block|marker|access lists require manual review') ('Wrong managed block refusal: ' + $result.Error)
         Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Refused managed block changed live state'
     }
 }
@@ -763,6 +763,17 @@ Test-Case 'unconfirmed SYSTEM task stop preserves protected files and refuses au
     Assert-True ($state.TaskRegistered) 'Running task was unregistered before confirmed stop'
     Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $state.ProgramData 'ssh') -Filter 'Oneline-CCC-SSH-Probe-*').Count -eq 1) 'Protected files deleted while task could still run'
     Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Unconfirmed stop installed authorization or changed service/firewall'
+}
+foreach ($accessDirective in @('AllowUsers', 'DenyUsers', 'AllowGroups', 'DenyGroups')) {
+    Test-Case ('existing account access list refuses unchanged: ' + $accessDirective) {
+        $state = New-SetupFixture ('access-list-' + $accessDirective)
+        Write-Utf8 (Join-Path $state.ProgramData 'ssh/sshd_config') ("# operator policy`n" + $accessDirective + " operators`nPort 22`n")
+        $before = Get-LiveFixtureState $state
+        $result = Invoke-MockedSetup $state -Failure
+        Assert-True ($result.Error -match 'access lists require manual review') ('Wrong access-list refusal: ' + $result.Error)
+        Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Access-list refusal changed existing authorization or service/firewall state'
+        Assert-True ($state.Events.Count -eq 0) 'Access-list refusal reached setup mutations'
+    }
 }
 # FINAL_RESULTS
 Write-Output ('Results: ' + $script:passed + ' passed; ' + $script:failures.Count + ' failed. Artifacts: ' + $root)

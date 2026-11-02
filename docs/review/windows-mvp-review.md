@@ -260,3 +260,25 @@ Independent actual Stop-function injection made both descendant diagnostics and
 input Close throw. Shutdown still performed two waits, kill/reap, and disposal,
 while marking the snapshot partial. No broader test round or native CIM execution
 was run. Existing native Windows CI remains the runtime verification gate.
+
+## Captured-descendant shutdown and SSH access-list delta
+
+Focused review found no new Important or Critical issue. Discovery pins each
+parent/child process, rechecks CIM parentage while pinned, requires child start
+time at least the captured parent's, and bounds traversal by count/time. Shutdown
+uses only captured records, reopens/pins each process, requires exact start-time
+identity, and terminates deepest first with bounded waits. No name-only, reused
+PID, or broad system-process killing is introduced.
+
+Independent controlled-process test of the actual Stop function killed/reaped an
+exact captured identity while leaving a deliberately mismatched start-time record
+alive. Both test processes were created and cleaned up by this isolated test.
+This checks the kill identity boundary on Linux; Windows handle/CIM enumeration
+semantics remain native CI evidence.
+
+SSH now refuses active AllowUsers/DenyUsers/AllowGroups/DenyGroups before setup
+without rewriting operator access policy. The guarded disposable CI fixture
+explicitly removes runner AllowGroups restrictions; that operation is not in
+production helper code. Existing access lists cannot silently be broadened by
+this new refusal path. Shared managed-profile recognizer extraction in the same
+diff preserves the previous exact grammar on inspection.

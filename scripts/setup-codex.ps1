@@ -84,14 +84,7 @@ function Get-UpdatedConfig([string]$Existing, [string]$Block) {
         }
         # Only replace the exact shape we generate. Refuse hand-added settings
         # rather than dropping them, even inside an installer-owned file.
-        $generatedShape = '\A' + [regex]::Escape($beginMarker) + '\r?\n' +
-            "model_provider = 'oneline_llmp'\r?\nmodel = '[^'\r\n]*'\r?\n" +
-            'model_context_window = [0-9]+\r?\nmodel_auto_compact_token_limit = [0-9]+\r?\n' +
-            "(?:service_tier = '[^'\r\n]*'\r?\n)?(?:model_catalog_json = '[^'\r\n]*'\r?\n)?\r?\n" +
-            "\[model_providers\.oneline_llmp\]\r?\nname = 'LLMP \(oneline-ccc\)'\r?\n" +
-            "base_url = '[^'\r\n]*'\r?\nwire_api = 'responses'\r?\nenv_key = 'LLMP_API_KEY'\r?\n" +
-            'requires_openai_auth = false\r?\n\r?\n' + [regex]::Escape($endMarker) + '\r?\n?\z'
-        if ($Existing -cnotmatch $generatedShape) {
+        if (-not (Test-CodexManagedDefault $Existing)) {
             throw 'Existing config profile has manual changes. Preserve them in a different profile before rerunning setup.'
         }
         $existingUrl = [regex]::Match($Existing, "(?m)^base_url = '([^'\r\n]*)'\r?$").Groups[1].Value
@@ -384,34 +377,54 @@ function Start-CodexConfigProcess([string]$Executable, [string]$Stage, [string]$
 }
 
 # Diagnostic only: targeted parent-PID queries, no command lines or process killing.
-function Get-CodexConfigDescendants([int]$RootProcessId, [hashtable]$Diagnostics) {
+function Get-CodexConfigDescendants([int]$RootProcessId, [hashtable]$Diagnostics, [datetime]$RootStarted) {
     $items = @()
     if ($env:OS -ne 'Windows_NT') { return $items }
     $Diagnostics.Snapshot = 'complete'
-    $pending = New-Object 'System.Collections.Generic.Queue[int]'
-    $pending.Enqueue($RootProcessId)
+    $pending = New-Object 'System.Collections.Generic.Queue[object]'
+    $pending.Enqueue(@{Id = $RootProcessId; Started = $RootStarted; Depth = 0})
+    $seen = New-Object 'System.Collections.Generic.HashSet[int]'
+    $null = $seen.Add($RootProcessId)
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while ($pending.Count -gt 0 -and $items.Count -lt 32 -and $clock.ElapsedMilliseconds -lt 2000) {
-        $ownerPid = $pending.Dequeue()
+        $owner = $pending.Dequeue()
+        $parent = $null
         try {
-            $children = @(Get-CimInstance Win32_Process -Filter ('ParentProcessId=' + $ownerPid) -Property ProcessId,Name -OperationTimeoutSec 1 -ErrorAction Stop)
+            $parent = [Diagnostics.Process]::GetProcessById($owner.Id)
+            $null = $parent.Handle
+            if ($parent.HasExited -or $parent.StartTime.ToUniversalTime() -ne $owner.Started) { continue }
+            $children = @(Get-CimInstance Win32_Process -Filter ('ParentProcessId=' + $owner.Id) -Property ProcessId,Name -OperationTimeoutSec 1 -ErrorAction Stop)
             foreach ($child in $children) {
                 if ($items.Count -ge 32) { $Diagnostics.Snapshot = 'partial'; break }
                 $observed = $null
                 try {
                     $observed = [Diagnostics.Process]::GetProcessById([int]$child.ProcessId)
+                    $null = $observed.Handle
+                    if ($clock.ElapsedMilliseconds -ge 2000) { $Diagnostics.Snapshot = 'partial'; break }
+                    # Pin the child before confirming the relationship again, so
+                    # PID reuse between enumeration and opening cannot grant ownership.
+                    $verified = @(Get-CimInstance Win32_Process -Filter ('ProcessId=' + $observed.Id + ' AND ParentProcessId=' + $owner.Id) -Property ProcessId -OperationTimeoutSec 1 -ErrorAction Stop)
+                    if ($verified.Count -ne 1) { continue }
+                    $started = $observed.StartTime.ToUniversalTime()
+                    if ($started -lt $owner.Started -or -not $seen.Add($observed.Id)) { continue }
                     $kind = 'other'
                     switch -Regex ($child.Name) {
                         '^codex(?:\.exe)?$' { $kind = 'codex' }
                         '^(powershell|pwsh)(?:\.exe)?$' { $kind = 'powershell' }
                         '^node(?:\.exe)?$' { $kind = 'node' }
                         '^cmd(?:\.exe)?$' { $kind = 'cmd' }
+                        '^git(?:\.exe)?$' { $kind = 'git' }
+                        '^rg(?:\.exe)?$' { $kind = 'rg' }
+                        '^conhost(?:\.exe)?$' { $kind = 'conhost' }
+                        '^OpenConsole(?:\.exe)?$' { $kind = 'openconsole' }
                     }
-                    $items += @{Id = $observed.Id; Started = $observed.StartTime.ToUniversalTime(); Kind = $kind}
-                    $pending.Enqueue($observed.Id)
+                    $record = @{Id = $observed.Id; Started = $started; Kind = $kind; Depth = $owner.Depth + 1}
+                    $items += $record
+                    $pending.Enqueue($record)
                 } catch { } finally { if ($observed) { $observed.Dispose() } }
             }
         } catch { $Diagnostics.Snapshot = 'partial'; break }
+        finally { if ($parent) { $parent.Dispose() } }
     }
     if ($pending.Count) { $Diagnostics.Snapshot = 'partial' }
     return $items
@@ -421,11 +434,15 @@ function Stop-CodexConfigProcess($Connection) {
     if (-not $Connection) { return }
     $process = $Connection.Process
     $reaped = $false
+    $children = @()
     try {
         # A failed Start has no owned PID to stop.
         try { $null = $process.Id } catch { return }
         if ($Connection.Diagnostics) {
-            try { $Connection.Diagnostics.Children += @(Get-CodexConfigDescendants $process.Id $Connection.Diagnostics) }
+            try {
+                $children = @(Get-CodexConfigDescendants $process.Id $Connection.Diagnostics $process.StartTime.ToUniversalTime())
+                $Connection.Diagnostics.Children += $children
+            }
             catch { $Connection.Diagnostics.Snapshot = 'partial' }
         }
         # A close/flush failure must never skip wait, kill, and reap.
@@ -445,6 +462,29 @@ function Stop-CodexConfigProcess($Connection) {
         }
         if (-not $reaped) { throw 'Codex configuration process could not be stopped.' }
         if ($Connection.Diagnostics) { $Connection.Diagnostics.Stops += $Connection.Diagnostics.Stop }
+        # Roots can exit gracefully while their configuration-only helpers survive.
+        $childFailure = $false
+        $childClock = [Diagnostics.Stopwatch]::StartNew()
+        foreach ($child in @($children | Sort-Object { $_.Depth } -Descending)) {
+            $owned = $null
+            try {
+                try { $owned = [Diagnostics.Process]::GetProcessById($child.Id) }
+                catch [ArgumentException] { continue }
+                # Pin the process object, then compare identity before terminating.
+                $null = $owned.Handle
+                if ($owned.HasExited -or $owned.StartTime.ToUniversalTime() -ne $child.Started) { continue }
+                $owned.Kill()
+                $remaining = [Math]::Max(1, 2000 - [int]$childClock.ElapsedMilliseconds)
+                if (-not $owned.WaitForExit($remaining)) { $childFailure = $true }
+            } catch {
+                if ($owned) {
+                    try { if (-not $owned.HasExited) { $childFailure = $true } }
+                    catch { $childFailure = $true }
+                } else { $childFailure = $true }
+            } finally { if ($owned) { $owned.Dispose() } }
+        }
+        if ($childFailure) { throw 'Codex configuration child processes could not be stopped.' }
+
     } finally {
         # Framework Process.Dispose does not close redirected streams.
         try { $process.StandardOutput.Close() } catch { }
@@ -596,7 +636,7 @@ function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtabl
                     $observed = [Diagnostics.Process]::GetProcessById($child.Id)
                     if (-not $observed.HasExited -and $observed.StartTime.ToUniversalTime() -eq $child.Started) {
                         $live++
-                        if ($child.Kind -cin @('codex','powershell','cmd','node','other')) { $kinds += $child.Kind }
+                        if ($child.Kind -cin @('codex','powershell','cmd','node','git','rg','conhost','openconsole','other')) { $kinds += $child.Kind }
                     }
                 } catch { } finally { if ($observed) { $observed.Dispose() } }
             }

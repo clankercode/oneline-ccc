@@ -26,6 +26,15 @@ $baselineSshRule = Get-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenS
 if ($baselineSshRule) { Disable-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenSSH-Server-In-TCP' }
 Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block
 
+# GitHub's image restricts sshd to administrator groups. Explicitly remove only
+# that disposable runner restriction; preserve all other settings. The helper
+# must refuse unresolved access lists on a real operator's machine.
+$fixtureConfig = Join-Path $env:ProgramData 'ssh\sshd_config'
+if (Test-Path -LiteralPath $fixtureConfig) { $fixturePolicy = [IO.File]::ReadAllText($fixtureConfig) }
+else { $fixturePolicy = [IO.File]::ReadAllText((Join-Path $sshRoot 'sshd_config_default')) }
+$fixturePolicy = [regex]::Replace($fixturePolicy, '(?im)^[ \t]*AllowGroups[ \t]+[^\r\n]*(?:\r?\n|$)', '')
+[IO.File]::WriteAllText($fixtureConfig, $fixturePolicy, (New-Object Text.UTF8Encoding($false)))
+
 & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
 $sshd = Join-Path $sshRoot 'sshd.exe'
 & $sshd -t
