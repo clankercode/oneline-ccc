@@ -73,7 +73,7 @@ func (m *model) focusStyle(s string, w int) string {
 	if m.options.NoColor {
 		return s
 	}
-	return m.surface(surfaceActive).Bold(true).Width(w).Render(s)
+	return m.fill(s, w, surfaceActive)
 }
 func (m *model) selectionStyle(s string, w int) string { return m.fill(s, w, surfaceSelected) }
 func (m *model) controlRow(c control, index int) row {

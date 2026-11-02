@@ -82,7 +82,16 @@ func (m *model) fill(s string, width int, role surfaceRole) string {
 	if m.options.NoColor {
 		return s
 	}
-	return m.surface(role).Render(s)
+	style := m.surface(role)
+	// Lip Gloss preserves nested SGR resets verbatim. Restore the enclosing
+	// surface after them so a heading/status cannot punch holes in its band.
+	parent := ansi.Style{}.ForegroundColor(style.GetForeground()).BackgroundColor(style.GetBackground())
+	if style.GetBold() {
+		parent = parent.Bold()
+	}
+	resume := ansi.ResetStyle + parent.String()
+	s = strings.NewReplacer(ansi.ResetStyle, resume, "\x1b[0m", resume).Replace(s)
+	return style.Render(s)
 }
 func (m *model) shellLine(s string, role surfaceRole) string {
 	return m.fill(strings.Repeat(" ", m.inset())+s, max(1, m.width), role)
@@ -228,7 +237,11 @@ func (m *model) actionRows(c control, index, width int, primary bool) []row {
 	if primary {
 		r.text = strings.TrimRight(r.text, " ")
 		if !m.options.NoColor && c.reason == "" {
-			r.text = m.surface(surfacePrimary).Padding(0, 1).Render(r.text)
+			role := surfaceActive
+			if c.id == "configure" {
+				role = surfacePrimary
+			}
+			r.text = m.surface(role).Padding(0, 1).Render(r.text)
 		}
 	} else {
 		r.text = m.note(r.text)

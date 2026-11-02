@@ -32,6 +32,9 @@ func (m *model) dashboardRows() []row {
 		}
 	}
 	rs := []row{{text: m.heading("Your clients")}, {text: m.note(fmt.Sprintf("%d managed / %d pending drafts   / filter   r refresh", managed, pending))}, {}}
+	if m.height <= 12 {
+		rs = []row{{text: m.heading(fmt.Sprintf("Your clients / %d managed", managed))}}
+	}
 	left := []row{{text: m.heading("CLIENTS / MANAGEMENT")}}
 	if m.filter != "" {
 		left = append(left, row{text: m.note("Filter: " + m.public(m.filter))})
@@ -81,6 +84,9 @@ func (m *model) dashboardRows() []row {
 				aux = true
 			}
 			right = append(right, m.actionRows(control, i, rightWidth, primary)...)
+			if primary {
+				right = append(right, row{})
+			}
 		}
 	}
 	selected := "None"

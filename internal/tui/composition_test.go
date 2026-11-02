@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/clankercode/oneline-ccc/internal/core"
 )
@@ -281,4 +282,40 @@ func TestCompositionMultilineStatusStaysInItsShellRow(t *testing.T) {
 	if len(frame) != m.height || !strings.Contains(frame[2], "Inspection failed:") {
 		t.Fatal("multiline status displaced composed frame rows")
 	}
+}
+
+// Use the renderer's actual ANSI cell parser: visible words alone cannot prove
+// that a background surface survives nested heading/status resets.
+func TestCompositionSurfaceCoversNestedTextAndTrailingCells(t *testing.T) {
+	m := compositionFixture(t)
+	m.options.NoColor = false
+	for _, theme := range []string{"dark", "light", "mono"} {
+		m.options.Theme = theme
+		for _, text := range []string{m.shellHeader()[0], m.shellHeader()[2], m.selectionStyle(m.heading("Codex")+"  "+m.statusText("CONFIGURED"), m.width), m.focusStyle(m.heading("Codex")+"  "+m.statusText("CONFIGURED"), m.width)} {
+			cells := uv.NewStyledString(text).Lines(ansi.GraphemeWidth)[0]
+			if len(cells) != m.width || cells[0].Style.Bg == nil {
+				t.Fatal("missing surface cells")
+			}
+			r, g, b, a := cells[0].Style.Bg.RGBA()
+			for i, c := range cells {
+				if c.Style.Bg == nil {
+					t.Fatalf("%s nested text reset the surface at column %d", theme, i)
+				}
+				r2, g2, b2, a2 := c.Style.Bg.RGBA()
+				if r != r2 || g != g2 || b != b2 || a != a2 {
+					t.Fatalf("%s surface changes at column %d", theme, i)
+				}
+			}
+		}
+	}
+}
+
+func TestCompositionSmallDashboardStartsWithClientScope(t *testing.T) {
+	m := compositionFixture(t)
+	m.width, m.height = 40, 12
+	frame := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if !strings.Contains(frame[3], "Your clients") {
+		t.Fatalf("small Dashboard starts with an orphaned summary: %q", frame[3])
+	}
+	assertFrame(t, m)
 }
