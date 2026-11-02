@@ -89,8 +89,17 @@ func (m *model) reviewDocumentPages() [][]reviewLine {
 		document = compact
 	}
 	var pages [][]reviewLine
-	for i := 0; i < len(document); i += count {
-		pages = append(pages, document[i:min(i+count, len(document))])
+	for i := 0; i < len(document); {
+		if document[i].text == "" {
+			i++
+			continue
+		}
+		end := min(i+count, len(document))
+		for end > i+1 && (document[end-1].text == "" || document[end-1].role == reviewSection) {
+			end--
+		}
+		pages = append(pages, document[i:end])
+		i = end
 	}
 	return pages
 }
