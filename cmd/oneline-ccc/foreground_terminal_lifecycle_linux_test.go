@@ -1,9 +1,8 @@
-//go:build linux && !race
+//go:build linux
 
 // This acceptance probe runs a real terminal and renderer in a subprocess.
-// Keep it in the normal test gate: the pinned Tea/cancelreader combination has
-// an independent reader-close race during cancelled terminal reinitialization.
-// Race-enabled headless lifecycle tests remain in foreground_lifecycle_test.go.
+// Keep the renderer and raw child enabled, including in the race gate, so
+// cancelled terminal reinitialization exercises the real input-reader lifetime.
 package main
 
 import (
@@ -61,13 +60,53 @@ func TestForegroundTerminalFixture(t *testing.T) {
 			}
 			// Keep the renderer enabled: WithoutRenderer would skip Tea's actual
 			// terminal initialization/restoration and mask this regression.
-			_, err := tea.NewProgram(preparedForeground{m, launch}, tea.WithContext(ctx), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithoutSignalHandler()).Run()
-			return err
+			return runForegroundProgram(ctx, preparedForeground{m, launch})
 		})
 		if !errors.Is(err, context.Canceled) {
 			os.Exit(9)
 		}
 		os.Exit(0)
+	}
+}
+
+func TestForegroundProgramLifetime(t *testing.T) {
+	for _, kind := range []string{"quit", "canceled-before-start", "canceled-while-running", "startup-error"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var first tea.Cmd
+			switch kind {
+			case "quit":
+				first = tea.Quit
+			case "canceled-before-start", "startup-error":
+				cancel()
+			case "canceled-while-running":
+				first = func() tea.Msg { cancel(); return nil }
+			}
+			var model tea.Model = preparedForeground{tui.New(&foregroundMutation{}, tui.Options{NoColor: true}), first}
+			if kind == "startup-error" {
+				model = nil
+			}
+			done := make(chan error, 1)
+			go func() {
+				done <- runForegroundProgram(ctx, model, tea.WithInput(strings.NewReader("")), tea.WithOutput(io.Discard), tea.WithoutRenderer())
+			}()
+			select {
+			case err := <-done:
+				if kind == "quit" {
+					if err != nil {
+						t.Fatal(err)
+					}
+				} else if !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation not preserved: %v", err)
+				}
+				if kind == "startup-error" && (err == nil || !strings.Contains(err.Error(), "InitialModel cannot be nil")) {
+					t.Fatalf("startup error not preserved: %v", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("foreground program did not join its shutdown watcher")
+			}
+		})
 	}
 }
 

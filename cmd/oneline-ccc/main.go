@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -34,12 +35,38 @@ func production(ctx context.Context) dependencies {
 		},
 		runUI: func(backend core.Backend, options tui.Options) error {
 			return runForeground(ctx, backend, options, func(model tea.Model) error {
-				_, err := tea.NewProgram(model, tea.WithContext(ctx), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithoutSignalHandler()).Run()
-				return err
+				return runForegroundProgram(ctx, model)
 			})
 		},
 		runChild: runProcess,
 	}
+}
+
+// runForegroundProgram lets root cancellation stop owned work immediately while
+// Tea retains ownership of its terminal reader until graceful shutdown. Passing
+// the root directly to WithContext forces Tea's killed shutdown path, which
+// closes the cancel reader without joining the read loop after tea.Exec resumes.
+func runForegroundProgram(ctx context.Context, model tea.Model, options ...tea.ProgramOption) error {
+	programContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	options = append([]tea.ProgramOption{tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout)}, options...)
+	options = append(options, tea.WithContext(programContext), tea.WithoutSignalHandler())
+	program := tea.NewProgram(model, options...)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case <-ctx.Done():
+			program.Quit()
+		case <-programContext.Done():
+		}
+	}()
+	defer func() {
+		// Also release a Quit blocked during startup if Run returns early.
+		cancel()
+		<-stopped
+	}()
+	_, err := program.Run()
+	return errors.Join(err, ctx.Err())
 }
 
 // runForeground is the production boundary between the terminal program and
