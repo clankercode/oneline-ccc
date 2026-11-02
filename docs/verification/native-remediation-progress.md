@@ -1,6 +1,6 @@
 # Native remediation checkpoint
 
-Recorded 2026-11-03. Integrated source: `6c50a7a`.
+Recorded 2026-11-03. Integrated terminal source: `418283a`.
 
 **Native visual and interaction acceptance remains open.** This checkpoint
 records the reviewed navigation and terminal corrections. The rejected
@@ -15,6 +15,7 @@ work and full screen-by-screen visual campaign are still in progress.
 | CLI terminal fixtures and navigation instructions | `ce63417`, `24b71d2` | Fixtures now follow the actual region contract while retaining mutation lifetime and dirty-exit guards; [integration and documentation review](../review/native-navigation-integration-review.md) |
 | Interactive no-color mode | `cbbaf77`, `d9a7c5b`, `c1440cf` | Real Linux PTYs exercise entry, help, palette, staged editor focus/masking, drafts and safe exit; actual redirected stdin/stdout remain plain; [independent review](../review/native-no-color-rereview.md) |
 | Terminal input lifetime | `b8dab03`, `6c50a7a` | Cancellation-aware event dispatch and joined decoder/raw reader before Close on Quit, Kill and terminal release; [independent re-review and provenance](../review/native-terminal-input-rereview.md) |
+| Startup and error ownership | `28576af`, `418283a` | Deferred cleanup for partial setup, returned errors and panics; serialized resource ownership; observed cancellation checked before Init outside the ownership lock; [review](../review/native-startup-review.md) and [resolved cancellation re-review](../review/native-startup-rereview.md). Failed-reader constructor descriptors and native platform proof remain open |
 | Secondary screen, layer and editor references | Reviewed source `46b50cd`, verifier `f285ff8`; source/docs integration follows `1d75e8b` | Six secondary design targets, eight layers and seven editors; 14 integrated browser journeys pass. [Reference verification, independent reviews and pending CI wiring](tui-native-references.md); these are design targets, not native acceptance |
 
 The terminal correction uses licensed, pinned module mirrors because the checked
@@ -44,6 +45,15 @@ all 188 original archive files plus exactly the committed correction. The
 controller also observed the focused queued-input/rendered race gate passing
 on the reviewed task branch before integration.
 
+After the startup/error correction, the controller ran those same four commands
+again on integrated `418283a`: full Go tests, full race tests, vet and offline
+archive-plus-patch verification all passed. The real Linux startup PTY cases now
+cover errors after raw-mode acquisition, concurrent cancellation, partial setup
+and model panics, reader errors, pre-canceled entry and normal quit. Dependency
+tests separately pin renderer-start cancellation, reentrant Init/Kill and input
+joining. This is Linux/runtime and shared-source evidence; it does not add native
+Windows/macOS failure injection or a new live/pinned Codex session.
+
 The worker's retained RED/GREEN evidence reproduced queued input surviving the
 old 500 ms fallback, then passed 90 queued-input scenarios and 30 rendered
 raw-child SIGTERM repetitions under the race detector. Dependency tests include
@@ -68,8 +78,9 @@ CI and native terminal evidence have their own status.
   references are now available; compare every corresponding native surface with
   those targets. Existing captures retain their original provenance.
 - Narrow Help title/current-page visibility is still a concrete readability case.
-- Startup failures after terminal mode changes are a separate active fix. This
-  checkpoint does not certify all startup, panic or external-I/O failure paths.
+- Bounded startup/error cleanup is integrated. Failed-reader constructor-private
+  descriptors, native platform failures and uncooperative external I/O remain
+  outside that approval; this does not certify every panic/callback combination.
 - Windows/macOS console input, restoration, appearance and shortcuts still need
   actual native evidence. Static binaries and hosted unit tests do not close it.
 - Client installation, additional adapters, release/bootstrap and the other

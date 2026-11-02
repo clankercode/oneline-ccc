@@ -23,9 +23,10 @@ with its detailed requirements placed before them.
 Execution started **2026-11-03** under the active full-backlog goal. The
 [product completion campaign](product-completion-campaign.md) records ordered
 milestones and task boundaries. Reviewed navigation, Linux terminal-input and
-no-color corrections are integrated through `6c50a7a`; current work covers item
-18's composition, item 20's startup/error cleanup and item 21's capture-evidence
-fixes. See the [native remediation checkpoint](../verification/native-remediation-progress.md)
+no-color and bounded startup/error corrections are integrated through `418283a`;
+current work covers item 18's composition, item 20's constructor/platform gaps
+and item 21's capture-evidence fixes. See the
+[native remediation checkpoint](../verification/native-remediation-progress.md)
 for the exact integrated gates and their limits.
 All checkboxes remain open until the complete corresponding acceptance evidence
 exists.
@@ -477,6 +478,11 @@ that the fixes are absent or that the rejected experience is now approved.
     Observe populated credential-editor frames and each focus transition before
     cancellation; a burst of typing plus Escape can be coalesced by the renderer
     and cannot prove masking or correct editor navigation.
+    Inspect reconstructed cells as output is processed and latch any dummy-key
+    exposure, including during final drain. Cursor-addressed fragments can
+    display a complete key and erase it in the same PTY/ConPTY read; raw/stripped
+    transcripts and the final screen alone miss that case. Keep one-batch,
+    split-batch and drain negative controls alongside valid masked journeys.
 
 20. [ ] **Restore terminal ownership after startup and forced-error failures.**
     Discovered 2026-11-03 in the shutdown review: upstream initialization/error
@@ -518,4 +524,7 @@ that the fixes are absent or that the rejected experience is now approved.
     semantic proof. Keep current-schema observations mandatory. The stricter
     predicate must not make the 361 original rows without client metadata
     unverifiable or fill their missing fields from a newer fixture.
+    Validate the shape of recorded client observations: accept arrays and the
+    helper's explicit nil-slice `null`, but reject objects/scalars. An empty-state
+    label with `fixture.clients = {}` must not receive observed-state proof.
     This supports P0 acceptance; artifact integrity alone is not a visual PASS.
