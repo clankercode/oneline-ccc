@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 type row struct {
@@ -16,86 +15,33 @@ type row struct {
 
 func (m *model) View() tea.View {
 	w, h := max(1, m.width), max(1, m.height)
-	title := "oneline-ccc / " + m.screen
-	if m.modal != "" {
-		title += " / " + m.modal
-	}
-	if m.editor != nil {
-		title += " / Edit " + m.editor.field
-	}
-	names := []string{"Dashboard", "Models", "Review", "Jobs", "More"}
-	if m.modal == "" && m.editor == nil && m.focus < navCount {
-		names[m.focus] = "> " + names[m.focus]
-	}
-	for i, name := range []string{"Dashboard", "Models", "Review", "Jobs", "More"} {
-		if name == m.screen || (name == "More" && m.screen != "Dashboard" && m.screen != "Models" && m.screen != "Review" && m.screen != "Jobs") {
-			names[i] = m.heading(names[i])
-		}
-	}
-	nav := strings.Join(names, "  ")
-	status := m.public(m.status)
-	if m.busy != "" {
-		status = "Working: " + m.busy + " | " + status
-	}
-	header := []string{m.band(ansi.Truncate(title, w, ""), w, true), m.band(ansi.Truncate(nav, w, ""), w, false), ansi.Truncate(status, w, "")}
-	footer := []string{"F6 " + m.region(m.focus, m.focused()) + "  [ ] section  Tab/Shift+Tab", "Up/Down local  Enter act  Esc back"}
-	if m.focus < navCount {
-		footer[1] = "Left/Right tabs  Enter open  Esc back"
-	}
-	if m.modal == "more" {
-		footer = []string{"Tab/Shift+Tab menu", "Up/Down menu  Enter open  Esc back"}
-	}
-	if m.modal == "help" {
-		footer = []string{"Tab/Shift+Tab pages", "Up/Down pages  Enter/Esc close"}
-	}
-	if m.modal != "" && m.modal != "help" && m.modal != "more" && m.modal != "palette" {
-		footer = []string{"Tab/Shift+Tab choice", "Arrows choose  Enter act  Esc back"}
-	}
-	if m.modal == "" && m.editor == nil && m.focus >= navCount {
-		c := m.focused()
-		if strings.HasPrefix(c.id, "client:") || c.id == "enabled" || c.id == "capacity" || c.id == "tiers" || c.id == "ascii" || c.id == "color" || c.id == "motion" {
-			footer[1] = "Space toggle  Enter act  Esc back"
-		}
-	}
-	if m.editor != nil {
-		footer = []string{"Type / paste  Enter save  Esc cancel", "Left/Right caret; text keys stay here"}
-		if m.editor.field == "key" {
-			footer = []string{"Tab/Shift+Tab options  Esc cancel", ""}
-			switch m.editor.focus {
-			case 0:
-				footer = []string{"Type/paste  Left/Right caret", "Tab options  Enter focus Save  Esc cancel"}
-			case 1:
-				footer[1] = "Space/Enter toggle persistence"
-			case 2:
-				footer[1] = "Enter save key"
-			case 3:
-				footer[1] = "Enter drop unsaved key"
-			}
-		}
-	}
-	if m.modal == "palette" {
-		footer = []string{"Type search  Up/Down  Enter select", "Esc close; disabled actions explain why"}
-	}
+	header := m.shellHeader()
 	lines, focusLine, start, available := m.layout()
-	pinFocus := focusLine >= 0 && (focusLine < start || focusLine >= start+available)
-	displayCount := available
-	if pinFocus {
-		displayCount = max(0, available-1)
-	}
+	footer := m.shellFooter(m.scrollScope(start, available, len(lines)))
 	out := append([]string(nil), header...)
-	for i := start; i < min(len(lines), start+displayCount); i++ {
-		r := lines[i]
-		out = append(out, m.renderRow(r, w))
+	remaining := available
+	// Dialog/editor scope is independent of the scrolling body.
+	if start > 0 && (m.modal != "" || m.editor != nil) && len(lines) > 0 && remaining > 1 {
+		out = append(out, m.bodyLine(lines[0].text))
+		remaining--
 	}
-	if pinFocus {
-		out = append(out, m.renderRow(lines[focusLine], w))
+	pinned := focusLine >= 0 && (focusLine < start || focusLine >= start+remaining)
+	reserve := 0
+	if pinned {
+		reserve = min(remaining, m.focusContext(lines, focusLine))
+	}
+	for i := start; i < min(len(lines), start+remaining-reserve); i++ {
+		out = append(out, m.bodyLine(lines[i].text))
+	}
+	if pinned {
+		for i := focusLine; i < min(len(lines), focusLine+reserve); i++ {
+			out = append(out, m.bodyLine(lines[i].text))
+		}
 	}
 	for len(out) < h-len(footer) {
-		out = append(out, "")
+		out = append(out, m.bodyLine(""))
 	}
-	for _, f := range footer {
-		out = append(out, ansi.Truncate(f, w, ""))
-	}
+	out = append(out, footer...)
 	if len(out) > h {
 		out = out[:h]
 	}
@@ -104,60 +50,23 @@ func (m *model) View() tea.View {
 	if !m.options.NoColor {
 		switch m.options.Theme {
 		case "dark":
-			v.BackgroundColor = lipgloss.Color("#111820")
-			v.ForegroundColor = lipgloss.Color("#E6EAF0")
+			v.BackgroundColor, v.ForegroundColor = lipgloss.Color("#111820"), lipgloss.Color("#E6EAF0")
 		case "light":
-			v.BackgroundColor = lipgloss.Color("#F5F6F8")
-			v.ForegroundColor = lipgloss.Color("#17212B")
+			v.BackgroundColor, v.ForegroundColor = lipgloss.Color("#F5F6F8"), lipgloss.Color("#17212B")
+		case "mono":
+			v.BackgroundColor, v.ForegroundColor = lipgloss.Color("#171717"), lipgloss.Color("#EEEEEE")
 		}
 	}
 	return v
 }
-func (m *model) styles() (lipgloss.Style, lipgloss.Style) {
-	base := lipgloss.NewStyle()
-	accent := lipgloss.NewStyle().Bold(true)
-	switch m.options.Theme {
-	case "dark":
-		base = base.Foreground(lipgloss.Color("#E6EAF0")).Background(lipgloss.Color("#111820"))
-		accent = accent.Foreground(lipgloss.Color("#91C7FF")).Background(lipgloss.Color("#243446"))
-	case "light":
-		base = base.Foreground(lipgloss.Color("#17212B")).Background(lipgloss.Color("#F5F6F8"))
-		accent = accent.Foreground(lipgloss.Color("#164F91")).Background(lipgloss.Color("#DEE6EF"))
-	case "mono":
-		accent = accent.Reverse(true)
-	}
-	return base, accent
-}
-func (m *model) band(s string, w int, bold bool) string {
-	if m.options.NoColor {
-		return s
-	}
-	base, accent := m.styles()
-	if bold {
-		return accent.Width(w).Render(s)
-	}
-	return base.Bold(true).Width(w).Render(s)
-}
+func (m *model) bodyLine(s string) string { return m.shellLine(s, surfaceBase) }
 func (m *model) focusStyle(s string, w int) string {
 	if m.options.NoColor {
 		return s
 	}
-	_, accent := m.styles()
-	return accent.Underline(true).Width(w).Render(ansi.Strip(s))
+	return m.surface(surfaceActive).Bold(true).Width(w).Render(s)
 }
-func (m *model) selectionStyle(s string, w int) string {
-	if m.options.NoColor {
-		return s
-	}
-	base, _ := m.styles()
-	if m.options.Theme == "dark" {
-		base = base.Background(lipgloss.Color("#1D2935"))
-	}
-	if m.options.Theme == "light" {
-		base = base.Background(lipgloss.Color("#E7EDF3"))
-	}
-	return base.Width(w).Render(ansi.Strip(s))
-}
+func (m *model) selectionStyle(s string, w int) string { return m.fill(s, w, surfaceSelected) }
 func (m *model) controlRow(c control, index int) row {
 	prefix := "  "
 	focused := index == m.focus

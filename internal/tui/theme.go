@@ -9,7 +9,7 @@ func (m *model) heading(s string) string {
 	if m.options.NoColor {
 		return s
 	}
-	_, accent := m.styles()
+	accent := m.surface(surfaceActive)
 	return accent.Background(lipgloss.NoColor{}).Bold(true).Render(s)
 }
 func (m *model) note(s string) string {
@@ -43,16 +43,4 @@ func (m *model) statusText(value string) string {
 		color = green
 	}
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(s)
-}
-func (m *model) renderRow(r row, width int) string {
-	if m.wideDashboard() {
-		return r.text
-	}
-	if r.focus {
-		return m.focusStyle(r.text, width)
-	}
-	if r.selected {
-		return m.selectionStyle(r.text, width)
-	}
-	return r.text
 }
