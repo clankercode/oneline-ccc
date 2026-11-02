@@ -66,6 +66,7 @@ for shipped capabilities; older plans retain their original planning baselines.
 | [Secondary-screen references](https://clankercode.github.io/oneline-ccc/tui-native-reference.html), [versioned source](../../site/tui-native-reference.html) and [verification boundary](../verification/tui-native-references.md) | Design targets for six secondary screens, eight layers and seven editors; browser targets remain separate from native acceptance |
 | [Preview verification](../verification/tui-usability.md) | Historical browser-only checks; does not close native visual or interaction acceptance |
 | [Native screen and navigation inventory](../review/native-tui-screen-inventory.md) | Source-backed inventory of 10 screens, 7 modal variants, 7 editors, current control inconsistencies and missing mockup counterparts; no visual PASS claimed |
+| [Native capture infrastructure and limits](../verification/tui-native-captures.md) | Real PTY/ANSI/PNG tooling, controller fault gates, independent semantic/legacy reviews and outstanding final-capture requirements |
 | [Stack and identity research](../research/tui-stack.md) | Framework choices, model metadata and client/utility identity evidence |
 | [Existing-project research](../research/existing-projects.md) | Prior art and reuse options to consult before duplicating functionality |
 | [Stage-zero verification](../verification/tui-stage-zero.md) | Native Codex contract and isolated existing-tool adoption trials |
@@ -316,6 +317,11 @@ that the fixes are absent or that the rejected experience is now approved.
   window, concise selected-client summary and visible useful actions. Keep every
   control reachable, selection and drafts stable, and the focused action in view.
   Eventual access after repeated scrolling or F6 traversal is insufficient.
+  Retain draft cues when focus and selection differ: at 40×12, Space → Down →
+  Shift+Tab can focus Codex with a staged management change while Claude remains
+  selected. Show Codex's pending draft and applied/staged distinction, and keep
+  actions clearly targeted at Claude. A matching active filter also needs a
+  bounded visible filter/edit/clear cue; `Selected 1/1` alone hides its scope.
 - [ ] **Strengthen section, action and tier hierarchy against the approved
   reference.** Keep active section, keyboard focus and selected client visually
   distinct. Give the next useful action a coherent notice and primary/secondary
