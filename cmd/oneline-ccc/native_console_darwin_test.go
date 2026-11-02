@@ -24,7 +24,28 @@ import (
 func init() {
 	nativeConsoleModes = func() (string, error) {
 		m, err := unix.IoctlGetTermios(int(os.Stdin.Fd()), unix.TIOCGETA)
-		return fmt.Sprintf("%+v", m), err
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%+v", nativeDarwinStableModes(*m)), nil
+	}
+	nativeConsoleBeforeExit = func() error {
+		// The host must inspect its own slave descriptor while this controlling
+		// session is alive. Darwin revokes the tty on session-leader exit.
+		ready, release := os.NewFile(3, "a7-ready"), os.NewFile(4, "a7-release")
+		defer ready.Close()
+		defer release.Close()
+		if _, err := ready.Write([]byte{'R'}); err != nil {
+			return err
+		}
+		var ack [1]byte
+		if _, err := io.ReadFull(release, ack[:]); err != nil {
+			return err
+		}
+		if ack[0] != 'A' {
+			return errors.New("invalid parent mode-check acknowledgement")
+		}
+		return nil
 	}
 	nativeConsoleRaw = func() error { _, err := term.MakeRaw(os.Stdin.Fd()); return err }
 	nativeConsoleAssertRaw = func() error {
@@ -54,15 +75,28 @@ func init() {
 	nativeConsoleContext = func(ctx context.Context) (context.Context, func(), error) { return ctx, func() {}, nil }
 }
 
+// XNU bsd/sys/termios.h calls PENDIN "retype pending input (state)";
+// bsd/kern/tty.c sets it when ICANON is restored by TIOCSETA and preserves it
+// independently of the requested flags. All other fields remain exact.
+// https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/tty.c
+func nativeDarwinStableModes(m unix.Termios) unix.Termios { m.Lflag &^= unix.PENDIN; return m }
+
+func nativeDarwinModesRestored(before, after unix.Termios) bool {
+	return reflect.DeepEqual(nativeDarwinStableModes(before), nativeDarwinStableModes(after))
+}
+
 type nativeDarwinPTY struct {
-	master, slave *os.File
-	before        *unix.Termios
-	cmd           *exec.Cmd
-	wait          chan error
-	done, closed  bool
-	exitErr       error
-	root          string
-	tail          []byte
+	master, slave  *os.File
+	before         *unix.Termios
+	cmd            *exec.Cmd
+	wait           chan error
+	done, closed   bool
+	exitErr        error
+	root           string
+	tail           []byte
+	ready, release *os.File
+	modeChecked    bool
+	modeErr        error
 }
 
 func startNativeDarwinPTY(t *testing.T, root, scenario, noColor string) *nativeDarwinPTY {
@@ -102,9 +136,22 @@ func startNativeDarwinPTY(t *testing.T, root, scenario, noColor string) *nativeD
 	if err != nil {
 		t.Fatal(err)
 	}
+	readyRead, readyWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.ready = readyRead
+	defer readyWrite.Close()
+	releaseRead, releaseWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.release = releaseWrite
+	defer releaseRead.Close()
 	p.cmd = exec.Command(os.Args[0], "-test.run=^TestNativeConsoleFixture$")
 	p.cmd.Dir, p.cmd.Env = root, nativeConsoleEnv(root, scenario, noColor)
 	p.cmd.Stdin, p.cmd.Stdout, p.cmd.Stderr = p.slave, p.slave, p.slave
+	p.cmd.ExtraFiles = []*os.File{readyWrite, releaseRead}
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	if err := p.cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -168,6 +215,11 @@ func (p *nativeDarwinPTY) resize(w, h int) error {
 }
 func (p *nativeDarwinPTY) cancel() error { return p.cmd.Process.Signal(syscall.SIGTERM) }
 func (p *nativeDarwinPTY) exited() (bool, error) {
+	if !p.modeChecked && p.ready != nil {
+		if err := p.checkModesWhileAlive(); err != nil {
+			return false, err
+		}
+	}
 	if !p.done && p.wait != nil {
 		select {
 		case p.exitErr = <-p.wait:
@@ -175,7 +227,38 @@ func (p *nativeDarwinPTY) exited() (bool, error) {
 		default:
 		}
 	}
-	return p.done, p.exitErr
+	if p.done && p.exitErr == nil && !p.modeChecked {
+		return true, errors.New("successful fixture skipped live parent mode checkpoint")
+	}
+	return p.done, errors.Join(p.exitErr, p.modeErr)
+}
+
+func (p *nativeDarwinPTY) checkModesWhileAlive() error {
+	fds := []unix.PollFd{{Fd: int32(p.ready.Fd()), Events: unix.POLLIN}}
+	n, err := unix.Poll(fds, 0)
+	if errors.Is(err, unix.EINTR) || err == nil && n == 0 {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var ready [1]byte
+	_, err = io.ReadFull(p.ready, ready[:])
+	if err != nil || ready[0] != 'R' {
+		return fmt.Errorf("missing live terminal checkpoint: %v", err)
+	}
+	p.modeChecked = true
+	after, modeErr := unix.IoctlGetTermios(int(p.slave.Fd()), unix.TIOCGETA)
+	if modeErr != nil {
+		p.modeErr = fmt.Errorf("live slave mode inspection: %w", modeErr)
+	} else if !nativeDarwinModesRestored(*p.before, *after) {
+		p.modeErr = fmt.Errorf("live slave modes not restored: before=%+v after=%+v", p.before, after)
+	}
+	// Release even on rejection so the one waiter can join; no failed check can
+	// become success when the subprocess subsequently exits normally.
+	_, releaseErr := p.release.Write([]byte{'A'})
+	p.modeErr = errors.Join(p.modeErr, releaseErr)
+	return p.modeErr
 }
 func (p *nativeDarwinPTY) drained() []byte { return p.tail }
 func (p *nativeDarwinPTY) close() error {
@@ -190,18 +273,22 @@ func (p *nativeDarwinPTY) close() error {
 		result = errors.Join(result, p.killSyntheticGroup())
 		_ = p.cmd.Process.Signal(syscall.SIGTERM)
 		select {
-		case <-p.wait:
+		case p.exitErr = <-p.wait:
 			p.done = true
 		case <-time.After(5 * time.Second):
 			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 			// Exactly the same waiter, never a second cmd.Wait.
-			<-p.wait
+			p.exitErr = <-p.wait
 			p.done = true
 			result = errors.Join(result, errors.New("Darwin fixture required forced termination"))
 		}
 	} else if p.done && p.exitErr != nil {
 		result = errors.Join(result, p.killSyntheticGroup())
 	}
+	if p.done && p.wait != nil && p.exitErr == nil && !p.modeChecked {
+		result = errors.Join(result, errors.New("fixture exited without independent live mode check"))
+	}
+	result = errors.Join(result, p.modeErr)
 	if p.master != nil && p.done {
 		for {
 			data, err := p.read(0)
@@ -219,20 +306,53 @@ func (p *nativeDarwinPTY) close() error {
 		}
 	}
 	if p.slave != nil {
-		if p.before != nil {
-			after, err := unix.IoctlGetTermios(int(p.slave.Fd()), unix.TIOCGETA)
-			if err != nil || !reflect.DeepEqual(p.before, after) {
-				result = errors.Join(result, fmt.Errorf("slave modes not restored before teardown: %v", err))
-			}
-			// Failure-path repair happens after the assertion, never as its proof.
-			result = errors.Join(result, unix.IoctlSetTermios(int(p.slave.Fd()), unix.TIOCSETA, p.before))
-		}
+		// Session-leader exit revokes the Darwin tty (XNU kern_exit.c,
+		// VNOP_REVOKE). Inspecting/repairing this descriptor now is invalid;
+		// the independent parent inspection already ran before release above.
 		result = errors.Join(result, p.slave.Close())
+	}
+	for _, f := range []*os.File{p.ready, p.release} {
+		if f != nil {
+			result = errors.Join(result, f.Close())
+		}
 	}
 	if p.master != nil {
 		result = errors.Join(result, p.master.Close())
 	}
 	return result
+}
+
+func TestNativeConsoleDarwinModeOracle(t *testing.T) {
+	before := unix.Termios{Iflag: 11010, Oflag: 3, Cflag: 19200, Lflag: 1483, Ispeed: 9600, Ospeed: 9600}
+	pending := before
+	pending.Lflag |= unix.PENDIN
+	if reflect.DeepEqual(before, pending) || !nativeDarwinModesRestored(before, pending) {
+		t.Fatal("native PENDIN state transition should preserve terminal settings")
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*unix.Termios)
+	}{
+		{"raw", func(m *unix.Termios) { m.Lflag &^= unix.ICANON | unix.ECHO | unix.ISIG }},
+		{"canonical", func(m *unix.Termios) { m.Lflag ^= unix.ICANON }},
+		{"echo", func(m *unix.Termios) { m.Lflag ^= unix.ECHO }},
+		{"signals", func(m *unix.Termios) { m.Lflag ^= unix.ISIG }},
+		{"other-local", func(m *unix.Termios) { m.Lflag ^= unix.NOFLSH }},
+		{"input", func(m *unix.Termios) { m.Iflag ^= unix.ICRNL }},
+		{"output", func(m *unix.Termios) { m.Oflag ^= unix.OPOST }},
+		{"control", func(m *unix.Termios) { m.Cflag ^= unix.CLOCAL }},
+		{"characters", func(m *unix.Termios) { m.Cc[0] ^= 1 }},
+		{"input-speed", func(m *unix.Termios) { m.Ispeed++ }},
+		{"output-speed", func(m *unix.Termios) { m.Ospeed++ }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			after := pending
+			tc.change(&after)
+			if nativeDarwinModesRestored(before, after) {
+				t.Fatal("restoration defect accepted with PENDIN set")
+			}
+		})
+	}
 }
 
 func (p *nativeDarwinPTY) killSyntheticGroup() error {
