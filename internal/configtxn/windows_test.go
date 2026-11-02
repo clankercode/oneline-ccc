@@ -34,7 +34,7 @@ func windowsFixture(t *testing.T) (string, *Store) {
 
 func assertWindowsACL(t *testing.T, path string) {
 	t.Helper()
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +45,11 @@ func assertWindowsACL(t *testing.T, path string) {
 	owner, _, err := sd.Owner()
 	if err != nil || !windows.EqualSid(owner, user.User.Sid) {
 		t.Fatal("owner is not current account", err)
+	}
+	group, _, err := sd.Group()
+	expectedGroup, groupErr := currentGroupSID()
+	if err != nil || groupErr != nil || !windows.EqualSid(group, expectedGroup) {
+		t.Fatal("group is not current token primary group", err, groupErr)
 	}
 	control, _, err := sd.Control()
 	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
@@ -190,14 +195,7 @@ func TestWindowsRejectsADSAndJunction(t *testing.T) {
 	if err := os.Mkdir(link, 0700); err != nil {
 		t.Fatal(err)
 	}
-	name := windows.StringToUTF16(`\??\` + d)
-	data := make([]byte, 16+len(name)*2)
-	header := (*[4]uint16)(unsafe.Pointer(&data[8]))
-	header[1] = uint16((len(name) - 1) * 2)
-	header[2] = 0
-	*(*uint32)(unsafe.Pointer(&data[0])) = windows.IO_REPARSE_TAG_MOUNT_POINT
-	*(*uint16)(unsafe.Pointer(&data[4])) = uint16(len(data) - 8)
-	copy(unsafe.Slice((*uint16)(unsafe.Pointer(&data[16])), len(name)), name)
+	data := junctionFixture(d)
 	ptr, _ := windows.UTF16PtrFromString(link)
 	h, err := windows.CreateFile(ptr, windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {

@@ -153,6 +153,9 @@ func (s *Store) rollback(ctx context.Context, j *journal) (Result, error) {
 
 func (s *Store) restore(ctx context.Context, j *journal, i int) error {
 	e := &j.Entries[i]
+	if targetMetadata(e.Path) != nil {
+		return ErrConflict
+	}
 	now, err := Read(e.Path)
 	if err != nil {
 		return ErrConflict
@@ -207,6 +210,9 @@ func (s *Store) restore(ctx context.Context, j *journal, i int) error {
 		}
 	}
 	// Recheck after every staged restore and hook, immediately before replacement.
+	if targetMetadata(e.Path) != nil {
+		return ErrConflict
+	}
 	now, err = Read(e.Path)
 	if err != nil {
 		return ErrConflict
@@ -218,7 +224,7 @@ func (s *Store) restore(ctx context.Context, j *journal, i int) error {
 		return ErrConflict
 	}
 	if e.Existed {
-		if err = replace(ctx, stage(j, i, true), e.Path); err != nil {
+		if err = replace(ctx, stage(j, i, true), e.Path, e.BeforeHash, os.FileMode(e.Mode), renameChecks{before: func() error { return expectedOutput(*e) }, retry: func() error { return s.hitEntry("rollback-sharing-retry", i) }}); err != nil {
 			return err
 		}
 	} else {

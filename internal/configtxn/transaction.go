@@ -1,7 +1,6 @@
 package configtxn
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -18,43 +17,15 @@ func New(root string) *Store {
 	return &Store{Root: root}
 }
 
-func (s *Store) validate(writes []Write) ([]Write, error) {
-	if len(writes) > maxWrites {
-		return nil, ErrLimit
-	}
-	seen := map[string]bool{}
-	var changed []Write
-	for _, w := range writes {
-		p, err := canonical(w.Path)
-		if err != nil {
-			return nil, err
-		}
-		w.Path = p
-		if seen[pathKey(p)] || reserved(s.Root, p) || (!w.Existed && len(w.Before) != 0) || w.Mode&^os.FileMode(0777) != 0 {
-			return nil, ErrUnsafe
-		}
-		seen[pathKey(p)] = true
-		if len(w.Before) > maxSnapshot || len(w.Data) > maxSnapshot {
-			return nil, ErrLimit
-		}
-		if err = expected(w); err != nil {
-			return nil, err
-		}
-		if !w.Existed || !bytes.Equal(w.Before, w.Data) {
-			w.Before = bytes.Clone(w.Before)
-			w.Data = bytes.Clone(w.Data)
-			if !w.Existed {
-				w.Mode = 0600
-			}
-			changed = append(changed, w)
-		}
-	}
-	return changed, nil
-}
-
 // Apply serializes cooperating invocations, recovers older incomplete operations,
 // and replaces each changed file atomically. The group is recoverable, not atomic.
 func (s *Store) Apply(ctx context.Context, writes []Write) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return resultError(err), err
+	}
+	if err := metadataPreflight(writes); err != nil {
+		return resultError(err), err
+	}
 	l, err := s.coordinator(ctx)
 	if err != nil {
 		return Result{}, err
@@ -63,15 +34,12 @@ func (s *Store) Apply(ctx context.Context, writes []Write) (Result, error) {
 	if _, err = s.recoverLocked(ctx); err != nil {
 		return resultError(err), err
 	}
-	changed, err := s.validate(writes)
+	conditions, changed, err := s.validate(writes)
 	if err != nil {
 		return resultError(err), err
 	}
-	if len(changed) == 0 {
-		return Result{Outcome: "Noop"}, nil
-	}
-	paths := make([]string, len(changed))
-	for i, w := range changed {
+	paths := make([]string, len(conditions))
+	for i, w := range conditions {
 		paths[i] = w.Path
 	}
 	locks, err := lockParents(ctx, paths)
@@ -80,13 +48,14 @@ func (s *Store) Apply(ctx context.Context, writes []Write) (Result, error) {
 	}
 	defer locks.close()
 	// The first-writer snapshot may have gone stale while waiting for parent locks.
-	for _, w := range changed {
-		if err = expected(w); err != nil {
-			return resultError(err), err
-		}
+	if err = expectedAll(conditions); err != nil {
+		return resultError(err), err
 	}
 	if err = ctx.Err(); err != nil {
 		return Result{Outcome: "Cancelled"}, err
+	}
+	if len(changed) == 0 {
+		return Result{Outcome: "Noop"}, nil
 	}
 	j, err := s.begin(changed)
 	if err != nil {
@@ -120,10 +89,8 @@ func (s *Store) Apply(ctx context.Context, writes []Write) (Result, error) {
 	}
 	// Validate all expected originals before the first replacement as well as each
 	// immediately before its rename. A foreign editor can still race the rename.
-	for _, w := range changed {
-		if err = expected(w); err != nil {
-			return s.failed(j, err)
-		}
+	if err = expectedAll(conditions); err != nil {
+		return s.failed(j, err)
 	}
 	for i, w := range changed {
 		if err = ctx.Err(); err != nil {
@@ -154,15 +121,19 @@ func (s *Store) Apply(ctx context.Context, writes []Write) (Result, error) {
 		if err = verifyReplacement(stage(j, i, false), j.Entries[i].AfterHash, w.Mode.Perm()); err != nil {
 			return s.failed(j, err)
 		}
-		if err = expected(w); err != nil {
+		if err = expectedAll(conditions); err != nil {
 			return s.failed(j, err)
 		}
-		if err = replace(ctx, stage(j, i, false), w.Path); err != nil {
+		if err = replace(ctx, stage(j, i, false), w.Path, j.Entries[i].AfterHash, w.Mode, renameChecks{before: func() error { return expectedAll(conditions) }, retry: func() error { return s.hitEntry("sharing-retry", i) }}); err != nil {
+			if errors.Is(err, ErrInterrupted) {
+				return s.unknown(j), err
+			}
 			return s.failed(j, err)
 		}
 		if err = s.hitEntry("replaced", i); err != nil {
 			return s.unknown(j), err
 		}
+		advanceCondition(conditions, w)
 		j.Entries[i].State = "applied"
 		if err = s.save(j); err != nil {
 			return s.failed(j, err)
@@ -171,11 +142,8 @@ func (s *Store) Apply(ctx context.Context, writes []Write) (Result, error) {
 			return s.unknown(j), err
 		}
 	}
-	for _, w := range changed {
-		now, e := Read(w.Path)
-		if e != nil || !now.Existed || !bytes.Equal(now.Before, w.Data) || now.Mode.Perm() != w.Mode.Perm() {
-			return s.failed(j, ErrConflict)
-		}
+	if err = expectedAll(conditions); err != nil {
+		return s.failed(j, err)
 	}
 	j.Outcome = "Succeeded"
 	if err = s.save(j); err != nil {
@@ -219,19 +187,19 @@ func verifyStage(j *journal, i int) error {
 	}
 	return nil
 }
-func replace(ctx context.Context, src, dst string) error {
+func replace(ctx context.Context, src, dst, hash string, mode os.FileMode, checks renameChecks) error {
 	if err := checkPath(src, false); err != nil {
 		return err
 	}
 	if err := checkPath(dst, true); err != nil {
 		return err
 	}
-	if err := renameFile(ctx, src, dst); err != nil {
+	if err := renameFile(ctx, src, dst, hash, mode, checks); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if errors.Is(err, ErrConflict) {
-			return ErrConflict
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrInterrupted) {
+			return err
 		}
 		return ErrIO
 	}

@@ -114,6 +114,9 @@ func Read(path string) (Write, error) {
 }
 
 func expected(w Write) error {
+	if targetMetadata(w.Path) != nil {
+		return ErrConflict
+	}
 	now, err := Read(w.Path)
 	if err != nil {
 		return err
@@ -132,6 +135,9 @@ func writeExclusive(path string, b []byte, mode os.FileMode) error {
 	}
 	f, err := createFile(path)
 	if err != nil {
+		if errors.Is(err, ErrUnsafe) {
+			return ErrUnsafe
+		}
 		return ErrIO
 	}
 	_, err = f.Write(b)
@@ -161,6 +167,9 @@ func ensurePrivateDir(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if err = createDir(path); err != nil && !errors.Is(err, os.ErrExist) {
+			if errors.Is(err, ErrUnsafe) {
+				return ErrUnsafe
+			}
 			return ErrIO
 		}
 		if err = syncDir(filepath.Dir(path)); err != nil {

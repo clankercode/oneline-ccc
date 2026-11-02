@@ -22,6 +22,14 @@ func currentSID() (*windows.SID, error) {
 	return user.User.Sid, nil
 }
 
+func currentGroupSID() (*windows.SID, error) {
+	group, err := windows.GetCurrentProcessToken().GetTokenPrimaryGroup()
+	if err != nil {
+		return nil, ErrUnsafe
+	}
+	return group.PrimaryGroup, nil
+}
+
 func privateDescriptor(dir bool) (*windows.SECURITY_DESCRIPTOR, error) {
 	sid, err := currentSID()
 	if err != nil {
@@ -31,7 +39,11 @@ func privateDescriptor(dir bool) (*windows.SECURITY_DESCRIPTOR, error) {
 	if dir {
 		flags = "OICI"
 	}
-	text := "O:" + sid.String() + "D:P(A;" + flags + ";FA;;;" + sid.String() + ")(A;" + flags + ";FA;;;SY)(A;" + flags + ";FA;;;BA)"
+	group, err := currentGroupSID()
+	if err != nil {
+		return nil, err
+	}
+	text := "O:" + sid.String() + "G:" + group.String() + "D:P(A;" + flags + ";FA;;;" + sid.String() + ")(A;" + flags + ";FA;;;SY)(A;" + flags + ";FA;;;BA)"
 	sd, err := windows.SecurityDescriptorFromString(text)
 	if err != nil {
 		return nil, ErrUnsafe
@@ -43,7 +55,7 @@ func privateDescriptor(dir bool) (*windows.SECURITY_DESCRIPTOR, error) {
 // object, inherited, partial-access and extra-principal ACEs are refused rather
 // than silently lost when the stage replaces an existing file.
 func verifySecurity(h windows.Handle, dir bool) error {
-	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return ErrUnsafe
 	}
@@ -57,6 +69,14 @@ func verifyDescriptor(sd *windows.SECURITY_DESCRIPTOR, dir bool) error {
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || owner == nil || !windows.EqualSid(owner, sid) {
+		return ErrUnsafe
+	}
+	group, _, err := sd.Group()
+	if err != nil || group == nil {
+		return ErrUnsafe
+	}
+	expectedGroup, err := currentGroupSID()
+	if err != nil || !windows.EqualSid(group, expectedGroup) {
 		return ErrUnsafe
 	}
 	control, _, err := sd.Control()

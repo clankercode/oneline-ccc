@@ -86,11 +86,20 @@ func TestWindowsSharingAndCancelledCommit(t *testing.T) {
 				}
 			}()
 			ctx := context.Background()
+			cancelledAtSharing := false
 			if cancelled {
 				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 30*time.Millisecond)
+				ctx, cancel = context.WithCancel(ctx)
 				defer cancel()
+				s.checkpoint = func(name string) error {
+					if name == "sharing-retry:0" {
+						cancelledAtSharing = true
+						cancel()
+					}
+					return nil
+				}
 			}
+
 			start := time.Now()
 			r, err := s.Apply(ctx, []Write{w})
 			if err == nil {
@@ -99,7 +108,7 @@ func TestWindowsSharingAndCancelledCommit(t *testing.T) {
 			if time.Since(start) > 5*time.Second {
 				t.Fatal("unbounded sharing retries")
 			}
-			if cancelled && !errors.Is(err, context.DeadlineExceeded) {
+			if cancelled && (!cancelledAtSharing || !errors.Is(err, context.Canceled)) {
 				t.Fatalf("%+v %v", r, err)
 			}
 			content(t, p, "original")
@@ -153,4 +162,51 @@ func TestWindowsExistingNamedStreamRefused(t *testing.T) {
 		t.Fatal("existing named stream was not refused", err)
 	}
 	content(t, p, "original")
+}
+
+func TestWindowsNoopInputPreconditions(t *testing.T) {
+	for _, point := range []string{"stage:0", "before-replace:0", "applied:0"} {
+		t.Run(point, func(t *testing.T) {
+			d, s := windowsFixture(t)
+			a, b := filepath.Join(d, "unchanged"), filepath.Join(d, "changed")
+			if err := PrivateFile(a, []byte("old-a")); err != nil {
+				t.Fatal(err)
+			}
+			if err := PrivateFile(b, []byte("old-b")); err != nil {
+				t.Fatal(err)
+			}
+			writes := []Write{snapshot(t, a, "old-a"), snapshot(t, b, "new-b")}
+			s.checkpoint = func(name string) error {
+				if name == point {
+					put(t, a, "foreign-a", 0600)
+				}
+				return nil
+			}
+			r, err := s.Apply(context.Background(), writes)
+			if !errors.Is(err, ErrConflict) || r.Outcome != "Conflict" {
+				t.Fatalf("%+v %v", r, err)
+			}
+			content(t, a, "foreign-a")
+			content(t, b, "old-b")
+		})
+	}
+}
+
+func TestWindowsInheritedParentACLRefusedBeforeMutation(t *testing.T) {
+	d, s := windowsFixture(t)
+	parent := filepath.Join(d, "inherited")
+	if err := os.Mkdir(parent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(parent, "config")
+	w := snapshot(t, p, "ours")
+	if _, err := s.Apply(context.Background(), []Write{w}); !errors.Is(err, ErrUnsafe) {
+		t.Fatal("inherited target parent ACL accepted", err)
+	}
+	if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("target created after refusal", err)
+	}
+	if _, err := os.Lstat(s.Root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("state created after refusal", err)
+	}
 }

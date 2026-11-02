@@ -22,10 +22,16 @@ func openRead(path string) (*os.File, error)                       { return nil,
 func createFile(path string) (*os.File, error)                     { return nil, ErrUnsupported }
 func createDir(path string) error                                  { return ErrUnsupported }
 func setMode(f *os.File, mode os.FileMode) error                   { return ErrUnsupported }
-func renameFile(ctx context.Context, src, dst string) error        { return ErrUnsupported }
-func prepareLock(path string) error                                { return ErrUnsupported }
-func syncDir(path string) error                                    { return ErrUnsupported }
+func renameFile(ctx context.Context, src, dst, hash string, mode os.FileMode, checks renameChecks) error {
+	return ErrUnsupported
+}
+func prepareLock(path string) error { return ErrUnsupported }
+func syncDir(path string) error     { return ErrUnsupported }
 
 func openMode(path string) (*os.File, error)             { return nil, ErrUnsupported }
 func targetParent(path string) error                     { return ErrUnsupported }
 func trustedAncestor(path string, info os.FileInfo) bool { return false }
+
+func supportedMetadata(path string) error { return ErrUnsupported }
+
+func sourceMetadata(path string) error { return ErrUnsupported }

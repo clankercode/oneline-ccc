@@ -25,7 +25,16 @@ func TestWindowsDescriptorPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	group, err := currentGroupSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignGroup := "SY"
+	if group.String() == "S-1-5-18" {
+		foreignGroup = "BA"
+	}
 	for _, text := range []string{
+		"O:" + sid.String() + "G:" + foreignGroup + "D:P(A;;FA;;;" + sid.String() + ")(A;;FA;;;SY)(A;;FA;;;BA)",
 		"O:" + sid.String() + "D:P(A;;FA;;;WD)",
 		"O:" + sid.String() + "D:(A;;FA;;;" + sid.String() + ")(A;;FA;;;SY)(A;;FA;;;BA)",
 		"O:SYD:P(A;;FA;;;" + sid.String() + ")(A;;FA;;;SY)(A;;FA;;;BA)",
@@ -54,5 +63,16 @@ func TestWindowsPathPolicy(t *testing.T) {
 	}
 	if !reserved(`C:\private\state`, `c:\PRIVATE\STATE\config`) || !reserved(`C:\state`, `C:\.CCC-CONFIGTXN.LOCK`) {
 		t.Fatal("case alias bypassed reserved paths")
+	}
+}
+
+func TestWindowsSharingErrorClasses(t *testing.T) {
+	for _, err := range []error{windows.ERROR_SHARING_VIOLATION, windows.ERROR_LOCK_VIOLATION, windows.ERROR_ACCESS_DENIED} {
+		if !isSharingError(err) {
+			t.Fatal("held sharing error class not retried", err)
+		}
+	}
+	if isSharingError(windows.ERROR_INVALID_HANDLE) || isSharingError(nil) {
+		t.Fatal("unrelated error retried")
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -160,11 +159,8 @@ func prepareLock(path string) error {
 
 // Never switch to truncate-in-place. Bounded sharing retries recheck the exact
 // destination snapshot so a foreign edit during the retry delay is preserved.
-func renameFile(ctx context.Context, src, dst string) error {
-	before, err := Read(dst)
-	if err != nil {
-		return err
-	}
+
+func renameFile(ctx context.Context, src, dst, hash string, mode os.FileMode, checks renameChecks) error {
 	from, err := windows.UTF16PtrFromString(src)
 	if err != nil {
 		return ErrUnsafe
@@ -173,34 +169,9 @@ func renameFile(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return ErrUnsafe
 	}
-	for attempt := 0; attempt < 8; attempt++ {
-		if err = ctx.Err(); err != nil {
-			return err
-		}
-		if err = checkPath(src, false); err != nil {
-			return err
-		}
-		if err = expected(before); err != nil {
-			return err
-		}
-		err = windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) && !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
-			return ErrIO
-		}
-		if attempt < 7 {
-			timer := time.NewTimer(20 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
-	}
-	return ErrIO
+	return renameRetry(ctx, src, dst, hash, mode, func() error {
+		return windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+	}, isSharingError, checks)
 }
 
 func targetParent(path string) error {
@@ -215,4 +186,35 @@ func trustedAncestor(path string, info os.FileInfo) bool {
 	// Reparse/type checks are handle based in checkComponent. System ancestors
 	// such as C:\Users are intentionally not required to have a private DACL.
 	return checkComponent(path, info) == nil
+}
+
+func supportedMetadata(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil || !privateMetadata(path, info, info.IsDir()) {
+		return ErrUnsafe
+	}
+	return nil
+}
+
+func sourceMetadata(path string) error {
+	h, err := nativeOpen(path, windows.READ_CONTROL|windows.FILE_READ_ATTRIBUTES)
+	if err != nil {
+		return ErrUnsafe
+	}
+	defer windows.CloseHandle(h)
+	if err = checkNative(h, false, true); err != nil {
+		return err
+	}
+	var info windows.ByHandleFileInformation
+	if windows.GetFileInformationByHandle(h, &info) != nil || info.FileAttributes != windows.FILE_ATTRIBUTE_ARCHIVE {
+		return ErrUnsafe
+	}
+	return nil
+}
+
+// MoveFileEx may report ACCESS_DENIED when an existing file is held without
+// delete sharing. Both sources/destinations already pass the restrictive native
+// policy on every attempt; retrying this class is bounded and grants no access.
+func isSharingError(err error) bool {
+	return errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED)
 }

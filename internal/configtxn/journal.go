@@ -64,7 +64,7 @@ func (s *Store) save(j *journal) error {
 	if err = checkPath(filepath.Join(d, "journal.json"), true); err != nil {
 		return err
 	}
-	if renameFile(context.Background(), tmp, filepath.Join(d, "journal.json")) != nil {
+	if renameFile(context.Background(), tmp, filepath.Join(d, "journal.json"), digest(b), 0600, renameChecks{}) != nil {
 		return ErrIO
 	}
 	return syncDir(d)
