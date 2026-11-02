@@ -61,7 +61,8 @@ func run(ctx context.Context, args []string, d dependencies) int {
 		return fail(d, "Application could not open protected state", err)
 	}
 	if useTUI(o, d) {
-		return resultCode(d, "Terminal UI stopped", operationError(ctx, d.runUI(e, tui.Options{Theme: o.theme, ASCII: o.ascii, ReducedMotion: o.reducedMotion, Version: version})))
+		_, noColor := d.lookup("NO_COLOR")
+		return resultCode(d, "Terminal UI stopped", operationError(ctx, d.runUI(e, tui.Options{Theme: o.theme, ASCII: o.ascii, NoColor: noColor, ReducedMotion: o.reducedMotion, Version: version})))
 	}
 	if o.command == "" {
 		o.command = "status"

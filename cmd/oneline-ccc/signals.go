@@ -12,9 +12,8 @@ import (
 )
 
 func useTUI(o flags, d dependencies) bool {
-	_, noColor := d.lookup("NO_COLOR")
 	term, _ := d.lookup("TERM")
-	return o.command == "" && !o.help && !o.showVersion && d.terminal && !o.plain && !noColor && term != "dumb"
+	return o.command == "" && !o.help && !o.showVersion && d.terminal && !o.plain && term != "dumb"
 }
 func tuiRequested(args []string, d dependencies) bool {
 	o, err := parse(args)

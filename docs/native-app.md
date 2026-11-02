@@ -66,9 +66,13 @@ oneline-ccc repair
 Use `--state-dir PATH` to choose a separate private application root,
 `--codex-home PATH` to select a Codex home, and `--codex-executable PATH` to select
 its native executable. Shell/token-loading wrappers are skipped during detection.
-Application state and client roots must be disjoint. `--plain`, redirected output,
-`TERM=dumb` and `NO_COLOR` use plain inspection output. Help/version do not open
-application or client state. No API-key command-line argument is provided.
+Application state and client roots must be disjoint. `--plain`, redirected stdin
+or stdout, and `TERM=dumb` use escape-free plain inspection output. Explicit
+commands also run without the TUI. When `NO_COLOR` is present (including an empty
+value), interactive terminals retain configuration and management with color
+styling disabled. The TUI still uses cursor positioning; use `--plain` for
+escape-free output. Help/version do not open application or client state. No
+API-key command-line argument is provided.
 
 Codex must already be installed. Configuration mutation initially supports native
 **0.166.0 only**. Other versions and the five other detected clients remain read

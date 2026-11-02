@@ -194,19 +194,52 @@ func TestRawTUICtrlCRetainsDirtyQuitGuard(t *testing.T) {
 		t.Fatal("dismissal lost staged draft")
 	}
 }
-func TestTUISignalSelectionMatchesActualEntryMode(t *testing.T) {
-	d, _, _, _, _ := harness(t)
-	d.terminal = true
-	if !tuiRequested(nil, d) {
-		t.Fatal("terminal TUI not selected")
-	}
-	for _, args := range [][]string{{"--plain"}, {"status"}, {"launch", "codex"}, {"--help"}, {"--version"}, {"--json"}, {"--bad"}} {
-		if tuiRequested(args, d) {
-			t.Fatalf("wrong TUI signal mode for %v", args)
-		}
-	}
-	d.lookup = func(k string) (string, bool) { return "", k == "NO_COLOR" }
-	if tuiRequested(nil, d) {
-		t.Fatal("NO_COLOR selected TUI signal mode")
+func TestTUIEntryAndSignalModesAgree(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		terminal bool
+		noColor  bool
+		term     string
+		wantTUI  bool
+	}{
+		{"interactive", nil, true, false, "xterm-256color", true},
+		{"no-color", nil, true, true, "xterm-256color", true},
+		{"plain", []string{"--plain"}, true, true, "xterm-256color", false},
+		{"plain-disabled", []string{"--plain=false"}, true, true, "xterm-256color", true},
+		{"redirected", nil, false, false, "xterm-256color", false},
+		{"redirected-no-color", nil, false, true, "xterm-256color", false},
+		{"dumb", nil, true, false, "dumb", false},
+		{"dumb-no-color", nil, true, true, "dumb", false},
+		{"status", []string{"status"}, true, true, "xterm-256color", false},
+		{"json", []string{"--json"}, true, true, "xterm-256color", false},
+		{"launch", []string{"launch", "codex"}, true, true, "xterm-256color", false},
+		{"help", []string{"--help"}, true, true, "xterm-256color", false},
+		{"version", []string{"--version"}, true, true, "xterm-256color", false},
+		{"version-command", []string{"version"}, true, true, "xterm-256color", false},
+		{"invalid", []string{"--bad"}, true, true, "xterm-256color", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, _, _, _, _ := harness(t)
+			d.terminal = tc.terminal
+			d.lookup = func(k string) (string, bool) {
+				switch k {
+				case "TERM":
+					return tc.term, true
+				case "NO_COLOR":
+					return "", tc.noColor
+				}
+				return "", false
+			}
+			if got := tuiRequested(tc.args, d); got != tc.wantTUI {
+				t.Errorf("TUI signal mode = %t, want %t", got, tc.wantTUI)
+			}
+			entered := false
+			d.runUI = func(core.Backend, tui.Options) error { entered = true; return nil }
+			run(context.Background(), tc.args, d)
+			if entered != tc.wantTUI {
+				t.Errorf("entered TUI = %t, want %t", entered, tc.wantTUI)
+			}
+		})
 	}
 }

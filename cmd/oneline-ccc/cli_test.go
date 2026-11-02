@@ -69,7 +69,11 @@ func TestHelpVersionAndInvalidFlagsNeverConstructEngine(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"status", "--help"}, {"--version"}, {"version"}, {"--unknown=private-value"}, {"--theme", "broken"}, {"status", "--key", "synthetic-secret"}, {"apply", "--yes"}, {"observe", "--json"}, {"status", "unexpected"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			d, _, out, errout, calls := harness(t)
+			d.terminal = true
+			d.lookup = func(k string) (string, bool) { return "", k == "NO_COLOR" }
 			d.userHome = func() (string, error) { t.Fatal("help/invalid read paths"); return "", nil }
+			d.userConfig = d.userHome
+			d.executable = d.userHome
 			code := run(context.Background(), args, d)
 			if *calls != 0 {
 				t.Fatal("constructed engine")
@@ -104,12 +108,30 @@ func TestNonTTYAndPlainAreReadOnlyAndEscapeFree(t *testing.T) {
 		}
 	}
 }
-func TestNoColorForcesPlainEvenOnTerminal(t *testing.T) {
-	d, f, out, _, _ := harness(t)
-	d.terminal = true
-	d.lookup = func(k string) (string, bool) { return "", k == "NO_COLOR" }
-	if run(context.Background(), nil, d) != 0 || f.inspect != 1 || strings.Contains(out.String(), "\x1b") {
-		t.Fatal("NO_COLOR entered cursor mode")
+func TestNoColorKeepsInteractiveManagement(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		present     bool
+	}{{"unset", "", false}, {"empty", "", true}, {"nonempty", "1", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, f, out, errout, calls := harness(t)
+			d.terminal = true
+			d.lookup = func(k string) (string, bool) { return tc.value, k == "NO_COLOR" && tc.present }
+			uiCalls := 0
+			d.runUI = func(b core.Backend, o tui.Options) error {
+				uiCalls++
+				if b != f || o.NoColor != tc.present {
+					t.Fatalf("management backend or NoColor lost: NoColor=%t, want %t", o.NoColor, tc.present)
+				}
+				return nil
+			}
+			if code := run(context.Background(), nil, d); code != 0 {
+				t.Fatalf("exit %d: %s", code, errout)
+			}
+			if uiCalls != 1 || *calls != 1 || f.inspect != 0 || out.Len() != 0 {
+				t.Fatalf("interactive management replaced by status: UI=%d engines=%d inspect=%d", uiCalls, *calls, f.inspect)
+			}
+		})
 	}
 }
 func TestTerminalPassesUIOptionsAndExplicitPaths(t *testing.T) {
@@ -120,7 +142,7 @@ func TestTerminalPassesUIOptionsAndExplicitPaths(t *testing.T) {
 	d.newEngine = func(o engineOptions) (engine, error) { opts = o; return &fakeEngine{}, nil }
 	d.runUI = func(_ core.Backend, o tui.Options) error {
 		called = true
-		if o.Theme != "light" || !o.ASCII || !o.ReducedMotion || o.Version != version {
+		if o.Theme != "light" || !o.ASCII || o.NoColor || !o.ReducedMotion || o.Version != version {
 			t.Fatal("UI options lost")
 		}
 		return nil

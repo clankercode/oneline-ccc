@@ -139,8 +139,10 @@ Global options:
   --help, -h             This help; no state or services opened
   --version              Build version; no state or services opened
 
-No command starts the TUI only when stdin and stdout are terminals.
-Redirected output, --plain and NO_COLOR use escape-free plain status.
+No command starts the TUI when stdin and stdout are terminals and TERM is not dumb.
+Redirected stdin/stdout, --plain and TERM=dumb use escape-free plain status.
+NO_COLOR disables color styling while retaining TUI controls and management.
+The TUI still uses cursor positioning; use --plain for escape-free output.
 TUI controls: Tab/Shift+Tab, Enter, Space, Esc, ?, Ctrl+P; q quits safely.
 Apply is available only through an explicitly reviewed TUI plan.
 Source build: go build -o oneline-ccc ./cmd/oneline-ccc
