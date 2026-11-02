@@ -22,13 +22,17 @@ with its detailed requirements placed before them.
 
 Execution started **2026-11-03** under the active full-backlog goal. The
 [product completion campaign](product-completion-campaign.md) records ordered
-milestones and task boundaries. Current work: item 1's rendered shutdown race,
-item 18's navigation and composition, and item 21's capture-evidence fixes.
+milestones and task boundaries. Reviewed navigation, Linux terminal-input and
+no-color corrections are integrated through `6c50a7a`; current work covers item
+18's composition, item 20's startup/error cleanup and item 21's capture-evidence
+fixes. See the [native remediation checkpoint](../verification/native-remediation-progress.md)
+for the exact integrated gates and their limits.
 All checkboxes remain open until the complete corresponding acceptance evidence
 exists.
 Discovered work is appended below with stable IDs; it is part of the same goal.
-The item 19 implementation is integrated at `cbbaf77` and its Go/native Codex
-gates pass; real no-color terminal and platform acceptance remains open.
+The item 19 implementation is integrated at `cbbaf77` with Linux PTY follow-ups
+at `c1440cf`. Actual no-color entry, editor-focus/masking, draft/quit and redirect
+checks pass; remaining platform and full-screen acceptance is still open.
 
 Some areas extend working features; others require new implementation. Automatic
 maintenance and automatic repair retain the policy decisions and explicit opt-in
@@ -46,6 +50,7 @@ for shipped capabilities; older plans retain their original planning baselines.
 | [Native usage](../native-app.md) | Current commands, workflows and implementation limits |
 | [Native verification](../verification/native-foundation.md) | Actual configuration/terminal evidence and remaining production gates |
 | [Native delivery ledger](../ledgers/native-foundation-ledger.md) | Delivered work, decisions, reviews and final gates |
+| [Native remediation checkpoint](../verification/native-remediation-progress.md) | Integrated navigation, queued-input and no-color fixes with independent reviews; visual and platform acceptance still open |
 | [Native acceptance review](../ledgers/native-foundation-acceptance-rereview.md) | Final process/terminal corrections and the disclosed dependency race |
 | [Client compatibility contract](../compatibility/clients.md) | Client identities, supported Codex contract and adapter expansion gates |
 | [Platform and distribution contract](../compatibility/platforms.md) | OS/architecture support, native proof and release/bootstrap trust |
