@@ -171,6 +171,13 @@ func (m *model) footerHints() []string {
 	if strings.HasPrefix(c.id, "client:") {
 		hints[1] = "Up/Down  Space toggle  Enter  Esc back"
 	}
+	if m.height <= 12 && m.screen == "Dashboard" && m.filter != "" {
+		// Reuse a hint row so a matching filter cannot look like the whole
+		// inventory, without consuming the summary/primary-action viewport.
+		prefix, suffix := "Filter: ", "  / edit/clear  Esc back"
+		queryWidth := max(1, m.contentWidth()-len(prefix)-len(suffix))
+		hints[1] = prefix + ansi.Truncate(m.public(m.filter), queryWidth, m.ellipsis()) + suffix
+	}
 	if m.modal == "more" {
 		hints = []string{"Tab/Shift+Tab menu", "Up/Down menu  Enter open  Esc back"}
 	}

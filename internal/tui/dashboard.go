@@ -130,6 +130,15 @@ func (m *model) clientRows(c core.Client, index, width int) []row {
 	// Keep a bounded list summary, with the exact values in applied detail.
 	// Long names/model IDs must not displace management and tier information.
 	status = ansi.Truncate(m.public(status), max(1, min(16, width/2)), m.ellipsis())
+	if m.height <= 12 && !selected && m.drafts[c.ID] != m.baselines[c.ID] {
+		staged := "off"
+		if m.drafts[c.ID].Enabled {
+			staged = "on"
+		}
+		// Reserve state before fitting the name; the tiny non-selected entry
+		// has no separate management/draft row to recover by scrolling.
+		status += " / Draft: " + staged
+	}
 	nameWidth := max(1, width-8-ansi.StringWidth(status))
 	name := prefix + checkbox(m.drafts[c.ID].Enabled) + " " + ansi.Truncate(m.public(c.Name), nameWidth, m.ellipsis())
 	gap := strings.Repeat(" ", max(2, width-ansi.StringWidth(name)-ansi.StringWidth(status)))
@@ -227,13 +236,15 @@ func (m *model) compactDashboardRows(details []row, matches, managed int) []row 
 			}
 			entry := m.clientRows(c, chosen, width)
 			if tiny && other {
-				management := "not managed"
+				management := "Applied: off"
 				if c.Managed {
-					management = "managed"
+					management = "Applied: on"
 				}
 				tier := m.public(tierLabel(c.Profile.Tier))
-				name := ansi.Truncate(m.public(c.Profile.Model), max(1, width-8-ansi.StringWidth(tier)-len(management)), m.ellipsis())
-				entry = []row{entry[0], {text: "  " + m.modelDefault(name, tier) + " / " + m.note(management)}}
+				tail := "  " + m.note(management)
+				modelWidth := max(1, width-2-ansi.StringWidth(m.modelDefault("", tier))-ansi.StringWidth(tail))
+				name := ansi.Truncate(m.public(c.Profile.Model), modelWidth, m.ellipsis())
+				entry = []row{entry[0], {text: "  " + m.modelDefault(name, tier) + tail}}
 			} else if tiny {
 				management := "not managed / Selected"
 				if c.Managed {

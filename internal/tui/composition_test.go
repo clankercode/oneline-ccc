@@ -438,3 +438,88 @@ func TestCompositionFooterSeparatesCurrentRegionFromF6Action(t *testing.T) {
 		t.Fatal("current region reads as the target of F6")
 	}
 }
+
+func TestCompositionTinyDraftSurvivesFocusSelectionSeparation(t *testing.T) {
+	for _, long := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unicode=%t", long), func(t *testing.T) {
+			m := compositionFixture(t)
+			m.width, m.height = 40, 12
+			m.options.ASCII, m.options.NoColor = false, false
+			if long {
+				m.snapshot.Clients[0].Name = strings.Repeat("模型e\u0301", 24)
+				m.snapshot.Clients[0].Profile.Model = strings.Repeat("exact-模型-", 20)
+				m.drafts["codex"] = desiredClient(m.snapshot.Clients[0])
+				m.baselines["codex"] = m.drafts["codex"]
+			}
+			before := make(map[string]core.Desired)
+			for id, d := range m.drafts {
+				before[id] = d
+			}
+			press(m, "space")
+			press(m, "down")
+			press(m, "shift+tab")
+			want := before["codex"]
+			want.Enabled = !want.Enabled
+			if m.selected != "client-1" || m.focused().id != "client:codex" || m.drafts["codex"] != want {
+				t.Fatal("three-key journey lost draft, selection or focus identity")
+			}
+			for id, d := range before {
+				if id != "codex" && m.drafts[id] != d {
+					t.Fatalf("traversal staged another client: %s", id)
+				}
+			}
+			frame := ansi.Strip(m.View().Content)
+			for _, cue := range []string{"Draft: off", "Applied: on", "Selected: Claude Code", "Configure Claude Code", "Review Claude Code draft", " · Standard"} {
+				if !strings.Contains(frame, cue) {
+					t.Errorf("tiny focused non-selected client hides %q:\n%s", cue, frame)
+				}
+			}
+			if !long && !strings.Contains(frame, "gpt-6.1-sol · Standard") {
+				t.Error("short exact model/default adjacency lost")
+			}
+			assertFrame(t, m)
+			t.Logf("three-key frame:\n%s", frame)
+		})
+	}
+}
+
+func TestCompositionTinyMatchingFilterContextAndClear(t *testing.T) {
+	for i, query := range []string{"Codex", strings.Repeat("模型e\u0301", 24)} {
+		t.Run(fmt.Sprintf("query=%d", i), func(t *testing.T) {
+			m := compositionFixture(t)
+			m.width, m.height = 40, 12
+			m.snapshot.Clients[0].Name = query
+			before := make(map[string]core.Desired)
+			for id, d := range m.drafts {
+				before[id] = d
+			}
+			press(m, "/")
+			m.Update(tea.PasteMsg{Content: query})
+			press(m, "enter")
+			frame := ansi.Strip(m.View().Content)
+			for _, cue := range []string{"Filter: ", "/ edit/clear", "Configure ", "Review ", "Launch ", "Selected 1/1"} {
+				if !strings.Contains(frame, cue) {
+					t.Errorf("matching tiny filter hides %q:\n%s", cue, frame)
+				}
+			}
+			if m.filter != query || !strings.Contains(frame, "Filter: "+string([]rune(query)[:1])) {
+				t.Error("matching filter value/context lost")
+			}
+			assertFrame(t, m)
+			t.Logf("matching-filter frame:\n%s", frame)
+			press(m, "/")
+			m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+			press(m, "enter")
+			frame = ansi.Strip(m.View().Content)
+			if m.filter != "" || strings.Contains(frame, "Filter:") || !strings.Contains(frame, "Selected 1/6") {
+				t.Fatalf("clear did not restore full client context:\n%s", frame)
+			}
+			for id, d := range before {
+				if m.drafts[id] != d {
+					t.Fatalf("filter editing staged %s", id)
+				}
+			}
+			assertFrame(t, m)
+		})
+	}
+}
