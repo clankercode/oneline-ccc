@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -104,8 +105,145 @@ func TestForegroundProgramLifetime(t *testing.T) {
 					t.Fatalf("startup error not preserved: %v", err)
 				}
 			case <-time.After(3 * time.Second):
-				t.Fatal("foreground program did not join its shutdown watcher")
+				t.Fatal("foreground program did not finish input cleanup")
 			}
+		})
+	}
+}
+
+type queuedForegroundModel struct {
+	cancel context.CancelFunc
+	ready  chan struct{}
+	mode   string
+	key    bool
+	check  func() error
+	err    error
+}
+
+type queuedForegroundResult struct{ err error }
+type queuedForegroundExec struct{ check func() error }
+
+func (c queuedForegroundExec) Run() error        { return c.check() }
+func (queuedForegroundExec) SetStdin(io.Reader)  {}
+func (queuedForegroundExec) SetStdout(io.Writer) {}
+func (queuedForegroundExec) SetStderr(io.Writer) {}
+
+func (m *queuedForegroundModel) Init() tea.Cmd  { close(m.ready); return nil }
+func (m *queuedForegroundModel) View() tea.View { return tea.NewView("queued input fixture") }
+func (m *queuedForegroundModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if result, ok := msg.(queuedForegroundResult); ok {
+		m.err = result.err
+		return m, tea.Quit
+	}
+	if _, ok := msg.(tea.KeyPressMsg); ok && !m.key {
+		m.key = true
+		if m.mode == "cancel" {
+			m.cancel()
+		} else if m.mode == "release" {
+			return m, tea.Exec(queuedForegroundExec{m.check}, func(err error) tea.Msg { return queuedForegroundResult{err} })
+		} else {
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func foregroundInputStacks() map[string]string {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	stacks := make(map[string]string)
+	for _, stack := range strings.Split(string(buf[:n]), "\n\n") {
+		// Match active input calls, not StreamEvents.func1's completed-read
+		// WaitGroup.Done epilogue or a goroutine's creation-site metadata.
+		active, _, _ := strings.Cut(stack, "\ncreated by ")
+		if strings.Contains(active, "(*Program).readLoop(") ||
+			strings.Contains(active, "(*TerminalReader).StreamEvents(") ||
+			strings.Contains(active, "(*TerminalReader).sendEvents(") ||
+			strings.Contains(active, "(*TerminalReader).sendBytes(") ||
+			strings.Contains(active, "(*TerminalReader).streamData(") {
+			id, _, _ := strings.Cut(stack, "\n")
+			stacks[id] = stack
+		}
+	}
+	return stacks
+}
+
+func TestForegroundQueuedInputJoins(t *testing.T) {
+	for _, mode := range []string{"cancel", "quit", "release"} {
+		t.Run(mode, func(t *testing.T) {
+			baseline := foregroundInputStacks()
+			master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer master.Close()
+			if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
+				t.Fatal(err)
+			}
+			number, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
+			if err != nil {
+				t.Fatal(err)
+			}
+			slave, err := os.OpenFile(fmt.Sprintf("/dev/pts/%d", number), os.O_RDWR|syscall.O_NOCTTY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer slave.Close()
+			before, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ready, wrote := make(chan struct{}), make(chan error, 1)
+			go func() {
+				select {
+				case <-ready:
+					_, err := io.WriteString(master, strings.Repeat("a", 1024))
+					wrote <- err
+				case <-ctx.Done():
+					wrote <- ctx.Err()
+				}
+			}()
+			started := time.Now()
+			model := &queuedForegroundModel{cancel: cancel, ready: ready, mode: mode}
+			model.check = func() error {
+				// Tea must join suspended input even though its program context
+				// is still live; the child boundary cannot inherit queued reads.
+				for id, stack := range foregroundInputStacks() {
+					if _, existed := baseline[id]; !existed {
+						return fmt.Errorf("suspended input was not joined:\n%s", stack)
+					}
+				}
+				state, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+				if err != nil || !reflect.DeepEqual(before, state) {
+					return fmt.Errorf("suspended terminal modes not restored: %v", err)
+				}
+				return nil
+			}
+			// Input is a real raw PTY and the renderer remains enabled. Check
+			// completion here in-process, before process exit can hide a leak.
+			err = runForegroundProgram(ctx, model,
+				tea.WithInput(slave), tea.WithOutput(io.Discard))
+			if mode == "cancel" && !errors.Is(err, context.Canceled) || mode != "cancel" && err != nil {
+				t.Fatalf("unexpected shutdown result: %v", err)
+			}
+			if model.err != nil {
+				t.Error(model.err)
+			}
+			if err := <-wrote; err != nil {
+				t.Fatal(err)
+			}
+			after, err := unix.IoctlGetTermios(int(slave.Fd()), unix.TCGETS)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatal("queued input shutdown did not restore terminal modes", err)
+			}
+			for id, stack := range foregroundInputStacks() {
+				if _, existed := baseline[id]; !existed {
+					t.Errorf("returned after %s with terminal input goroutine unjoined:\n%s", time.Since(started), stack)
+				}
+			}
+			t.Logf("rendered %s with 1024 pending keys returned after %s", mode, time.Since(started))
 		})
 	}
 }

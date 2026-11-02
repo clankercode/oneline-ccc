@@ -42,30 +42,13 @@ func production(ctx context.Context) dependencies {
 	}
 }
 
-// runForegroundProgram lets root cancellation stop owned work immediately while
-// Tea retains ownership of its terminal reader until graceful shutdown. Passing
-// the root directly to WithContext forces Tea's killed shutdown path, which
-// closes the cancel reader without joining the read loop after tea.Exec resumes.
+// runForegroundProgram shares terminal setup between production and PTY tests.
+// The pinned Tea/Ultraviolet correction joins input on both Quit and context
+// cancellation, so root cancellation can directly stop the program and its work.
 func runForegroundProgram(ctx context.Context, model tea.Model, options ...tea.ProgramOption) error {
-	programContext, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	options = append([]tea.ProgramOption{tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout)}, options...)
-	options = append(options, tea.WithContext(programContext), tea.WithoutSignalHandler())
-	program := tea.NewProgram(model, options...)
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		select {
-		case <-ctx.Done():
-			program.Quit()
-		case <-programContext.Done():
-		}
-	}()
-	defer func() {
-		// Also release a Quit blocked during startup if Run returns early.
-		cancel()
-		<-stopped
-	}()
-	_, err := program.Run()
+	options = append(options, tea.WithContext(ctx), tea.WithoutSignalHandler())
+	_, err := tea.NewProgram(model, options...).Run()
 	return errors.Join(err, ctx.Err())
 }
 

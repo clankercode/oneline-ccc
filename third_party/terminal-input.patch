@@ -1,0 +1,302 @@
+--- a/bubbletea/cursed_renderer_test.go
++++ b/bubbletea/cursed_renderer_test.go
+@@ -75,6 +75,11 @@
+ 		}
+ 	}
+ 
++	// This custom reader cannot cancel Read. Its owner must unblock it before
++	// requesting a shutdown that joins input, rather than orphaning the read.
++	if err := pw.Close(); err != nil {
++		t.Fatal(err)
++	}
+ 	p.Quit()
+ 	select {
+ 	case <-runDone:
+--- /dev/null
++++ b/bubbletea/input_lifetime_test.go
+@@ -0,0 +1,61 @@
++package tea
++
++import (
++	"io"
++	"testing"
++	"testing/synctest"
++	"time"
++)
++
++type lifetimeCancelReader struct {
++	canceled chan struct{}
++	closed   chan struct{}
++}
++
++func (r lifetimeCancelReader) Read([]byte) (int, error) { return 0, io.EOF }
++func (r lifetimeCancelReader) Cancel() bool             { close(r.canceled); return true }
++func (r lifetimeCancelReader) Close() error             { close(r.closed); return nil }
++
++func TestInputReaderCloseWaitsForReadLoop(t *testing.T) {
++	for _, mode := range []string{"quit", "kill", "release"} {
++		t.Run(mode, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				p := NewProgram(nil, WithInput(nil), WithOutput(io.Discard))
++				defer p.cancel()
++				r := lifetimeCancelReader{make(chan struct{}), make(chan struct{})}
++				p.cancelReader = r
++				p.readLoopDone = make(chan struct{})
++				stopped := make(chan struct{})
++				go func() {
++					defer close(stopped)
++					if mode == "release" {
++						_ = p.ReleaseTerminal()
++					} else {
++						p.shutdown(mode == "kill")
++					}
++				}()
++				<-r.canceled
++				// Advance fake time beyond the old fallback while the real
++				// completion barrier remains closed. This costs no wall time.
++				time.Sleep(time.Second)
++				select {
++				case <-r.closed:
++					t.Error("reader closed before input completion")
++				default:
++				}
++				select {
++				case <-stopped:
++					t.Error("terminal boundary returned before input completion")
++				default:
++				}
++				close(p.readLoopDone)
++				<-stopped
++				select {
++				case <-r.closed:
++				default:
++					t.Error("joined reader was not closed")
++				}
++			})
++		})
++	}
++}
+--- a/bubbletea/tea.go
++++ b/bubbletea/tea.go
+@@ -549,6 +549,7 @@
+ 	cancelReader          cancelreader.CancelReader
+ 	inputScanner          *uv.TerminalReader
+ 	readLoopDone          chan struct{}
++	readLoopCancel        context.CancelFunc
+ 
+ 	// modes keeps track of terminal modes that have been enabled or disabled.
+ 	ignoreSignals uint32
+@@ -1293,16 +1294,8 @@
+ 		// Wait for all handlers to finish.
+ 		p.handlers.shutdown()
+ 
+-		// Check if the cancel reader has been setup before waiting and closing.
+-		if p.cancelReader != nil {
+-			// Wait for input loop to finish.
+-			if p.cancelReader.Cancel() {
+-				if !kill {
+-					p.waitForReadLoop()
+-				}
+-			}
+-			_ = p.cancelReader.Close()
+-		}
++		// Input must be joined before its resources close, including on Kill.
++		p.closeInputReader()
+ 
+ 		if p.renderer != nil {
+ 			p.stopRenderer(kill)
+@@ -1370,11 +1363,7 @@
+ 
+ func (p *Program) releaseTerminal(reset bool) error {
+ 	atomic.StoreUint32(&p.ignoreSignals, 1)
+-	if p.cancelReader != nil {
+-		p.cancelReader.Cancel()
+-	}
+-
+-	p.waitForReadLoop()
++	p.closeInputReader()
+ 
+ 	if p.renderer != nil {
+ 		p.stopRenderer(false)
+--- a/bubbletea/tty.go
++++ b/bubbletea/tty.go
+@@ -1,10 +1,10 @@
+ package tea
+ 
+ import (
++	"context"
+ 	"fmt"
+ 	"os"
+ 	"strconv"
+-	"time"
+ 
+ 	uv "github.com/charmbracelet/ultraviolet"
+ 	"github.com/charmbracelet/x/term"
+@@ -56,8 +56,7 @@
+ // initInputReader (re)commences reading inputs.
+ func (p *Program) initInputReader(cancel bool) error {
+ 	if cancel && p.cancelReader != nil {
+-		p.cancelReader.Cancel()
+-		p.waitForReadLoop()
++		p.closeInputReader()
+ 	}
+ 
+ 	term := p.environ.Getenv("TERM")
+@@ -76,32 +75,46 @@
+ 	drv.SetLogger(p.logger)
+ 	p.inputScanner = drv
+ 	p.readLoopDone = make(chan struct{})
++	ctx, cancelReadLoop := context.WithCancel(p.ctx)
++	p.readLoopCancel = cancelReadLoop
+ 
+-	go p.readLoop()
++	go p.readLoop(ctx)
+ 
+ 	return nil
+ }
+ 
+-func (p *Program) readLoop() {
++func (p *Program) readLoop(ctx context.Context) {
+ 	defer close(p.readLoopDone)
+ 
+-	if err := p.inputScanner.StreamEvents(p.ctx, p.msgs); err != nil {
++	if err := p.inputScanner.StreamEvents(ctx, p.msgs); err != nil {
+ 		select {
+-		case <-p.ctx.Done():
++		case <-ctx.Done():
+ 			return
+ 		case p.errs <- err:
+ 		}
+ 	}
+ }
+ 
+-// waitForReadLoop waits for the cancelReader to finish its read loop.
++// closeInputReader stops event delivery and the underlying read, then joins
++// both through StreamEvents before closing reader resources. Non-cancelable
++// custom readers must be unblocked by their owner; a timeout cannot prove a join.
++func (p *Program) closeInputReader() {
++	if p.cancelReader == nil {
++		return
++	}
++	if p.readLoopCancel != nil {
++		p.readLoopCancel()
++	}
++	p.cancelReader.Cancel()
++	p.waitForReadLoop()
++	_ = p.cancelReader.Close()
++	p.cancelReader = nil
++}
++
++// waitForReadLoop waits for the decoder and its underlying reader to finish.
+ func (p *Program) waitForReadLoop() {
+-	select {
+-	case <-p.readLoopDone:
+-	case <-time.After(500 * time.Millisecond): //nolint:mnd
+-		// The read loop hangs, which means the input
+-		// cancelReader's cancel function has returned true even
+-		// though it was not able to cancel the read.
++	if p.readLoopDone != nil {
++		<-p.readLoopDone
+ 	}
+ }
+ 
+--- a/ultraviolet/terminal_reader.go
++++ b/ultraviolet/terminal_reader.go
+@@ -161,11 +161,10 @@
+ 	for {
+ 		select {
+ 		case <-ctx.Done():
+-			d.sendEvents(eventc, buf.Bytes(), true)
+ 			wg.Wait()
+ 			return nil
+ 		case err := <-errc:
+-			d.sendEvents(eventc, buf.Bytes(), true)
++			d.sendEvents(ctx, eventc, buf.Bytes(), true)
+ 			wg.Wait()
+ 			return err // return the first error encountered
+ 		case <-timeout.C:
+@@ -176,7 +175,7 @@
+ 			timedout := time.Now().After(ttimeout)
+ 			if buf.Len() > 0 && timedout {
+ 				d.logf("timeout expired, processing buffer")
+-				n = d.sendEvents(eventc, buf.Bytes(), true)
++				n = d.sendEvents(ctx, eventc, buf.Bytes(), true)
+ 			}
+ 
+ 			if n > 0 {
+@@ -200,7 +199,7 @@
+ 			d.logf("input: %q", read)
+ 			buf.Write(read)
+ 			ttimeout = time.Now().Add(d.EscTimeout)
+-			n := d.sendEvents(eventc, buf.Bytes(), false)
++			n := d.sendEvents(ctx, eventc, buf.Bytes(), false)
+ 			if !timeout.Stop() {
+ 				// drain the channel if it was already running
+ 				select {
+@@ -228,10 +227,14 @@
+ 	d.logger = logger
+ }
+ 
+-func (d *TerminalReader) sendEvents(eventc chan<- Event, buf []byte, expired bool) int {
++func (d *TerminalReader) sendEvents(ctx context.Context, eventc chan<- Event, buf []byte, expired bool) int {
+ 	n, events := d.eventScanner.scanEvents(buf, expired)
+ 	for _, event := range events {
+-		eventc <- event
++		select {
++		case <-ctx.Done():
++			return n
++		case eventc <- event:
++		}
+ 	}
+ 	return n
+ }
+--- /dev/null
++++ b/ultraviolet/terminal_reader_cancellation_test.go
+@@ -0,0 +1,47 @@
++package uv
++
++import (
++	"context"
++	"io"
++	"strings"
++	"testing"
++	"time"
++)
++
++type eofSignalReader struct {
++	*strings.Reader
++	eof chan struct{}
++}
++
++func (r eofSignalReader) Read(buf []byte) (int, error) {
++	n, err := r.Reader.Read(buf)
++	if err == io.EOF {
++		close(r.eof)
++	}
++	return n, err
++}
++
++func TestInputDispatchCancellation(t *testing.T) {
++	for _, payload := range []string{strings.Repeat("a", 1024), "\x1b"} {
++		t.Run(payload[:1], func(t *testing.T) {
++			ctx, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			r := eofSignalReader{strings.NewReader(payload), make(chan struct{})}
++			d := NewTerminalReader(r, "dumb")
++			done := make(chan error, 1)
++			// Deliberately leave event delivery blocked, both during ordinary
++			// decoding and when flushing an incomplete sequence after EOF.
++			go func() { done <- d.StreamEvents(ctx, make(chan Event)) }()
++			<-r.eof
++			cancel()
++			select {
++			case err := <-done:
++				if err != nil {
++					t.Fatal(err)
++				}
++			case <-time.After(time.Second):
++				t.Fatal("decoder did not join after cancellation with blocked output")
++			}
++		})
++	}
++}

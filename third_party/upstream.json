@@ -1,0 +1,20 @@
+[
+  {
+    "directory": "bubbletea",
+    "module": "charm.land/bubbletea/v2",
+    "version": "v2.1.1",
+    "commit": "67b4c7a8a2b34a0b1ce15261b0c705bc7e1a04b7",
+    "module_sum": "h1:S1S9l37pCZGrj1JexBcr9x4Nr3MVeM42InqCYM/tDpU=",
+    "go_mod_sum": "h1:xWHeyxIX9/wiFU2kgPW04ojOZyTzrWf+8lGjUCaftiU=",
+    "archive_sha256": "19b0f9e251f3c4c32755568535396897d755c5503ec3811ee546002f00fd9e78"
+  },
+  {
+    "directory": "ultraviolet",
+    "module": "github.com/charmbracelet/ultraviolet",
+    "version": "v0.0.0-20261008173134-6b8d4baf91b4",
+    "commit": "6b8d4baf91b4c933e6613b0eefc8f180f6eda002",
+    "module_sum": "h1:hISLzUbwcvJbGoNR6A3L/TpguRRnACBmZOee8LcHLJw=",
+    "go_mod_sum": "h1:aJDVk+WOVM1K04rdc/71PMPoUGfjxjhvXfP3Pjz1Zio=",
+    "archive_sha256": "87eb57acb5fec6e392f7b3d0a1b2766161637d426c72288b2912752bdaa55796"
+  }
+]

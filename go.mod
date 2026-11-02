@@ -2,6 +2,12 @@ module github.com/clankercode/oneline-ccc
 
 go 1.26.1
 
+// Pinned upstream sources with the reviewed terminal-input lifetime correction.
+// See third_party/README.md for provenance, verification and update instructions.
+replace charm.land/bubbletea/v2 => ./third_party/bubbletea
+
+replace github.com/charmbracelet/ultraviolet => ./third_party/ultraviolet
+
 require (
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.0.6
