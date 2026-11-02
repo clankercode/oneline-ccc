@@ -55,28 +55,7 @@ func (m *model) controls() []control {
 			add("service:install", "Review monitor installation", "")
 		}
 	case "Models":
-		add("enabled", checkbox(d.Enabled)+" Manage client", why)
-		for _, id := range []string{"gpt-6.1-sol", "glm-5.3", "glm-5.3-flash"} {
-			add("model:"+id, choice(d.Profile.Model == id)+" Model "+id, why)
-		}
-		for _, info := range m.models {
-			add(discoveredControlID(info), "Advertised model "+info.ID+" | "+info.Source, why)
-		}
-		for _, b := range []int64{272000, 353000, 500000} {
-			add(fmt.Sprintf("budget:%d", b), choice(d.Profile.Budget == b)+fmt.Sprintf(" Budget %d", b), why)
-		}
-		for _, tier := range []string{"Standard", "Fast", "Ultrafast"} {
-			add("tier:"+tier, choice(d.Profile.Tier == tier)+" Default tier "+tier, why)
-		}
-		add("capacity", checkbox(d.Profile.CapacityConfirmed)+" Confirm route supports this context budget", why)
-		add("tiers", checkbox(d.Profile.TiersConfirmed)+" This route supports Fast and Ultrafast", why)
-		for _, f := range []string{"model", "budget", "compact", "endpoint", "credential"} {
-			add("advanced:"+f, "Advanced: edit "+f, why)
-		}
-		add("discover", "Discover advertised models", why)
-		add("plan", "Review client draft", why)
-		add("discard", "Discard this client's draft", "")
-		add("back", "Back; keep draft", "")
+		cs = append(cs, m.modelsControls(why, d)...)
 	case "Review":
 		add("review:back", "Back; keep draft", "")
 		if m.plan != nil {

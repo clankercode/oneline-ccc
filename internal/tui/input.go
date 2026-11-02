@@ -23,6 +23,9 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	if m.modal != "" {
 		return m.modalKey(k)
 	}
+	if m.modelsKey(k) {
+		return nil
+	}
 	switch key {
 	case "?":
 		m.openModal("help")
@@ -116,11 +119,14 @@ func (m *model) activate(c control) tea.Cmd {
 	}
 	p := m.draft().Profile
 	switch {
+	case m.screen == "Models" && strings.HasPrefix(id, "field:"):
+		m.openModelsChoice(strings.TrimPrefix(id, "field:"))
 	case strings.HasPrefix(id, "discovered:"):
 		for _, info := range m.models {
 			if discoveredControlID(info) == id {
 				p.Model = info.ID
 				m.changeProfile(p)
+				m.finishModelsChoice()
 				return nil
 			}
 		}
@@ -129,13 +135,16 @@ func (m *model) activate(c control) tea.Cmd {
 	case strings.HasPrefix(id, "model:"):
 		p.Model = strings.TrimPrefix(id, "model:")
 		m.changeProfile(p)
+		m.finishModelsChoice()
 	case strings.HasPrefix(id, "budget:"):
 		p.Budget, _ = strconv.ParseInt(strings.TrimPrefix(id, "budget:"), 10, 64)
 		p.Compact = compactBudget(p.Budget)
 		m.changeProfile(p)
+		m.finishModelsChoice()
 	case strings.HasPrefix(id, "tier:"):
 		p.Tier = strings.TrimPrefix(id, "tier:")
 		m.changeProfile(p)
+		m.finishModelsChoice()
 	case strings.HasPrefix(id, "advanced:"):
 		if why := m.editable(); why != "" {
 			m.status = why
@@ -165,6 +174,14 @@ func (m *model) activate(c control) tea.Cmd {
 		}
 	default:
 		switch id {
+		case "models:advanced":
+			f := m.modelsForm()
+			f.advanced = !f.advanced
+			m.setModelsForm(f)
+			m.focusID("models:advanced")
+			m.scroll = -1
+		case "models:close":
+			m.closeModelsChoice()
 		case "configure":
 			m.goTo("Models")
 		case "enabled":

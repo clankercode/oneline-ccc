@@ -16,6 +16,9 @@ type row struct {
 func (m *model) View() tea.View {
 	w, h := max(1, m.width), max(1, m.height)
 	header := m.shellHeader()
+	if m.screen == "Models" && m.modal == "" && m.editor == nil {
+		header[0] = m.modelsHeader()
+	}
 	lines, focusLine, start, available := m.layout()
 	footer := m.shellFooter("")
 	out := append([]string(nil), header...)
@@ -103,26 +106,9 @@ func (m *model) controlRow(c control, index int) row {
 func (m *model) screenRows() []row {
 	var rs []row
 	text := func(s string) { rs = append(rs, row{text: m.public(s)}) }
-	c, ok := m.client()
-	d := m.draft()
 	switch m.screen {
 	case "Models":
-		if ok {
-			text("Selected: " + c.Name + " | " + c.Status)
-			text(fmt.Sprintf("Installed: %t | Managed: %t | Supported: %t", c.Installed, c.Managed, c.Supported))
-			if c.Reason != "" {
-				text(c.Reason)
-			}
-			text("Model / default: " + d.Profile.Model + " / " + tierLabel(d.Profile.Tier))
-			text(fmt.Sprintf("Context budget: %d | Compact: %d", d.Profile.Budget, d.Profile.Compact))
-			text("Available tiers: " + tierAvailability(d.Profile.TiersConfirmed))
-			text("Chosen budgets are not verified model capacities.")
-			if why := m.editable(); why != "" {
-				text(why)
-			}
-		} else {
-			text("No client selected; inspect a client from Dashboard.")
-		}
+		return m.modelsRows()
 	case "Review":
 		if m.plan == nil {
 			text("No active review. Request a plan for the selected draft.")
@@ -174,12 +160,7 @@ func (m *model) screenRows() []row {
 		if i < navCount {
 			continue
 		}
-		if m.screen == "Models" {
-			switch c.id {
-			case "enabled", "model:gpt-6.1-sol", "budget:272000", "tier:Standard", "capacity", "advanced:model", "discover":
-				rs = append(rs, row{text: ""})
-			}
-		}
+
 		rs = append(rs, m.controlRow(c, i))
 	}
 	return rs

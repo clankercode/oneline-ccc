@@ -52,6 +52,7 @@ type model struct {
 	reconcileClient              string
 	reviewPage                   int
 	reviewRead                   bool
+	modelsForms                  map[string]modelsForm
 	models                       []core.ModelInfo
 	repair                       string
 	persistent                   bool
