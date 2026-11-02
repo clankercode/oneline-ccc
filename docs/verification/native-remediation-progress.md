@@ -18,6 +18,8 @@ work and full screen-by-screen visual campaign are still in progress.
 | Startup and error ownership | `28576af`, `418283a` | Deferred cleanup for partial setup, returned errors and panics; serialized resource ownership; observed cancellation checked before Init outside the ownership lock; [review](../review/native-startup-review.md) and [resolved cancellation re-review](../review/native-startup-rereview.md). Failed-reader constructor descriptors and native platform proof remain open |
 | Secondary screen, layer and editor references | Reviewed source `46b50cd`, verifier `f285ff8`; source/docs integration follows `1d75e8b` | Six secondary design targets, eight layers and seven editors; 14 integrated browser journeys pass. [Reference verification, independent reviews and pending CI wiring](tui-native-references.md); these are design targets, not native acceptance |
 | Native capture integrity and semantics | `cb936e6` | Reviewed opacity, state/outcome, provenance, cleanup and legacy-proof checks; controller fault, real-legacy and tagged TUI race gates pass. [Evidence and remaining integration/type/coverage limits](tui-native-captures.md); no visual PASS |
+| Shared shell and client composition | `cc76758` through `1ee8fc5` | Multiline clients, list/detail layout, action/default-tier hierarchy and compact draft/filter visibility; [initial source review](../review/native-composition-review.md), [resolved compact-state rereview](../review/native-composition-rereview.md) and [interim actual-image review](../review/native-tui-composition-vision.md). Other bodies and full visual acceptance remain open |
+| Help wrapped-row pagination | `40ba57b` | [Independent readability review](../review/native-help-readability-review.md) approves measured viewport and boundary/resize coverage. Useful grouped shortcut design remains open |
 
 The terminal correction uses licensed, pinned module mirrors because the checked
 upstream revisions did not contain the required dispatch/join fix. The isolated
@@ -70,16 +72,28 @@ and is not an updated native client handoff test. No inference was requested.
 Six static builds passed on the reviewed terminal-fix branch; integrated hosted
 CI and native terminal evidence have their own status.
 
+After composition and Help integration, the first normal gate found a stale
+Linux PTY expectation for the former `| Draft` separator. Test-only `b8d7d09`
+follows the new explicit pending-draft message without removing staged-state,
+masking, dirty-exit or terminal-restoration checks. The focused two-value
+`NO_COLOR` journey and fresh full Go normal/race/vet gates all passed on this
+integrated tree. Ten wide/dark base-screen captures pass the evidence verifier;
+the coordinator inspected every individual image and two relevant crops.
+The resulting [visual findings](../review/native-tui-composition-vision.md) keep
+the page-body and broader acceptance gates explicitly open.
+
 ## Remaining acceptance
 
-- New shared shell and client Dashboard composition, then every other screen,
-  editor and overlay, still need the mandatory alternating visual/source review
-  against pinned mockups on the exact final installed revision.
+- Shared shell and client Dashboard composition are integrated with bounded
+  source/geometry approval and interim image inspection. They, every other
+  screen, editor and overlay still need the complete alternating review against
+  pinned matching-state mockups on the exact final installed revision.
 - Reviewed capture tooling is integrated; the inherited observation-type guard,
   integrated More semantics and compact draft/filter fixture coverage remain
   follow-ups. Reviewed secondary references are available; compare every native
   surface with those targets. Existing captures retain their original provenance.
-- Narrow Help title/current-page visibility is still a concrete readability case.
+- Wrapped-row Help readability is corrected in source. Final integrated page
+  captures and useful grouped shortcut presentation remain acceptance work.
 - Bounded startup/error cleanup is integrated. Failed-reader constructor-private
   descriptors, native platform failures and uncooperative external I/O remain
   outside that approval; this does not certify every panic/callback combination.

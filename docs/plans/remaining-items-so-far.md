@@ -67,6 +67,7 @@ for shipped capabilities; older plans retain their original planning baselines.
 | [Preview verification](../verification/tui-usability.md) | Historical browser-only checks; does not close native visual or interaction acceptance |
 | [Native screen and navigation inventory](../review/native-tui-screen-inventory.md) | Source-backed inventory of 10 screens, 7 modal variants, 7 editors, current control inconsistencies and missing mockup counterparts; no visual PASS claimed |
 | [Native capture infrastructure and limits](../verification/tui-native-captures.md) | Real PTY/ANSI/PNG tooling, controller fault gates, independent semantic/legacy reviews and outstanding final-capture requirements |
+| [Interim native composition visual review](../review/native-tui-composition-vision.md) | Ten actual integrated screen images, inspected crops, specific page-body failures and bounded independent review links; no final visual acceptance |
 | [Stack and identity research](../research/tui-stack.md) | Framework choices, model metadata and client/utility identity evidence |
 | [Existing-project research](../research/existing-projects.md) | Prior art and reuse options to consult before duplicating functionality |
 | [Stage-zero verification](../verification/tui-stage-zero.md) | Native Codex contract and isolated existing-tool adoption trials |
@@ -350,6 +351,60 @@ that the fixes are absent or that the rejected experience is now approved.
   Preserve Review's full before/after values, all pages, acknowledgment and
   stale/no-op/resize safeguards; styling must never clip authority-bearing text.
 
+### Concrete page-body defects confirmed after shell integration
+
+The [interim composition review](../review/native-tui-composition-vision.md)
+records actual native PNG inspection at `40ba57b`, with source/geometry review
+and full merged normal/race/vet evidence kept separate. The following are still
+open obligations within item 18, even though the shared shell and Dashboard have
+improved. A colored header above the old text listing does not meet the target.
+
+- [ ] **Models:** replace the long exposed radio/Advanced control dump with
+  concise model, context-budget and default-tier fields, deliberate Advanced
+  disclosure, a readable applied/draft summary and useful Review/Back actions.
+  Avoid requiring traversal through every option to reach the next step. A9
+  implementation is in progress; the integrated native page is not yet fixed.
+  Include the candidate's model/budget/tier selector panels, Advanced collapsed
+  and expanded states, explicit commit/cancel, reverse traversal and editor
+  return in the capture and interaction matrix. Hidden semantic fixture actions
+  are not proof that the visible keyboard path works.
+- [ ] **Review:** distinguish plan identity, desired settings, field labels and
+  before/after values with consistent weight, spacing, color and non-color cues.
+  Preserve complete values, all pages, acknowledgment and exact-plan safeguards.
+  Obtain a matching populated mockup; an empty preview is not a valid populated
+  plan comparison.
+- [ ] **Jobs:** replace the single pipe-separated receipt line with readable
+  receipt/status groups, separate active work from history, and provide a useful
+  idle path. The observed initial focus emphasizes an unavailable cancellation
+  command despite no active job. Compare matching receipt/progress states and
+  preserve cancellation-request versus final-outcome distinctions.
+- [ ] **Gateway:** group connection, credential storage and verification state;
+  align field/value presentation and separate endpoint and hidden-key actions.
+  The current summary-sentence/action stack does not match the reference. Keep
+  masking, session/persistence intent and unverified-route states truthful.
+- [ ] **Service:** give observed status, backend/scope and lifecycle controls
+  distinct hierarchy. Separate inspection/install from running-service actions,
+  explain unavailable choices and retain actual ownership/state evidence.
+- [ ] **Repair:** distinguish target/scope, exact redacted brief or useful empty
+  state, sharing guidance and Prepare/Export actions. Compare prepared native
+  briefs with prepared targets; a boundary sentence and command list is not the
+  finished design.
+- [ ] **SSH:** present handoff status, terminal-ownership steps, access state and
+  the review action clearly. The current two sentences and plain command list
+  need the same component quality as Dashboard. Preserve separate evidence for
+  server setup, firewall policy and successful remote access.
+- [ ] **Utilities:** replace repeated unavailability prose and emphasized
+  disabled controls with coherent operation/availability presentation, concise
+  reasons and a useful return route. Unimplemented lifecycle actions remain
+  explicitly unavailable; styling cannot imply an installer exists.
+- [ ] **Settings:** group display, credentials and related tools; align current
+  values, state choice scope/persistence and retain consistent toggle/action
+  behavior and return focus. The current flat mixed-purpose list is not accepted.
+
+These observations cover ten base-screen captures at one size and appearance.
+They do not replace the full screen/editor/overlay/state matrix, alternating
+review loops, real keyboard journeys or final installed-revision acceptance.
+
 ## Other remaining items
 
 1. [ ] **Fix the known terminal shutdown race.** Resolve the Bubble Tea/cancelreader
@@ -537,4 +592,15 @@ that the fixes are absent or that the rejected experience is now approved.
     Validate the shape of recorded client observations: accept arrays and the
     helper's explicit nil-slice `null`, but reject objects/scalars. An empty-state
     label with `fixture.clients = {}` must not receive observed-state proof.
+    Bind prepared Dashboard observations to the actual production View/frame:
+    repeating matching metadata or using any real inventory ID is insufficient.
+    Independent review of A2b found that filtered captures accepted nonmatching
+    Pi as focused/selected, and authentic baseline PNG/ANSI/cells accepted copied
+    pending/filter observations. Reject these actual alternative-ID and
+    baseline-association controls, preserve selected-client/draft invariants
+    through filter-only setup, and state explicitly when the current rendering
+    provides no distinguishing cue. Prepared direct-Update setup is not proof
+    that those setup keys arrived through the PTY; later round-trip keys are
+    separate evidence. The original retained positive captures are not thereby
+    shown incorrect, and their provenance must not be rewritten.
     This supports P0 acceptance; artifact integrity alone is not a visual PASS.
