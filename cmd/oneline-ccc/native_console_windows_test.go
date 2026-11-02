@@ -77,12 +77,16 @@ func init() {
 		}()
 		return ctx, func() {
 			// Private external cancellation event, not the operator's console.
-			_ = windows.SetEvent(event)
+			if err := windows.SetEvent(event); err != nil {
+				panic(err)
+			}
 			if err := <-joined; err != nil {
 				panic(err)
 			}
 			cancel()
-			_ = windows.CloseHandle(event)
+			if err := windows.CloseHandle(event); err != nil {
+				panic(err)
+			}
 		}, nil
 	}
 }

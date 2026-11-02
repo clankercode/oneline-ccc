@@ -128,7 +128,9 @@ func TestNativeConsoleFixture(t *testing.T) {
 	}
 	defer diag.Close()
 	// This is the subprocess's stderr only. stdin/stdout stay native handles.
+	previousStderr := os.Stderr
 	os.Stderr = diag
+	defer func() { os.Stderr = previousStderr }()
 	before, err := nativeConsoleModes()
 	if err != nil {
 		t.Fatal(err)
