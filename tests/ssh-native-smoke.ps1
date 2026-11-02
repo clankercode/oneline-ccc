@@ -20,15 +20,11 @@ function New-FixtureKey([string]$Path) {
 New-FixtureKey $keyPath
 
 # Operator preparation ONLY on this disposable Windows GitHub runner.
-# Establish a clean inbound policy for integration testing; this is not helper
-# behavior and makes no claim about why any preexisting app rule was broad.
-$baselineAllowRules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow)
-$baselineAllowRules | Disable-NetFirewallRule
+# Disable only the known broad OpenSSH default in its writable PersistentStore.
+# Other app rules remain intact; the helper must inspect their ActiveStore filters.
+$baselineSshRule = Get-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue
+if ($baselineSshRule) { Disable-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenSSH-Server-In-TCP' }
 Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block
-if (@(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow).Count) {
-    throw 'Disposable-runner preparation failed to disable all preexisting inbound Allow rules.'
-}
-Write-Output ("Disposable-runner preparation disabled {0} preexisting inbound Allow rules; firewall enabled with default inbound Block." -f $baselineAllowRules.Count)
 
 & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
 $sshd = Join-Path $sshRoot 'sshd.exe'
@@ -40,7 +36,7 @@ foreach ($setting in @('passwordauthentication no', 'authenticationmethods publi
 }
 $rules = @(Get-NetFirewallRule -Name 'Oneline-CCC-SSH-*')
 if ($rules.Count -ne 1 -or [string]$rules[0].Profile -ne 'Private') { throw 'Expected one Private SSH rule' }
-$addresses = @($rules[0] | Get-NetFirewallAddressFilter | Select-Object -ExpandProperty RemoteAddress)
+$addresses = @($rules[0] | Get-NetFirewallAddressFilter -PolicyStore ActiveStore | Select-Object -ExpandProperty RemoteAddress)
 if ($addresses.Count -ne 1 -or $addresses[0] -ne 'LocalSubnet') { throw 'SSH rule permits sources beyond the local subnet' }
 if ((Get-Service sshd).Status -ne 'Running') { throw 'SSH service is not running' }
 

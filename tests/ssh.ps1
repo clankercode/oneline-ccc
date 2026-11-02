@@ -347,10 +347,10 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
         $state.Rules[$Name] = $rule
         $rule
     }
-    function Get-NetFirewallAddressFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{RemoteAddress = $InputObject.RemoteAddress} } }
-    function Get-NetFirewallPortFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{LocalPort = $InputObject.LocalPort; Protocol = $InputObject.Protocol} } }
-    function Get-NetFirewallApplicationFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{Program = $InputObject.Program; Package = $InputObject.Package} } }
-    function Get-NetFirewallServiceFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject) process { [pscustomobject]@{Service = $InputObject.Service} } }
+    function Get-NetFirewallAddressFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject, $PolicyStore) process { Assert-True ($PolicyStore -eq 'ActiveStore') 'Associated firewall filter must explicitly query ActiveStore'; [pscustomobject]@{RemoteAddress = $InputObject.RemoteAddress} } }
+    function Get-NetFirewallPortFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject, $PolicyStore) process { Assert-True ($PolicyStore -eq 'ActiveStore') 'Associated firewall filter must explicitly query ActiveStore'; [pscustomobject]@{LocalPort = $InputObject.LocalPort; Protocol = $InputObject.Protocol} } }
+    function Get-NetFirewallApplicationFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject, $PolicyStore) process { Assert-True ($PolicyStore -eq 'ActiveStore') 'Associated firewall filter must explicitly query ActiveStore'; [pscustomobject]@{Program = $InputObject.Program; Package = $InputObject.Package} } }
+    function Get-NetFirewallServiceFilter { param([Parameter(ValueFromPipeline = $true)]$InputObject, $PolicyStore) process { Assert-True ($PolicyStore -eq 'ActiveStore') 'Associated firewall filter must explicitly query ActiveStore'; [pscustomobject]@{Service = $InputObject.Service} } }
     function Remove-NetFirewallRule { param($Name) $state.Events.Add('FirewallRemove'); $state.Rules.Remove($Name) }
     function Set-Service { param($Name, $StartupType) $state.Events.Add('ServiceConfigure'); $state.Service.StartType = [string]$StartupType }
     function Restart-Service {

@@ -205,7 +205,7 @@ foreach ($firewallProfile in $firewallProfiles) {
 }
 $unsafeRules = @()
 foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow)) {
-    $port = $rule | Get-NetFirewallPortFilter
+    $port = $rule | Get-NetFirewallPortFilter -PolicyStore ActiveStore
     if ([string]$port.Protocol -notin @('TCP', '6', 'Any', '256')) { continue }
     $coversSshPort = $false
     foreach ($value in @($port.LocalPort)) {
@@ -213,7 +213,7 @@ foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -
         elseif ($value -match '^(\d+)-(\d+)$' -and [int]$Matches[1] -le 22 -and [int]$Matches[2] -ge 22) { $coversSshPort = $true }
     }
     if (-not $coversSshPort) { continue }
-    $application = $rule | Get-NetFirewallApplicationFilter
+    $application = $rule | Get-NetFirewallApplicationFilter -PolicyStore ActiveStore
     # Packaged-app rules cannot authorize this unpackaged desktop sshd process,
     # even when their Program and Service filters both say Any.
     $packageProperty = $application.PSObject.Properties['Package']
@@ -221,10 +221,10 @@ foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -
         $package = ([string]$packageProperty.Value).Trim()
         if ($package -and $package -ne 'Any') { continue }
     }
-    $service = $rule | Get-NetFirewallServiceFilter
+    $service = $rule | Get-NetFirewallServiceFilter -PolicyStore ActiveStore
     if ([string]$application.Program -ne 'Any' -and [string]$application.Program -notlike '*\sshd.exe') { continue }
     if ([string]$service.Service -notin @('Any', 'sshd')) { continue }
-    $address = @($rule | Get-NetFirewallAddressFilter | Select-Object -ExpandProperty RemoteAddress)
+    $address = @($rule | Get-NetFirewallAddressFilter -PolicyStore ActiveStore | Select-Object -ExpandProperty RemoteAddress)
     $ruleProfiles = @(([string]$rule.Profile) -split ',\s*')
     $profileTooBroad = @($ruleProfiles | Where-Object { $_ -notin $profiles }).Count -gt 0
     if ($address.Count -ne 1 -or $address[0] -ne 'LocalSubnet' -or $profileTooBroad) {
@@ -355,7 +355,7 @@ try {
 $ruleName = 'Oneline-CCC-SSH-' + [guid]::NewGuid().ToString('N')
 New-NetFirewallRule -Name $ruleName -DisplayName 'oneline-ccc SSH (LocalSubnet)' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 22 -RemoteAddress LocalSubnet -Profile $profiles | Out-Null
 $actualRule = Get-NetFirewallRule -Name $ruleName
-$actualAddress = @($actualRule | Get-NetFirewallAddressFilter | Select-Object -ExpandProperty RemoteAddress)
+$actualAddress = @($actualRule | Get-NetFirewallAddressFilter -PolicyStore ActiveStore | Select-Object -ExpandProperty RemoteAddress)
 if ($actualAddress.Count -ne 1 -or $actualAddress[0] -ne 'LocalSubnet' -or [string]$actualRule.Profile -ne ($profiles -join ', ')) {
     throw 'Firewall scope verification failed. Inspect the newly created rule before starting sshd.'
 }
