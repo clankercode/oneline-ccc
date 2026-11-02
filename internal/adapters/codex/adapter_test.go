@@ -21,7 +21,7 @@ func nativeAdapter(t *testing.T, fresh bool) *Adapter {
 	root := t.TempDir()
 	home := filepath.Join(root, "codex")
 	if !fresh {
-		if err := os.Mkdir(home, 0700); err != nil {
+		if err := configtxn.PrivateDir(home); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -59,7 +59,7 @@ func TestNativePreservationApplyAndNoop(t *testing.T) {
 	a := nativeAdapter(t, false)
 	before := []byte("# foreign comment must remain\nmodel = \"fixture-old\"\n\n[history] # history table\npersistence = \"none\" # preserve me\n\n[notice]\nhide_rate_limit_model_nudge = true\n")
 	path := filepath.Join(a.Home, "config.toml")
-	if err := os.WriteFile(path, before, 0600); err != nil {
+	if err := configtxn.PrivateFile(path, before); err != nil {
 		t.Fatal(err)
 	}
 	writes, err := a.Prepare(context.Background(), fixtureProfile(), nil)
@@ -106,7 +106,7 @@ func TestNativeForeignProfileAndInlineCredentialsRefused(t *testing.T) {
 			path := filepath.Join(a.Home, "config.toml")
 			data := []byte("# preserve\n")
 			if kind == "foreign-profile" {
-				if err := os.WriteFile(filepath.Join(a.Home, "llmp.config.toml"), []byte("# operator\nmodel='custom'\n"), 0600); err != nil {
+				if err := configtxn.PrivateFile(filepath.Join(a.Home, "llmp.config.toml"), []byte("# operator\nmodel='custom'\n")); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -116,7 +116,7 @@ func TestNativeForeignProfileAndInlineCredentialsRefused(t *testing.T) {
 			if kind == "conflicting-auth" {
 				data = []byte("[model_providers.oneline_llmp]\nenv_http_headers = { X-API-Key = 'OTHER_KEY' }\n")
 			}
-			if err := os.WriteFile(path, data, 0600); err != nil {
+			if err := configtxn.PrivateFile(path, data); err != nil {
 				t.Fatal(err)
 			}
 			_, err := a.Prepare(context.Background(), fixtureProfile(), nil)

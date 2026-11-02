@@ -3,6 +3,8 @@ package codex
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -107,12 +109,15 @@ func (a *Adapter) stage() (string, error) {
 	if err := configtxn.PrivateDir(a.Scratch); err != nil {
 		return "", err
 	}
-	stage, err := os.MkdirTemp(a.Scratch, "codex-stage-")
-	if err != nil {
+	id := make([]byte, 16)
+	if _, err := rand.Read(id); err != nil {
 		return "", errors.New("Cannot create private Codex staging directory")
 	}
-	if err = configtxn.PrivateDir(stage); err != nil {
-		_ = os.RemoveAll(stage)
+	stage := filepath.Join(a.Scratch, "codex-stage-"+hex.EncodeToString(id))
+	if _, err := os.Lstat(stage); !errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("Cannot allocate a fresh Codex staging directory")
+	}
+	if err := configtxn.PrivateDir(stage); err != nil {
 		return "", err
 	}
 	return stage, nil

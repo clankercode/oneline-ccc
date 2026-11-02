@@ -66,9 +66,11 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: |
-          go build -trimpath -o .cache/oneline-ccc ./cmd/oneline-ccc
-          .cache/oneline-ccc version
-          .cache/oneline-ccc --help
+          native_cli='.cache/oneline-ccc'
+          if [ "$RUNNER_OS" = Windows ]; then native_cli="$native_cli.exe"; fi
+          go build -trimpath -o "$native_cli" ./cmd/oneline-ccc
+          "$native_cli" version
+          "$native_cli" --help
 
   builds:
     name: Static build (${{ matrix.os }}/${{ matrix.arch }})

@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"github.com/clankercode/oneline-ccc/internal/configtxn"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ func TestMarkedForeignProviderIsNotOwned(t *testing.T) {
 func TestNativeImportedOverridesAreNotAttestation(t *testing.T) {
 	a := nativeAdapter(t, false)
 	data := "model='gpt-6.1-sol'\nmodel_provider='oneline_llmp'\nmodel_context_window=500000\nmodel_auto_compact_token_limit=450000\nservice_tier='ultrafast'\nfeatures.ultrafast_mode=true\n[model_providers.oneline_llmp]\nname='fixture'\nbase_url='http://127.0.0.1:9/v1'\nenv_key='LLMP_API_KEY'\nwire_api='responses'\n"
-	if err := os.WriteFile(filepath.Join(a.Home, "config.toml"), []byte(data), 0600); err != nil {
+	if err := configtxn.PrivateFile(filepath.Join(a.Home, "config.toml"), []byte(data)); err != nil {
 		t.Fatal(err)
 	}
 	c, err := a.Inspect(context.Background())
@@ -41,7 +42,7 @@ func TestNativeStandardCatalogRequiresFullSchema(t *testing.T) {
 		t.Fatal("incomplete Standard catalog accepted")
 	}
 	path := filepath.Join(a.Home, "incomplete.json")
-	if err := os.WriteFile(path, bad, 0600); err != nil {
+	if err := configtxn.PrivateFile(path, bad); err != nil {
 		t.Fatal(err)
 	}
 	p.Catalog = path
