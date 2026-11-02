@@ -83,7 +83,7 @@ class _SupervisedProcess:
             os.close(self.status_fd)
             self.status_fd = None
 
-    def _receive(self, block=False):
+    def _receive(self, block=False, *, require_exit=True):
         if self.status_fd is None:
             return
         if block:
@@ -95,7 +95,7 @@ class _SupervisedProcess:
                 return
             if not data:
                 self.close()
-                if self.command_returncode is None:
+                if self.command_returncode is None and require_exit:
                     raise BudgetError("verification supervisor ended without command exit status")
                 return
             self.buffer.extend(data)
@@ -118,7 +118,12 @@ class _SupervisedProcess:
 
     def wait(self, timeout=None):
         status = self.process.wait(timeout=timeout)
-        self.close()
+        try:
+            # Drain before closing; TimeoutExpired above leaves this untouched.
+            # PTY cleanup can kill a supervisor before it reports leader exit.
+            self._receive(require_exit=status >= 0)
+        finally:
+            self.close()
         return status
 
     def communicate(self, *args, **kwargs):

@@ -258,6 +258,51 @@ except RuntimeError:
         self.assertEqual(job.returncode, 7)
         self.assertEqual(self.line(waiter.stdout), "entered")
 
+    def test_actual_command_status_survives_job_wait(self):
+        from resource_budget import popen_supervised, verification_slot
+        with verification_slot(self.repo):
+            job = popen_supervised([sys.executable, "-c", "import sys; sys.stdin.readline(); raise SystemExit(7)"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.addCleanup(lambda: job.communicate(timeout=5))
+            self.assertIsNone(job.command_poll())
+            job.stdin.write("release\n"); job.stdin.flush()
+            self.assertEqual(job.wait(timeout=5), 7)
+            self.assertEqual(job.command_poll(), 7, "wait discarded the unread command exit event")
+            self.assertEqual(job.command_returncode, 7)
+            self.assertEqual(job.poll(), 7)
+            self.assertEqual(job.wait(timeout=5), 7)
+            job.communicate(timeout=5)
+            self.assertEqual(job.command_poll(), 7)
+
+    def test_successful_command_status_survives_job_wait(self):
+        from resource_budget import popen_supervised, verification_slot
+        with verification_slot(self.repo):
+            job = popen_supervised([sys.executable, "-c", "import sys; sys.stdin.readline()"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.addCleanup(lambda: job.communicate(timeout=5))
+            self.assertIsNone(job.command_poll())
+            job.stdin.write("release\n"); job.stdin.flush()
+            self.assertEqual(job.wait(timeout=5), 0)
+            self.assertEqual(job.command_poll(), 0)
+            self.assertIsNone(job.status_fd)
+
+    def test_wait_timeout_preserves_channel_and_live_job_slot(self):
+        from resource_budget import popen_supervised, verification_slot
+        with verification_slot(self.repo):
+            job = popen_supervised([sys.executable, "-c", "import sys; sys.stdin.readline(); raise SystemExit(7)"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.addCleanup(lambda: job.communicate(timeout=5))
+            original_fd = job.status_fd
+            with self.assertRaises(subprocess.TimeoutExpired):
+                job.wait(timeout=0)
+            self.assertEqual(job.status_fd, original_fd)
+            self.assertIsNone(job.command_poll())
+            self.assertIsNone(job.poll())
+        waiter = self.start(self.worktree)
+        self.assertIn("waiting", self.line(waiter.stderr))
+        self.assertFalse(select.select([waiter.stdout], [], [], 0)[0])
+        job.stdin.write("release\n"); job.stdin.flush()
+        self.assertEqual(job.wait(timeout=5), 7)
+        self.assertEqual(job.command_poll(), 7)
+        self.assertEqual(self.line(waiter.stdout), "entered")
+
     def test_capture_command_failure_releases_supervised_slot(self):
         from resource_budget import verification_slot
         with self.assertRaisesRegex(capture.CaptureError, r"tool failed \(7\)"):
