@@ -180,10 +180,11 @@ func TestRawTUICtrlCRetainsDirtyQuitGuard(t *testing.T) {
 	_, backend, _, _, _ := harness(t)
 	m := tui.New(backend, tui.Options{NoColor: true})
 	m, _ = m.Update(m.Init()())
-	for i := 0; i < 4; i++ {
-		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyF6}) // Nav -> Clients, independent of tab count.
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	if !strings.Contains(m.View().Content, "Draft") {
+		t.Fatal("management checkbox did not stage a draft")
+	}
 	var cmd tea.Cmd
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd != nil || !strings.Contains(m.View().Content, "Leave with unapplied drafts?") {

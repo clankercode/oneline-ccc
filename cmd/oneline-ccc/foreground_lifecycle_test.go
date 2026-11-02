@@ -78,9 +78,7 @@ func prepareForeground(t *testing.T, m tea.Model, kind string) (tea.Model, tea.C
 	var work tea.Cmd
 	switch kind {
 	case "apply":
-		for i := 0; i < 4; i++ {
-			key(tea.KeyTab, "", 0)
-		}
+		key(tea.KeyF6, "", 0) // Nav -> Clients, independent of tab count.
 		key(tea.KeySpace, " ", 0)
 		plan := palette("Review selected client draft")
 		if plan == nil {
@@ -95,8 +93,11 @@ func prepareForeground(t *testing.T, m tea.Model, kind string) (tea.Model, tea.C
 		work = key(tea.KeyEnter, "", 0)
 	case "key":
 		palette("Gateway")
-		key(tea.KeyDown, "", 0)
+		key(tea.KeyTab, "", 0) // Endpoint form -> key action; arrows remain local.
 		key(tea.KeyEnter, "", 0)
+		if !strings.Contains(m.View().Content, "API key: [hidden]") {
+			t.Fatalf("key operation did not reach the hidden key editor: %s", m.View().Content)
+		}
 		m, _ = m.Update(tea.PasteMsg{Content: "synthetic-fixture-key"})
 		key(tea.KeyTab, "", 0)
 		key(tea.KeySpace, " ", 0)
