@@ -65,6 +65,54 @@ function Write-RecentEvents([string]$Log, [string]$Provider, [string]$Pattern) {
     }
 }
 
+function Write-SystemSyntaxDiagnostic([string]$SyntaxConfig) {
+    # Diagnostic only: -t never listens. No script runs with elevated identity;
+    # the scheduled action directly executes the native Windows binary.
+    $taskName = 'Oneline-CCC-Fresh-Syntax-' + [guid]::NewGuid().ToString('N')
+    $directory = Join-Path $env:ProgramData $taskName
+    $log = Join-Path $directory 'syntax.log'
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
+    foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+            (New-Object Security.Principal.SecurityIdentifier($sid)), 'FullControl',
+            'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        $acl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $directory -AclObject $acl
+    $registered = $false
+    try {
+        $action = New-ScheduledTaskAction -Execute $sshd -Argument ('-ddd -t -f "' + $SyntaxConfig + '" -E "' + $log + '"')
+        $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 30)
+        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
+        $registered = $true
+        Start-ScheduledTask -TaskName $taskName
+        $deadline = [DateTime]::UtcNow.AddSeconds(40)
+        do {
+            $info = Get-ScheduledTaskInfo -TaskName $taskName
+            $state = [string](Get-ScheduledTask -TaskName $taskName).State
+            if ($info.LastRunTime.Year -ge 2000 -and $state -eq 'Ready') { break }
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'SYSTEM syntax diagnostic exceeded 40s.' }
+            Start-Sleep -Milliseconds 200
+        } while ($true)
+        Write-Output ('SYSTEM sshd -ddd -t exit: ' + $info.LastTaskResult)
+        if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -TotalCount 100 | Write-Output }
+        else { Write-Output 'SYSTEM syntax log absent.' }
+    } finally {
+        if ($registered) {
+            Stop-ScheduledTask -TaskName $taskName
+            if ([string](Get-ScheduledTask -TaskName $taskName).State -in @('Running', 'Queued')) {
+                throw ('SYSTEM syntax task cleanup unconfirmed; protected directory retained: ' + $directory)
+            }
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        }
+        Remove-Item -LiteralPath $directory -Recurse -Force
+    }
+}
+
 function Write-FailureDiagnostics {
     # Called only after the production helper has returned/thrown, including
     # its own rollback. No daemon is launched and no ACL is changed here.
@@ -111,6 +159,7 @@ function Write-FailureDiagnostics {
         Write-Output ('sshd -ddd -t exit: ' + $syntax.ExitCode)
         Write-Output $syntax.Stdout
         Write-Output $syntax.Stderr
+        Write-SystemSyntaxDiagnostic $syntaxConfig
     }
 }
 
