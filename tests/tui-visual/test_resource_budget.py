@@ -182,6 +182,82 @@ except RuntimeError:
         self.assertIn(b"\x1b[?1049l", result["cleanup"])
         self.assertTrue(result["termios_restored"])
 
+    def test_held_slot_leader_failure_preserves_existing_descendant_control(self):
+        from resource_budget import verification_slot
+        from test_evidence import OwnershipFailures
+        with verification_slot(self.repo):
+            OwnershipFailures("test_leader_exit_does_not_leave_live_descendant").debug()
+
+    def test_held_slot_missing_capture_preserves_existing_guidance(self):
+        from resource_budget import verification_slot
+        from test_capture import CaptureFailures
+        with verification_slot(self.repo):
+            CaptureFailures("test_missing_capture_tool").debug()
+
+    def test_held_slot_plain_exit_preserves_existing_failure_control(self):
+        from resource_budget import verification_slot
+        from test_capture import CaptureFailures
+        with verification_slot(self.repo):
+            CaptureFailures("test_process_failure_is_not_a_frame").debug()
+
+    def test_held_slot_missing_plain_tool_preserves_guidance(self):
+        from resource_budget import verification_slot
+        with verification_slot(self.repo):
+            with self.assertRaisesRegex(capture.CaptureError, "missing tool: /does-not-exist"):
+                capture.run(["/does-not-exist/a16-tool"])
+
+    def test_held_slot_missing_build_tool_preserves_guidance(self):
+        from resource_budget import verification_slot
+        with verification_slot(self.repo), mock.patch.dict(os.environ, {"PATH": str(self.root / "empty-path"), "GOMAXPROCS": "1"}):
+            with self.assertRaisesRegex(capture.CaptureError, "missing tool: go"):
+                capture.build()  # PATH has no Go: no Go process can be started.
+
+    def test_supervised_command_preserves_arguments_environment_stdio_and_fds(self):
+        from resource_budget import popen_supervised, verification_slot
+        with tempfile.TemporaryFile(dir=self.root) as passed:
+            passed.write(b"descriptor-body"); passed.seek(0)
+            code = "import json,os,sys; print(json.dumps({'args':sys.argv[2:],'env':os.environ['A16_CHILD_MARKER'],'cwd':os.getcwd(),'fd':os.read(int(sys.argv[1]),64).decode(),'stdin':sys.stdin.readline(),'group':os.getpgrp(),'pid':os.getpid()})); print('child-stderr',file=sys.stderr)"
+            command = [sys.executable, "-c", code, str(passed.fileno()), "模型", "literal\n$arg"]
+            env = dict(os.environ, A16_CHILD_MARKER="disposable-value")
+            with verification_slot(self.repo):
+                job = popen_supervised(command, cwd=self.root, env=env, pass_fds=(passed.fileno(),), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                stdout, stderr = job.communicate("stdin-body\n", timeout=5)
+            actual = json.loads(stdout)
+            self.assertEqual(actual["args"], command[-2:])
+            self.assertEqual(actual["env"], "disposable-value")
+            self.assertEqual(actual["cwd"], str(self.root))
+            self.assertEqual(actual["fd"], "descriptor-body")
+            self.assertEqual(actual["stdin"], "stdin-body\n")
+            self.assertEqual(stderr, "child-stderr\n")
+            self.assertEqual(actual["group"], job.pid)
+            self.assertEqual(actual["pid"], job.command_pid)
+            self.assertEqual(job.command_poll(), 0)
+
+    def test_leader_status_does_not_release_live_descendant_slot(self):
+        from resource_budget import popen_supervised, verification_slot
+        child = "import os,sys; print(os.getpid(),flush=True); sys.stdin.readline()"
+        code = "import subprocess,sys; subprocess.Popen([sys.executable,'-c'," + repr(child) + "],start_new_session=True,close_fds=True); raise SystemExit(7)"
+        with verification_slot(self.repo):
+            job = popen_supervised([sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            def cleanup():
+                if not job.stdin.closed:
+                    job.stdin.write("release\n"); job.stdin.flush()
+                job.communicate(timeout=5)
+            self.addCleanup(cleanup)
+            child_pid = int(self.line(job.stdout))
+            while job.command_poll() is None:
+                self.assertTrue(select.select([job.status_fd], [], [], 5)[0], "command exit status barrier timed out")
+            self.assertEqual(job.command_poll(), 7)
+            self.assertIsNone(job.poll(), "job ended while descendant was still alive")
+        # Drop the wrapper lock reference; only the supervisor now owns it.
+        waiter = self.start(self.worktree)
+        self.assertIn("waiting", self.line(waiter.stderr))
+        os.kill(child_pid, 0)
+        self.assertFalse(select.select([waiter.stdout], [], [], 0)[0])
+        job.communicate("release\n", timeout=5)
+        self.assertEqual(job.returncode, 7)
+        self.assertEqual(self.line(waiter.stdout), "entered")
+
     def test_capture_command_failure_releases_supervised_slot(self):
         from resource_budget import verification_slot
         with self.assertRaisesRegex(capture.CaptureError, r"tool failed \(7\)"):

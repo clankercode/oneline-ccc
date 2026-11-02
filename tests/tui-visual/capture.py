@@ -79,6 +79,7 @@ def capture_pty(command, env, cols, rows, timeout=10):
                                     env=env, cwd=ROOT, start_new_session=True)
         except FileNotFoundError as error:
             raise CaptureError("missing capture executable; run bootstrap and build") from error
+        command_poll = getattr(proc, "command_poll", proc.poll)
         # Keep the slave open for termios verification after the child exits.
         def pump():
             remaining = deadline - time.monotonic()
@@ -106,7 +107,7 @@ def capture_pty(command, env, cols, rows, timeout=10):
                         os.write(master, response)
 
         def ended():
-            code = proc.poll()
+            code = command_poll()
             if code is None:
                 return False
             if code:
@@ -136,12 +137,13 @@ def capture_pty(command, env, cols, rows, timeout=10):
             raise CaptureError("empty/non-native alt-screen capture")
         # F12 is a test-only wrapper exit and exercises normal Bubble Tea cleanup.
         os.write(master, b"\x1b[24~")
-        while proc.poll() is None:
+        while command_poll() is None:
             pump()
         while select.select([master], [], [], 0)[0]:
             pump()
-        if proc.returncode:
-            raise CaptureError(f"capture process exited with status {proc.returncode}; no artifacts published")
+        returncode = command_poll()
+        if returncode:
+            raise CaptureError(f"capture process exited with status {returncode}; no artifacts published")
         cleanup = bytes(raw[marker_end:])
         if b"\x1b[?1049l" not in cleanup or b"\x1b[?25h" not in cleanup:
             raise CaptureError("terminal exit cleanup missing alt-screen leave/cursor restore")

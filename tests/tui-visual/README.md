@@ -54,6 +54,14 @@ child retains the slot; wrapper cancellation does not forcibly terminate it.
 Command supervision fails closed outside Linux or if child-subreaper setup is
 unavailable. This is not a portable POSIX descendant-ownership claim.
 
+A private pipe reports actual command launch errors and leader exit separately
+from the supervisor's subtree lifetime. PTY capture observes the leader status
+promptly and retains its existing process-group cleanup. Missing executables
+still produce the bootstrap/build or missing-tool guidance. Reporting an exit
+does not release the slot while descendants remain alive; `poll`/`wait` on the
+job retain their supervisor identity, while `command_poll` observes its leader.
+The status channel is not mixed into capture output or evidence.
+
 The build tag `visualcapture` and `ONELINE_VISUAL_CAPTURE=1` guard the helper.
 Regular Go tests do not activate it. To run the surrounding TUI suite:
 
