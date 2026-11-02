@@ -12,3 +12,6 @@ jobs:
       - name: Probe fresh hostkeys and current administrator startup
         shell: powershell
         run: ./tests/ssh-native-fresh-smoke.ps1
+      - name: Probe retry with existing administrator-generated hostkeys
+        shell: powershell
+        run: ./tests/ssh-native-fresh-smoke.ps1 -SeedExistingHostKeys

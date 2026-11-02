@@ -1,6 +1,7 @@
 #requires -Version 5.1
 # Destructive fixture preparation: disposable GitHub-hosted Windows runners ONLY.
 # This is a reproduction probe, not evidence of a known cause or a repair.
+param([switch]$SeedExistingHostKeys)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:OS -ne 'Windows_NT' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
     throw 'Fresh SSH probe requires a disposable GitHub-hosted Windows runner.'
@@ -92,15 +93,19 @@ function Write-SystemSyntaxDiagnostic([string]$SyntaxConfig) {
         Start-ScheduledTask -TaskName $taskName
         $deadline = [DateTime]::UtcNow.AddSeconds(40)
         do {
-            $info = Get-ScheduledTaskInfo -TaskName $taskName
             $state = [string](Get-ScheduledTask -TaskName $taskName).State
-            if ($info.LastRunTime.Year -ge 2000 -and $state -eq 'Ready') { break }
+            if ($state -eq 'Ready') {
+                # Query results after observing completion; an earlier query can
+                # race the short action and report its in-progress status.
+                $info = Get-ScheduledTaskInfo -TaskName $taskName
+                if ($info.LastRunTime.Year -ge 2000 -and $info.LastTaskResult -notin @(0x41301, 0x41303, 0x41325)) { break }
+            }
             if ([DateTime]::UtcNow -ge $deadline) { throw 'SYSTEM syntax diagnostic exceeded 40s.' }
             Start-Sleep -Milliseconds 200
         } while ($true)
-        Write-Output ('SYSTEM sshd -ddd -t exit: ' + $info.LastTaskResult)
+        Write-Output ('SYSTEM syntax task result: ' + $info.LastTaskResult)
         if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -TotalCount 100 | Write-Output }
-        else { Write-Output 'SYSTEM syntax log absent.' }
+        else { Write-Output 'SYSTEM syntax log absent; native execution was not established.' }
     } finally {
         if ($registered) {
             Stop-ScheduledTask -TaskName $taskName
@@ -207,11 +212,27 @@ try {
     $keygen = Invoke-BoundedNative (Join-Path $sshBin 'ssh-keygen.exe') ('-q -t ed25519 -f "' + $keyPath + '" -N "" -C "oneline-fresh-fixture"')
     if ($keygen.ExitCode -ne 0) { throw ('Synthetic client key generation failed: ' + $keygen.Stderr) }
 
+    $priorPublicKeys = @{}
+    if ($SeedExistingHostKeys) {
+        # Models a retry after the old helper generated hostkeys and failed.
+        # Native keygen owns private contents; the fixture reads public files only.
+        $seed = Invoke-BoundedNative (Join-Path $sshBin 'ssh-keygen.exe') '-A'
+        if ($seed.ExitCode -ne 0) { throw ('Existing hostkey fixture generation failed: ' + $seed.Stderr) }
+        foreach ($type in @('rsa', 'ecdsa', 'ed25519')) {
+            $publicPath = Join-Path $sshRoot ('ssh_host_' + $type + '_key.pub')
+            $priorPublicKeys[$publicPath] = [IO.File]::ReadAllText($publicPath)
+        }
+        Write-Output 'Fixture: administrator-generated hostkeys already exist before helper setup.'
+    }
+
     # No account creation, production shims, or real GitHub keys.
     # SID equality above forces the helper's current-account -T policy branch.
     & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName $userName -PublicKeyFile ($keyPath + '.pub') -NonInteractive
     $serviceRunning = (Get-Service sshd).Status -eq 'Running'
     if (-not $serviceRunning) { throw 'Fresh administrator setup did not leave sshd Running.' }
+    foreach ($publicPath in $priorPublicKeys.Keys) {
+        if ([IO.File]::ReadAllText($publicPath) -cne $priorPublicKeys[$publicPath]) { throw 'Retry replaced a preexisting public host key.' }
+    }
     foreach ($type in @('rsa', 'ecdsa', 'ed25519')) {
         foreach ($suffix in @('', '.pub')) {
             if (-not (Test-Path -LiteralPath (Join-Path $sshRoot ('ssh_host_' + $type + '_key' + $suffix)))) {

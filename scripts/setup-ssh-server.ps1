@@ -429,20 +429,46 @@ $wasRunning = $serviceBefore.Status -eq 'Running'
 $serviceMode = (Get-CimInstance Win32_Service -Filter "Name='sshd'").StartMode
 $rootAclBefore = Get-Acl -LiteralPath $sshRoot
 $rootPermissionsTouched = $false
+$hostKeyPaths = @('ssh_host_rsa_key', 'ssh_host_ecdsa_key', 'ssh_host_ed25519_key') | ForEach-Object { Join-Path $sshRoot $_ }
+# Check public partners too: keygen -A writes them when a private key is missing.
+foreach ($path in $hostKeyPaths) {
+    Assert-NoReparse $path
+    Assert-NoReparse ($path + '.pub')
+    if ((Test-Path -LiteralPath $path) -and (Get-Item -LiteralPath $path -Force).PSIsContainer) { throw "Host private key must be an ordinary file: $path" }
+}
+$hostKeyMetadata = @()
 $ruleName = $null
 $authTouched = $false
 $serviceTouched = $false
 try {
-    # New directories otherwise inherit ordinary-user write permissions from
-    # ProgramData. Modern Windows sshd refuses those at service startup even
-    # when sshd -t succeeds. Protect the parent before keys and SYSTEM probes.
+    # Prevent ordinary-user replacement of keys, candidates and SYSTEM probe
+    # files through a writable ProgramData parent before inspecting metadata.
     $rootPermissionsTouched = $true
     Set-RestrictedAcl $sshRoot 'S-1-5-32-544' $true
+    foreach ($path in $hostKeyPaths) {
+        Assert-NoReparse $path
+        Assert-NoReparse ($path + '.pub')
+        $aclBefore = $null
+        if (Test-Path -LiteralPath $path) {
+            if ((Get-Item -LiteralPath $path -Force).PSIsContainer) { throw "Host private key must be an ordinary file: $path" }
+            $aclBefore = Get-Acl -LiteralPath $path
+        }
+        $hostKeyMetadata += [pscustomobject]@{Path = $path; AclBefore = $aclBefore; Touched = $false}
+    }
     [IO.File]::WriteAllText($candidate, $baseConfig.TrimEnd() + "`r`n`r`n" + $block + "`r`n", $utf8)
     Set-RestrictedAcl $candidate 'S-1-5-32-544' $false
     # Host keys must exist for sshd -t, but no private keys are ever read or backed up.
     & (Join-Path (Split-Path $sshd) 'ssh-keygen.exe') -A
     if ($LASTEXITCODE -ne 0) { throw 'Host key generation failed.' }
+    # Administrator-generated keys can retain the creator as owner or an
+    # individual-user allow ACE; SYSTEM sshd rejects either. Change only the
+    # three default private files, never their bytes or custom HostKey paths.
+    foreach ($hostKey in $hostKeyMetadata) {
+        Assert-NoReparse $hostKey.Path
+        if (-not (Test-Path -LiteralPath $hostKey.Path -PathType Leaf)) { throw "Host private key must be an ordinary file: $($hostKey.Path)" }
+        $hostKey.Touched = $true
+        Set-RestrictedAcl $hostKey.Path 'S-1-5-32-544' $false
+    }
     $keyCheck = Join-Path $sshRoot ('oneline-public-' + [guid]::NewGuid().ToString('N'))
     try {
         [IO.File]::WriteAllText($keyCheck, ($publicKeys -join "`n") + "`n", $utf8)
@@ -532,6 +558,18 @@ if ($actualAddress.Count -ne 1 -or $actualAddress[0] -ne 'LocalSubnet' -or [stri
     if ($freshRuleCreated) {
         try { Remove-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' }
         catch { $rollbackErrors += "remove invocation-created OpenSSH rule: $($_.Exception.Message)" }
+    }
+    foreach ($hostKey in $hostKeyMetadata) {
+        if ($hostKey.Touched -and $null -ne $hostKey.AclBefore) {
+            try {
+                Assert-NoReparse $hostKey.Path
+                Set-Acl -LiteralPath $hostKey.Path -AclObject $hostKey.AclBefore
+            } catch {
+                $rollbackErrors += "restore host key ACL '$($hostKey.Path)': $($_.Exception.Message)"
+                try { Stop-Service sshd -Force }
+                catch { $rollbackErrors += "stop sshd after host key ACL failure: $($_.Exception.Message)" }
+            }
+        }
     }
     if ($rootPermissionsTouched) {
         if ($failure.Exception.Message.StartsWith('Unable to clean up temporary SYSTEM probe', [StringComparison]::Ordinal)) {

@@ -1,7 +1,7 @@
 #requires -Version 5.1
 # Offline contract tests: never run a real capability, service, firewall or ACL command.
 [CmdletBinding()]
-param([switch]$ParseOnly)
+param([switch]$ParseOnly, [string]$TestFilter = '*')
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path $PSScriptRoot -Parent
 $installer = Join-Path $repository 'scripts/setup-ssh-server.ps1'
@@ -17,6 +17,7 @@ function Write-Utf8([string]$Path, [string]$Content) {
     [IO.File]::WriteAllText($Path, $Content, (New-Object Text.UTF8Encoding($false)))
 }
 function Test-Case([string]$Name, [scriptblock]$Body) {
+    if ($Name -notlike $TestFilter -and $Name -ne 'setup mutation body has bounded native and ACL interception seams') { return }
     if ($ParseOnly -and $Name -notin @('SSH installer parses on the running PowerShell engine', 'installer requires PowerShell 5.1 and avoids known PS7-only syntax', 'setup mutation body has bounded native and ACL interception seams')) { return }
     try { & $Body; $script:passed++; Write-Output ('PASS ' + $Name) }
     catch { $script:failures += $Name + ': ' + $_.Exception.Message; Write-Output ('FAIL ' + $script:failures[-1]) }
@@ -193,6 +194,7 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     $state.Events.Add('ACL:' + $Path) | Out-Null
     $state.Acls[$Path] = 'restricted:' + $OwnerSid
     if ($state.FailRootAcl -and $Path -eq (Join-Path $state.ProgramData 'ssh')) { throw 'Fixture partial root ACL failure' }
+    if ($Path -eq $state.FailHostKeyAcl) { throw 'Fixture partial hostkey ACL failure' }
 }
 '@}
     $nativeCommands = @($sourceAst.FindAll({ param($node)
@@ -285,7 +287,13 @@ function New-SetupFixture([string]$Name) {
     Write-Utf8 (Join-Path $windows 'System32/OpenSSH/sshd_config_default') "# fixture default`nPort 22`n"
     Write-Utf8 (Join-Path $programData 'ssh/sshd_config') "# operator comment`nPort 22`n"
     Write-Utf8 (Join-Path $profile '.ssh/authorized_keys') "# existing authorized keys`n"
-    Write-Utf8 (Join-Path $programData 'ssh/ssh_host_ed25519_key') 'opaque fixture sentinel: never read or replace host private keys'
+    $hostKeys = @('rsa', 'ecdsa', 'ed25519') | ForEach-Object { Join-Path $programData ('ssh/ssh_host_' + $_ + '_key') }
+    $acls = @{}
+    foreach ($path in $hostKeys) {
+        Write-Utf8 $path ('opaque fixture sentinel: ' + [IO.Path]::GetFileName($path))
+        Write-Utf8 ($path + '.pub') 'public hostkey fixture sentinel'
+        $acls[$path] = 'fixture-distinct-acl:' + [IO.Path]::GetFileName($path)
+    }
     return @{
         Root = $directory; ProgramData = $programData; Profile = $profile; Windows = $windows
         Events = (New-Object 'System.Collections.Generic.List[string]')
@@ -293,7 +301,9 @@ function New-SetupFixture([string]$Name) {
         PublicNetwork = $false; FailNative = $false; BadEffective = $false
         ProbeAsOtherUser = $false; FailProbe = $false; TaskRegistered = $false
         TaskState = 'Ready'; DelayedProbeStop = $false; TaskStopPolls = 0; FailProbeStop = $false
-        FailFirewall = $false; FailService = $false; FailRootAcl = $false; FailRootAclRestore = $false; Acls = @{}
+        FailFirewall = $false; FailService = $false; FailRootAcl = $false; FailRootAclRestore = $false; Acls = $acls
+        HostKeys = @($hostKeys); CheckHostKeyAcls = $false; FailHostKeyAcl = $null; FailHostKeyAclRestore = $null
+        FailKeygen = $false; ReparsePaths = @()
         Service = [pscustomobject]@{Status = 'Stopped'; StartType = 'Manual'}
         FirewallEnabled = 'True'; DefaultInboundAction = 'Block'; EmptyFirewallProfiles = $false
     }
@@ -359,6 +369,7 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
     function Set-Service { param($Name, $StartupType) $state.Events.Add('ServiceConfigure'); $state.Service.StartType = [string]$StartupType }
     function Restart-Service {
         param($Name)
+        if ($state.CheckHostKeyAcls) { Assert-FixtureHostKeysRestricted }
         $state.Events.Add('ServiceRestart')
         if ($state.FailService -and -not $state.ServiceFailureConsumed) {
             $state.ServiceFailureConsumed = $true
@@ -374,6 +385,7 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
         param($LiteralPath, $Path)
         if (-not $LiteralPath) { $LiteralPath = $Path }
         Assert-FixturePath $LiteralPath
+        $state.Events.Add('ACLSnapshot:' + $LiteralPath)
         $sddl = 'fixture-original-acl'
         if ($state.Acls.ContainsKey($LiteralPath)) { $sddl = $state.Acls[$LiteralPath] }
         [pscustomobject]@{Sddl = $sddl; FixturePath = $LiteralPath}
@@ -384,14 +396,37 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
         Assert-FixturePath $LiteralPath
         $state.Events.Add('ACLRestore:' + $LiteralPath)
         if ($state.FailRootAclRestore -and $LiteralPath -eq (Join-Path $state.ProgramData 'ssh')) { throw 'Fixture root ACL restore failure' }
+        if ($LiteralPath -eq $state.FailHostKeyAclRestore) { throw 'Fixture hostkey ACL restore failure' }
         $state.Acls[$LiteralPath] = $AclObject.Sddl
+    }
+    function Get-Item {
+        param($LiteralPath, [switch]$Force)
+        $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $LiteralPath -Force:$Force
+        if ($state.ReparsePaths -contains $LiteralPath) {
+            [pscustomobject]@{Attributes = ($item.Attributes -bor [IO.FileAttributes]::ReparsePoint); PSIsContainer = $item.PSIsContainer}
+        } else { $item }
+    }
+    function Assert-FixtureHostKeysRestricted {
+        foreach ($path in $state.HostKeys) {
+            Assert-True ((Test-Path -LiteralPath $path -PathType Leaf) -and $state.Acls[$path] -eq 'restricted:S-1-5-32-544') ('Default hostkey is not SYSTEM/Admin restricted: ' + [IO.Path]::GetFileName($path))
+        }
     }
     function Get-NetIPAddress { }
     function Invoke-FixtureNative {
         param([string]$Executable)
         Assert-FixturePath $Executable
         $state.Events.Add('Native:' + [IO.Path]::GetFileName($Executable) + ':' + ($args -join ' '))
+        if ($state.CheckHostKeyAcls -and ($args -contains '-t' -or $args -contains '-T')) { Assert-FixtureHostKeysRestricted }
         $global:LASTEXITCODE = 0
+        if ($args -contains '-A') {
+            foreach ($path in $state.HostKeys) {
+                if (-not (Test-Path -LiteralPath $path)) {
+                    Write-Utf8 $path ('new opaque fixture sentinel: ' + [IO.Path]::GetFileName($path))
+                    Write-Utf8 ($path + '.pub') 'new public hostkey fixture sentinel'
+                }
+            }
+            if ($state.FailKeygen) { $global:LASTEXITCODE = 1 }
+        }
         if ($args -contains '-t' -and $state.FailNative) { $global:LASTEXITCODE = 1 }
         if ($args -contains '-T') {
             'authenticationmethods publickey'; 'pubkeyauthentication yes'
@@ -611,7 +646,7 @@ function Get-LiveFixtureState([hashtable]$State) {
     $rootAcl = 'fixture-original-acl'
     if ($State.Acls.ContainsKey($rootPath)) { $rootAcl = $State.Acls[$rootPath] }
     $result += [pscustomobject]@{RootAcl = $rootAcl}
-    foreach ($path in @((Join-Path $State.ProgramData 'ssh/sshd_config'), (Join-Path $State.Profile '.ssh/authorized_keys'))) {
+    foreach ($path in (@((Join-Path $State.ProgramData 'ssh/sshd_config'), (Join-Path $State.Profile '.ssh/authorized_keys')) + $State.HostKeys)) {
         $acl = 'fixture-original-acl'
         if ($State.Acls.ContainsKey($path)) { $acl = $State.Acls[$path] }
         $result += [pscustomobject]@{Path = $path; Bytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)); Acl = $acl}
@@ -813,6 +848,149 @@ Test-Case 'root ACL restoration failure reports incomplete rollback and stops SS
     Assert-True ($result.Error -match 'ROLLBACK INCOMPLETE' -and $result.Error -match 'restore SSH root ACL') 'Root restore failure was hidden'
     Assert-True ($state.Service.Status -eq 'Stopped' -and -not ($state.Events -contains 'ServiceStart')) 'Uncertain root permissions left SSH running'
     Assert-True ($state.Acls[(Join-Path $state.ProgramData 'ssh')] -eq 'restricted:S-1-5-32-544') 'Failed restoration weakened root'
+}
+Test-Case 'default hostkey ACLs are restricted before native checks and SYSTEM service startup' {
+    $state = New-SetupFixture 'hostkey-existing'
+    $state.CheckHostKeyAcls = $true; $state.ProbeAsOtherUser = $true
+    $custom = Join-Path $state.ProgramData 'ssh/operator_host_key'
+    Write-Utf8 $custom 'custom opaque fixture sentinel'
+    $state.Acls[$custom] = 'fixture-custom-acl'
+    $before = Get-FixtureSnapshot $state.Root
+    Invoke-MockedSetup $state | Out-Null
+    foreach ($path in $state.HostKeys) {
+        Assert-True ($state.Acls[$path] -eq 'restricted:S-1-5-32-544') 'Default private hostkey retained its creator ACL'
+        $snapshotEvent = $state.Events.IndexOf('ACLSnapshot:' + $path)
+        $aclEvent = $state.Events.IndexOf('ACL:' + $path)
+        Assert-True ($snapshotEvent -ge 0 -and $snapshotEvent -lt $aclEvent) 'Existing hostkey metadata was not saved before mutation'
+        Assert-True ($snapshotEvent -gt $state.Events.IndexOf('ACL:' + (Join-Path $state.ProgramData 'ssh'))) 'Private metadata was inspected before parent protection'
+        Assert-True ($snapshotEvent -lt $state.Events.IndexOf('Native:ssh-keygen.exe:-A')) 'Private metadata snapshot happened after generation'
+        Assert-True ($aclEvent -lt $state.Events.IndexOf('ProbeStart')) 'Hostkey was not restricted before SYSTEM probe'
+        Assert-True (-not ($state.Events -contains ('ACL:' + $path + '.pub'))) 'Public hostkey ACL was modified'
+    }
+    Assert-True ($state.Events -contains 'ServiceRestart') 'Restricted hostkeys never reached service startup'
+    Assert-True ($state.Acls[$custom] -eq 'fixture-custom-acl' -and -not ($state.Events -contains ('ACL:' + $custom))) 'Custom HostKey metadata was changed'
+    # Only synthetic sentinel files are read here. Production must never read them.
+    $beforeFiles = @($before | ConvertFrom-Json | Where-Object { $_.Path -match 'ssh_host_|operator_host_key' })
+    $afterFiles = @((Get-FixtureSnapshot $state.Root) | ConvertFrom-Json | Where-Object { $_.Path -match 'ssh_host_|operator_host_key' })
+    # Real Windows fixture ACLs are untouched by the doubles; bytes/timestamps
+    # detect replacement or rewriting in the actual setup statements.
+    Assert-True (($afterFiles | ConvertTo-Json -Compress) -ceq ($beforeFiles | ConvertTo-Json -Compress)) 'Hostkey sentinel bytes or timestamps changed'
+    Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $state.ProgramData 'ssh') -Filter '*host*oneline-backup-*').Count -eq 0) 'Hostkey content was backed up'
+}
+Test-Case 'default hostkey fresh generation restricts all three private keys before validation' {
+    $state = New-SetupFixture 'hostkey-fresh'
+    $state.CheckHostKeyAcls = $true
+    foreach ($path in $state.HostKeys) {
+        Remove-Item -LiteralPath $path, ($path + '.pub')
+        $state.Acls.Remove($path)
+    }
+    Invoke-MockedSetup $state | Out-Null
+    foreach ($path in $state.HostKeys) {
+        Assert-True ($state.Acls[$path] -eq 'restricted:S-1-5-32-544') 'New hostkey was not restricted'
+        Assert-True (-not ($state.Events -contains ('ACLSnapshot:' + $path))) 'New key was incorrectly treated as preexisting'
+    }
+    Assert-True (@($state.Events | Where-Object { $_ -eq 'Native:ssh-keygen.exe:-A' }).Count -eq 1) 'Expected missing-only key generation exactly once'
+}
+foreach ($lateFailure in @($false, $true)) {
+    Test-Case ('default hostkey failure restores distinct metadata and prior live state; late=' + $lateFailure) {
+        $state = New-SetupFixture ('hostkey-rollback-' + $lateFailure)
+        $state.Service.Status = 'Running'; $state.Service.StartType = 'Automatic'
+        if ($lateFailure) { $state.FailService = $true } else { $state.FailNative = $true }
+        $before = Get-LiveFixtureState $state
+        $result = Invoke-MockedSetup $state -Failure
+        Assert-True ($result.Error -match 'service restart failed|rejected candidate') ('Wrong injected failure: ' + $result.Error)
+        Assert-True (@($state.Events | Where-Object { $_ -like 'ACL:*ssh_host_*_key' }).Count -eq 3) 'Failure did not exercise private hostkey ACL changes'
+        Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Rollback lost distinct hostkey ACLs, content, authorization, service or firewall state'
+        if ($lateFailure) {
+            foreach ($path in $state.HostKeys) {
+                Assert-True ($state.Events.IndexOf('ACLRestore:' + $path) -lt $state.Events.IndexOf('ServiceStart')) 'Prior service started before hostkey metadata restoration'
+            }
+        } else {
+            Assert-True (-not ($state.Events -contains 'ServiceStop') -and -not ($state.Events -contains 'ServiceRestart')) 'Pre-authorization refusal disturbed running service'
+        }
+    }
+}
+Test-Case 'default hostkey partial ACL failure restores only attempted preexisting metadata' {
+    $state = New-SetupFixture 'hostkey-partial-acl'
+    $state.Service.Status = 'Running'
+    $state.FailHostKeyAcl = $state.HostKeys[1]
+    $before = Get-LiveFixtureState $state
+    $result = Invoke-MockedSetup $state -Failure
+    Assert-True ($result.Error -match 'partial hostkey ACL failure') 'Partial hostkey ACL mutation was not exercised'
+    Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Partial hostkey ACL mutation was not rolled back'
+    foreach ($path in $state.HostKeys[0..1]) {
+        Assert-True ($state.Events -contains ('ACLRestore:' + $path)) 'Attempted hostkey metadata was not restored'
+    }
+    Assert-True (-not ($state.Events -contains ('ACLRestore:' + $state.HostKeys[2]))) 'Untouched hostkey metadata was rewritten'
+    Assert-True (-not ($state.Events -contains 'FirewallCreate') -and -not ($state.Events -contains 'ServiceStop')) 'Partial hostkey failure reached authorization/service changes'
+}
+foreach ($lateFailure in @($false, $true)) {
+    Test-Case ('default hostkey restoration failure stops SSH and reports incomplete rollback; late=' + $lateFailure) {
+        $state = New-SetupFixture ('hostkey-restore-failure-' + $lateFailure)
+        $state.Service.Status = 'Running'; $state.Service.StartType = 'Automatic'
+        if ($lateFailure) { $state.FailService = $true } else { $state.FailNative = $true }
+        $state.FailHostKeyAclRestore = $state.HostKeys[1]
+        $result = Invoke-MockedSetup $state -Failure
+        Assert-True ($result.Error -match 'ROLLBACK INCOMPLETE' -and $result.Error -match 'restore host key ACL') 'Hostkey restoration failure was hidden'
+        Assert-True ($state.Service.Status -eq 'Stopped' -and -not ($state.Events -contains 'ServiceStart')) 'Hostkey restoration uncertainty left SSH running'
+        Assert-True ($state.Service.StartType -eq 'Automatic' -and $state.Rules.Count -eq 0) 'Rollback failed to restore service mode or remove owned firewall rule'
+        foreach ($index in @(0, 2)) {
+            $path = $state.HostKeys[$index]
+            Assert-True ($state.Acls[$path] -eq ('fixture-distinct-acl:' + [IO.Path]::GetFileName($path))) 'One metadata restoration failure prevented other hostkey restorations'
+        }
+    }
+}
+Test-Case 'default hostkey new keys remain restricted after later setup failure' {
+    $state = New-SetupFixture 'hostkey-new-key-rollback'
+    $missing = $state.HostKeys[2]
+    Remove-Item -LiteralPath $missing, ($missing + '.pub')
+    $state.Acls.Remove($missing)
+    $state.FailNative = $true
+    Invoke-MockedSetup $state -Failure | Out-Null
+    Assert-True ((Test-Path -LiteralPath $missing) -and $state.Acls[$missing] -eq 'restricted:S-1-5-32-544') 'New key was removed or made permissive during rollback'
+    Assert-True (-not ($state.Events -contains ('ACLRestore:' + $missing))) 'Rollback fabricated ACL metadata for a new key'
+    foreach ($path in $state.HostKeys[0..1]) {
+        Assert-True ($state.Acls[$path] -eq ('fixture-distinct-acl:' + [IO.Path]::GetFileName($path))) 'Existing hostkey metadata was not restored'
+    }
+}
+Test-Case 'default hostkey generation failure never mutates existing private metadata' {
+    $state = New-SetupFixture 'hostkey-keygen-failure'
+    $state.FailKeygen = $true
+    $before = Get-LiveFixtureState $state
+    $result = Invoke-MockedSetup $state -Failure
+    Assert-True ($result.Error -match 'Host key generation failed') 'Key generation failure was not exercised'
+    Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Failed generation changed existing metadata or live state'
+    Assert-True (@($state.Events | Where-Object { $_ -like 'ACL:*ssh_host_*_key' -or $_ -like 'ACLRestore:*ssh_host_*_key' }).Count -eq 0) 'Failed generation touched or restored untouched private ACLs'
+}
+foreach ($algorithm in @('rsa', 'ecdsa', 'ed25519')) {
+    foreach ($extension in @('', '.pub')) {
+        Test-Case ('default hostkey refuses reparse before keygen: ' + $algorithm + $extension) {
+            $state = New-SetupFixture ('hostkey-reparse-' + $algorithm + $extension)
+            $private = Join-Path $state.ProgramData ('ssh/ssh_host_' + $algorithm + '_key')
+            $state.ReparsePaths = @($private + $extension)
+            # A public reparse must be rejected even when keygen would create
+            # its missing private partner. Attributes are synthetic on all OSes.
+            if ($extension) { Remove-Item -LiteralPath $private }
+            $before = Get-FixtureSnapshot $state.Root
+            $result = Invoke-MockedSetup $state -Failure
+            Assert-True ($result.Error -match 'Refusing reparse point') ('Hostkey reparse was not refused: ' + $result.Error)
+            Assert-True (-not ($state.Events -contains 'Native:ssh-keygen.exe:-A')) 'Keygen ran before reparse refusal'
+            Assert-True (@($state.Events | Where-Object { $_ -like 'ACL:*' }).Count -eq 0) 'Reparse refusal occurred after ACL mutation'
+            Assert-True ((Get-FixtureSnapshot $state.Root) -ceq $before) 'Reparse refusal changed fixture content'
+        }
+    }
+    Test-Case ('default hostkey refuses existing private directory: ' + $algorithm) {
+        $state = New-SetupFixture ('hostkey-directory-' + $algorithm)
+        $private = Join-Path $state.ProgramData ('ssh/ssh_host_' + $algorithm + '_key')
+        Remove-Item -LiteralPath $private
+        New-Item -ItemType Directory -Path $private | Out-Null
+        Write-Utf8 (Join-Path $private 'unrelated-file') 'keep directory content'
+        $before = Get-FixtureSnapshot $state.Root
+        $result = Invoke-MockedSetup $state -Failure
+        Assert-True ($result.Error -match 'Host private key must be an ordinary file') ('Directory hostkey was not refused: ' + $result.Error)
+        Assert-True (-not ($state.Events -contains 'Native:ssh-keygen.exe:-A')) 'Keygen ran before directory refusal'
+        Assert-True ((Get-FixtureSnapshot $state.Root) -ceq $before) 'Directory refusal changed fixture content'
+    }
 }
 foreach ($accessDirective in @('AllowUsers', 'DenyUsers', 'AllowGroups', 'DenyGroups')) {
     Test-Case ('existing account access list refuses unchanged: ' + $accessDirective) {

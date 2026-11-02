@@ -54,9 +54,22 @@ jobs:
         shell: powershell
         run: ./tests/ssh-native-smoke.ps1
 
+  verify-ssh-fresh:
+    name: Verify fresh Windows SSH setup
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate hostkeys and authenticate as the current administrator
+        shell: powershell
+        run: ./tests/ssh-native-fresh-smoke.ps1
+      - name: Reuse existing administrator-generated hostkeys and authenticate
+        shell: powershell
+        run: ./tests/ssh-native-fresh-smoke.ps1 -SeedExistingHostKeys
+
   deploy:
     name: Deploy verified site
-    needs: [verify, verify-ssh]
+    needs: [verify, verify-ssh, verify-ssh-fresh]
     runs-on: ubuntu-latest
     permissions:
       pages: write
