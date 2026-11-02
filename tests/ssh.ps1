@@ -26,7 +26,9 @@ if (-not (Test-Path -LiteralPath $installer)) { throw 'Missing scripts/setup-ssh
 $parseTokens = $null
 $parseErrors = $null
 # AST offsets and mutation slices must refer to the identical full file string.
-$sourceText = [IO.File]::ReadAllText($installer)
+# Use one LF-normalized string for both parsing and edits; PS5 must not mix
+# file CRLF offsets with reconstructed extent text. Production file stays untouched.
+$sourceText = [IO.File]::ReadAllText($installer).Replace("`r`n", "`n").Replace("`r", "`n")
 $sourceAst = [Management.Automation.Language.Parser]::ParseInput($sourceText, $installer, [ref]$parseTokens, [ref]$parseErrors)
 Test-Case 'SSH installer parses on the running PowerShell engine' {
     Assert-True (@($parseErrors).Count -eq 0) ($parseErrors | Out-String)
@@ -185,7 +187,7 @@ function Get-MockedSetupBody {
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-RestrictedAcl'
     }, $true))
     Assert-True ($aclFunction.Count -eq 1) 'Expected one mockable ACL boundary'
-    $edits += @{Start = $aclFunction[0].Extent.StartOffset; End = $aclFunction[0].Extent.EndOffset; Original = $aclFunction[0].Extent.Text; Text = @'
+    $edits += @{Start = $aclFunction[0].Extent.StartOffset; End = $aclFunction[0].Extent.EndOffset; Original = $aclFunction[0].Extent.Text; Line = $aclFunction[0].Extent.StartLineNumber; Column = $aclFunction[0].Extent.StartColumnNumber; Text = @'
 function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     Assert-FixturePath $Path
     $state.Events.Add('ACL:' + $Path) | Out-Null
@@ -199,11 +201,35 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     foreach ($command in $nativeCommands) {
         $target = $command.CommandElements[0].Extent.Text
         Assert-True ($target -eq '$sshd' -or $target -match "^\(Join-Path \(Split-Path \`$sshd\) 'ssh-keygen.exe'\)$") ('Unrecognized native target: ' + $target)
-        $edits += @{Start = $command.Extent.StartOffset; End = $command.Extent.EndOffset; Original = $command.Extent.Text; Text = 'Invoke-FixtureNative ' + (($command.CommandElements | ForEach-Object { $_.Extent.Text }) -join ' ')}
+        # Replace only the invocation operator. Keep executable expressions and
+        # every argument byte-for-byte from sourceText, including interpolated -T
+        # context strings; never reconstruct commands from PS5 Extent.Text.
+        $operators = @($parseTokens | Where-Object {
+            $_.Kind.ToString() -eq 'Ampersand' -and
+            $_.Extent.StartOffset -ge $command.Extent.StartOffset -and
+            $_.Extent.EndOffset -le $command.CommandElements[0].Extent.StartOffset
+        })
+        Assert-True ($operators.Count -eq 1) ('Expected one invocation token at source line ' + $command.Extent.StartLineNumber)
+        $operator = $operators[0].Extent
+        $edits += @{Start = $operator.StartOffset; End = $operator.EndOffset; Original = '&'; Line = $operator.StartLineNumber; Column = $operator.StartColumnNumber; Text = 'Invoke-FixtureNative'}
     }
-    foreach ($edit in @($edits | Sort-Object Start -Descending)) {
+    foreach ($edit in @($edits | Sort-Object { [int]$_.Start } -Descending)) {
         $relative = $edit.Start - $offset
-        Assert-True ($body.Substring($relative, $edit.End - $edit.Start) -ceq $edit.Original) ('AST replacement extent mismatch at source offset ' + $edit.Start)
+        $actual = $body.Substring($relative, $edit.End - $edit.Start)
+        if ($actual -cne $edit.Original) {
+            Write-Utf8 (Join-Path $root 'mocked-setup-body.ps1') $body
+            Write-Utf8 (Join-Path $root 'normalized-source.ps1') $sourceText
+            $raw = $sourceText.Substring($edit.Start, $edit.End - $edit.Start)
+            $expectedEscaped = $edit.Original.Replace("`r", '\r').Replace("`n", '\n').Replace("`t", '\t')
+            $actualEscaped = $actual.Replace("`r", '\r').Replace("`n", '\n').Replace("`t", '\t')
+            $rawEscaped = $raw.Replace("`r", '\r').Replace("`n", '\n').Replace("`t", '\t')
+            throw ('AST replacement extent mismatch; engine=' + $PSVersionTable.PSVersion +
+                '; source offsets=' + $edit.Start + '-' + $edit.End +
+                '; line=' + $edit.Line + ':' + $edit.Column + '; relative=' + $relative +
+                '; expected length=' + $edit.Original.Length + '; actual length=' + $actual.Length +
+                '; expected=<' + $expectedEscaped + '>; actual=<' + $actualEscaped +
+                '>; unedited raw=<' + $rawEscaped + '>')
+        }
         $body = $body.Remove($relative, $edit.End - $edit.Start).Insert($relative, $edit.Text)
     }
     # Save BEFORE parsing so PS5-only reconstruction failures remain inspectable.

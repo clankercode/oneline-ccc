@@ -25,6 +25,31 @@ New-FixtureKey $keyPath
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
 Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block
 
+# Read-only metadata for the packaged-app rule misclassified by the SSH audit.
+# Do not dump environment variables, key material, or unrelated machine state.
+$diagnosticRules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Name 'Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy-In-Allow-ServerCapability' -ErrorAction SilentlyContinue)
+Write-Output 'BEGIN SSH firewall applicability diagnostic'
+if (-not $diagnosticRules.Count) { Write-Output 'AAD BrokerPlugin diagnostic rule is absent on this runner.' }
+foreach ($diagnosticRule in $diagnosticRules) {
+    $diagnosticApplication = $diagnosticRule | Get-NetFirewallApplicationFilter
+    $diagnosticPackageProperty = $diagnosticApplication.PSObject.Properties['Package']
+    $diagnosticPackage = $null
+    if ($null -ne $diagnosticPackageProperty) { $diagnosticPackage = $diagnosticPackageProperty.Value }
+    [pscustomobject]@{
+        Rule = @($diagnosticRule | Select-Object Name, Enabled, Direction, Action, Profile, Owner, PolicyStoreSourceType)
+        Application = @($diagnosticApplication | Select-Object Program, Package)
+        ApplicationType = @($diagnosticApplication.PSObject.TypeNames)
+        ApplicationPropertyNames = @($diagnosticApplication.PSObject.Properties | Select-Object -ExpandProperty Name)
+        AdaptedPackagePropertyPresent = ($null -ne $diagnosticPackageProperty)
+        AdaptedPackageValue = $diagnosticPackage
+        Service = @($diagnosticRule | Get-NetFirewallServiceFilter | Select-Object Service)
+        Port = @($diagnosticRule | Get-NetFirewallPortFilter | Select-Object Protocol, LocalPort, RemotePort)
+        Address = @($diagnosticRule | Get-NetFirewallAddressFilter | Select-Object LocalAddress, RemoteAddress)
+        Security = @($diagnosticRule | Get-NetFirewallSecurityFilter | Select-Object Authentication, Encryption, LocalUserAuthorizedList, RemoteUserAuthorizedList, RemoteMachineAuthorizedList)
+    } | ConvertTo-Json -Depth 6
+}
+Write-Output 'END SSH firewall applicability diagnostic'
+
 & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
 $sshd = Join-Path $sshRoot 'sshd.exe'
 & $sshd -t
