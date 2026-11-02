@@ -67,12 +67,13 @@ type noColorPTY struct {
 	deadline      time.Time
 	root          string
 	transcript    []byte
+	screen        *noColorScreen
 	waited        bool
 }
 
 func startNoColorPTY(t *testing.T, mode, value string) *noColorPTY {
 	t.Helper()
-	p := &noColorPTY{root: t.TempDir()}
+	p := &noColorPTY{root: t.TempDir(), screen: newNoColorScreen()}
 	// Direct poll/read below avoids a read goroutine and makes every wait bounded.
 	var err error
 	p.master, err = os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0)
@@ -176,6 +177,12 @@ func (p *noColorPTY) read(t *testing.T, wait time.Duration) bool {
 	if len(p.transcript) > 1<<20 {
 		t.Fatal("unexpectedly large PTY transcript")
 	}
+	// Ordinary reads and finish's final drain share this incremental oracle.
+	// Feed the complete batch so a later clear cannot hide an earlier exposure.
+	p.screen.feed(buf[:n])
+	if p.screen.err != nil {
+		t.Fatal(p.screen.err)
+	}
 	return true
 }
 
@@ -185,7 +192,7 @@ func (p *noColorPTY) await(t *testing.T, from int, want string) {
 		if strings.Contains(ansi.Strip(string(p.transcript)), "Local inspection | Gateway A") {
 			t.Fatal("NO_COLOR production entry fell back to read-only status instead of the TUI")
 		}
-		text := noColorTerminalScreen(t, p.transcript)
+		text := p.screen.text()
 		if len(p.transcript) > from && strings.Contains(text, want) {
 			return
 		}
@@ -199,11 +206,17 @@ func (p *noColorPTY) await(t *testing.T, from int, want string) {
 
 // Reconstruct observed cells rather than concatenating renderer diffs: Tea can
 // replace just the changed letters of a label. The existing ANSI parser handles
-// sequences split across reads. This is a small ASCII fixture terminal, not an
-// alternate application view; unsupported cursor operations fail the test.
-func noColorTerminalScreen(t *testing.T, transcript []byte) string {
-	t.Helper()
-	var cells [40][120]rune
+// sequences split across reads. This fixed-size ASCII fixture retains both its
+// parser state and the first exposure/unsupported-operation error across reads.
+type noColorScreen struct {
+	cells  [40][120]rune
+	parser *ansi.Parser
+	err    error
+}
+
+func newNoColorScreen() *noColorScreen {
+	s := &noColorScreen{}
+	cells := &s.cells
 	x, y, savedX, savedY := 0, 0, 0, 0
 	top, bottom, wrap := 0, 39, true
 	blank := [120]rune{}
@@ -240,9 +253,11 @@ func noColorTerminalScreen(t *testing.T, transcript []byte) string {
 			}
 		}
 		cells[y][x], last = r, r
+		s.latchKeyExposure(y)
 		x++
 	}
 	p := ansi.NewParser()
+	s.parser = p
 	p.SetHandler(ansi.Handler{
 		Print: print,
 		Execute: func(b byte) {
@@ -333,6 +348,7 @@ func noColorTerminalScreen(t *testing.T, transcript []byte) string {
 					copy(cells[y][x+n:], cells[y][x:120-n])
 					clear(cells[y][x : x+n])
 				}
+				s.latchKeyExposure(y)
 			case 'b':
 				for range n {
 					print(last)
@@ -351,15 +367,47 @@ func noColorTerminalScreen(t *testing.T, transcript []byte) string {
 				}
 			case 'm', 'c', 'n', 'p', 'q', 't', 'W', 'g': // Styling, queries and tab-stop setup do not move cells.
 			default:
-				t.Fatalf("unsupported terminal cursor operation %q", cmd.Final())
+				if s.err == nil {
+					s.err = fmt.Errorf("unsupported terminal cursor operation %q", cmd.Final())
+				}
 			}
 		},
 	})
-	for _, b := range transcript {
-		p.Advance(b)
+	return s
+}
+
+// Only printing/repeating and horizontal insert/delete can assemble new text
+// within a row. Check that affected row before subsequent mutation erases it;
+// whole-row scrolling and cell erasure cannot create a new contiguous key.
+func (s *noColorScreen) latchKeyExposure(y int) {
+	if s.err != nil {
+		return
 	}
+	row := &s.cells[y]
+	for start := 0; start+len(noColorDummyKey) <= len(row); start++ {
+		matched := true
+		for i := range noColorDummyKey {
+			if row[start+i] != rune(noColorDummyKey[i]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			s.err = errors.New("dummy credential exposed in terminal cells")
+			return
+		}
+	}
+}
+
+func (s *noColorScreen) feed(data []byte) {
+	for _, b := range data {
+		s.parser.Advance(b)
+	}
+}
+
+func (s *noColorScreen) text() string {
 	var text strings.Builder
-	for _, row := range cells {
+	for _, row := range s.cells {
 		for _, r := range row {
 			if r == 0 {
 				r = ' '
@@ -388,7 +436,10 @@ func (p *noColorPTY) palette(t *testing.T, command, want string) {
 
 func (p *noColorPTY) assertKeyHidden(t *testing.T, focus string) {
 	t.Helper()
-	frame := noColorTerminalScreen(t, p.transcript)
+	if p.screen.err != nil {
+		t.Fatal(p.screen.err)
+	}
+	frame := p.screen.text()
 	hasEditorTitle := false
 	for _, line := range strings.Split(frame, "\n") {
 		if strings.TrimSpace(line) == "Editing key" {
@@ -525,7 +576,12 @@ func TestNoColorTerminalSGRDetection(t *testing.T) {
 
 func TestNoColorTerminalScreenReadsCellDiffs(t *testing.T) {
 	raw := "\x1b[HSession-only storage\x1b[3Garch:\x1b[K\r\n  First\r\n> Second\x1b[2;1H>\x1b[3;1H "
-	screen := noColorTerminalScreen(t, []byte(raw))
+	s := newNoColorScreen()
+	s.feed([]byte(raw))
+	if s.err != nil {
+		t.Fatal(s.err)
+	}
+	screen := s.text()
 	if !strings.Contains(screen, "Search:") || !strings.Contains(screen, "> First") || strings.Contains(screen, "Session-only") || strings.Contains(screen, "> Second") {
 		t.Fatal("partial label/erase/focus updates were not reconstructed from terminal bytes")
 	}
