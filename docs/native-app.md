@@ -7,12 +7,20 @@ setup for a new Windows machine, including installing Codex and optional SSH.
 Build from source with Go 1.26.1 or later:
 
 ```sh
-go build -trimpath -o oneline-ccc ./cmd/oneline-ccc
+CGO_ENABLED=0 go build -trimpath -o oneline-ccc ./cmd/oneline-ccc
 ./oneline-ccc
 ```
 
-On Windows, build `oneline-ccc.exe` and run `./oneline-ccc.exe` in a terminal.
-The executable has no C runtime dependency. Build artifacts are also attached to
+On Windows, run this in PowerShell:
+
+```powershell
+$env:CGO_ENABLED = '0'
+go build -trimpath -o oneline-ccc.exe ./cmd/oneline-ccc
+.\oneline-ccc.exe
+```
+
+No separate language runtime is required; macOS still uses system libraries.
+Build artifacts are also attached to
 the [native CI runs](https://github.com/clankercode/oneline-ccc/actions/workflows/native.yml).
 These development artifacts have no authenticated bootstrap or self-updater.
 

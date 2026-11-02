@@ -207,6 +207,9 @@ other coding clients, query models.dev or ask agents to repair your machine.
 Those requirements are recorded in [the product brief](docs/product-brief.md).
 
 [Existing-project research](docs/research/existing-projects.md) compares CC Switch,
-EasyCLIProxyAPI, CLIProxyAPI, OpenCodex, Claude Code Router and related tools before
-we decide what the broader utility should build or reuse. The next step for that
-broader utility is a design/grilling session.
+EasyCLIProxyAPI, CLIProxyAPI, OpenCodex, Claude Code Router and related tools. The
+[native foundation](docs/plans/native-foundation.md) implements the first terminal
+workflow; the [isolated adoption trial](docs/verification/tui-stage-zero.md) records
+what existing tools provide and where custom integration is needed. Wider client,
+installation and maintenance work remains on the
+[production plan](docs/plans/tui-production-plan.md).
