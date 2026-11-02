@@ -29,7 +29,9 @@ func launch(ctx context.Context, o flags, e engine, d dependencies) int {
 	if cmd == nil || cmd.Env == nil {
 		return fail(d, "Child launch refused: backend must provide an explicit environment", errArguments)
 	}
-	err = d.runChild(ctx, cmd, d.in, d.out, d.errout)
+	// A CommandContext wait may report the native kill/exit error instead of
+	// context cancellation. Resolve that race before projecting an exit status.
+	err = operationError(ctx, d.runChild(ctx, cmd, d.in, d.out, d.errout))
 	if err == nil {
 		return 0
 	}

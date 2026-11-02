@@ -21,6 +21,9 @@ func TestCLIChildFixture(t *testing.T) {
 		return
 	}
 	switch strings.TrimPrefix(mode, "ccc-fixture:") {
+	case "ready-wait":
+		fmt.Fprintf(os.Stdout, "READY %d\n", os.Getpid())
+		_, _ = io.Copy(io.Discard, os.Stdin)
 	case "streams":
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Printf("stdout:%s|ambient:%s", data, os.Getenv("CCC_AMBIENT"))
@@ -106,5 +109,27 @@ func TestDirectChildInterruptPreservesSignalExitStatus(t *testing.T) {
 	d.runChild = runProcess
 	if got := run(context.Background(), []string{"launch", "codex"}, d); got != 130 {
 		t.Fatalf("interrupted child returned %d, wanted 130", got)
+	}
+}
+
+func TestCancelledLaunchNormalizesRacingNativeWaitError(t *testing.T) {
+	// Cmd.Wait is documented to prefer a native exit error over cancellation.
+	// Reproduce that completion ordering at the runner boundary without relying
+	// on which arm of runProcess's select happens to win.
+	nativeErr := childFixture("exit7").Run()
+	var exit *exec.ExitError
+	if !errors.As(nativeErr, &exit) {
+		t.Fatalf("expected native exit error, got %T", nativeErr)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d, f, _, _, _ := harness(t)
+	f.cmd = childFixture("wait")
+	d.runChild = func(context.Context, *exec.Cmd, io.Reader, io.Writer, io.Writer) error {
+		cancel() // Explicit barrier: cancellation precedes result projection.
+		return nativeErr
+	}
+	if got := run(ctx, []string{"launch", "codex"}, d); got != 130 {
+		t.Fatalf("cancelled native wait projected exit %d, want 130", got)
 	}
 }

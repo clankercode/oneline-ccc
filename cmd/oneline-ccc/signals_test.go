@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,17 +29,23 @@ func (b commandBackend) Command(ctx context.Context, _, _ string) (*exec.Cmd, er
 func signalFixture(ui bool) {
 	ctx, stop := watchSignals(context.Background(), ui)
 	defer stop()
+	mode := "wait"
+	if !ui {
+		mode = "ready-wait"
+	}
 	backend := commandBackend{command: func(ctx context.Context) (*exec.Cmd, error) {
-		c := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCLIChildFixture$", "--", "ccc-fixture:wait")
+		c := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCLIChildFixture$", "--", "ccc-fixture:"+mode)
 		c.Env = []string{}
 		return c, nil
 	}}
 	if !ui {
 		c, _ := backend.Command(ctx, "launch", "codex")
-		fmt.Fprintln(os.Stdout, "READY")
-		err := runProcess(ctx, c, nil, os.Stdout, os.Stderr)
-		if !errors.Is(err, context.Canceled) {
-			fmt.Fprintln(os.Stdout, "WRONG_DIRECT_RESULT")
+		// READY comes from the running child through the actual CLI's
+		// forwarded stdout. Its stdin pipe stays open until fixture cleanup.
+		d := dependencies{in: os.Stdin, out: os.Stdout, errout: os.Stderr, runChild: runProcess}
+		code := launch(ctx, flags{command: "launch"}, &fakeEngine{cmd: c}, d)
+		if code != 130 {
+			fmt.Fprintf(os.Stdout, "WRONG_DIRECT_RESULT exit=%d canceled=%t\n", code, ctx.Err() != nil)
 			os.Exit(9)
 		}
 		fmt.Fprintln(os.Stdout, "CLI_CANCELLED")
@@ -80,6 +85,12 @@ func startSignalFixture(t *testing.T, mode string) (*exec.Cmd, *bufio.Reader, in
 	t.Cleanup(cancel)
 	c := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCLIChildFixture$", "--", "ccc-fixture:"+mode)
 	c.Env = []string{}
+	// Keep stdin open so ready-wait blocks on input, not a guessed delay.
+	input, err := c.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = input.Close() })
 	pipe, err := c.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
