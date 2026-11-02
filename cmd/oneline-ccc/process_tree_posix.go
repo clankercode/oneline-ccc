@@ -12,8 +12,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Direct CLI launches own a group. The TUI deliberately uses tea.ExecProcess
-// instead: its cooked child remains in the TUI's terminal process group.
+// CLI and TUI launches share an owned process group. Tea suspends terminal
+// handling around its runner; interactive children receive foreground ownership
+// here, and the caller's foreground group is restored before the runner returns.
 type processTree struct {
 	cmd        *exec.Cmd
 	terminal   *os.File
@@ -32,15 +33,23 @@ func prepareProcessTree(cmd *exec.Cmd) (*processTree, error) {
 	tree := &processTree{cmd: cmd}
 	attr.Setpgid = true
 	if terminal, ok := cmd.Stdin.(*os.File); ok {
-		foreground, err := unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
-		if err == nil {
-			if foreground != syscall.Getpgrp() {
-				return nil, errArguments
-			}
-			tree.terminal, tree.foreground = terminal, foreground
-			attr.Foreground, attr.Ctty = true, int(terminal.Fd())
-		} else if !errors.Is(err, syscall.ENOTTY) {
+		info, err := terminal.Stat()
+		if err != nil {
 			return nil, err
+		}
+		// Darwin pipes also implement TIOCGPGRP, returning their async I/O
+		// group (initially zero). Only character devices can be terminals.
+		if info.Mode()&os.ModeCharDevice != 0 {
+			foreground, err := unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
+			if err == nil {
+				if foreground != syscall.Getpgrp() {
+					return nil, errArguments
+				}
+				tree.terminal, tree.foreground = terminal, foreground
+				attr.Foreground, attr.Ctty = true, int(terminal.Fd())
+			} else if !errors.Is(err, syscall.ENOTTY) {
+				return nil, err
+			}
 		}
 	}
 	cmd.SysProcAttr = &attr
