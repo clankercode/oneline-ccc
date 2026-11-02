@@ -1,0 +1,14 @@
+name: Windows SSH integration (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ssh:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify real SSH login and rollback
+        shell: powershell
+        run: ./tests/ssh-native-smoke.ps1
