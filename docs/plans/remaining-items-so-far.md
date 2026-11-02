@@ -356,6 +356,14 @@ that the fixes are absent or that the rejected experience is now approved.
    interruption, client launch/return and terminal restoration on real Windows
    and macOS terminals. Establish minimum OS versions and runtime coverage for
    the advertised architectures.
+   Diagnose the macOS race-gate failure in
+   [run 41526198312](https://github.com/clankercode/oneline-ccc/actions/runs/41526198312):
+   `TestRPCOwnsHelpersBeforeReturningAndStageRemoval/success` returns
+   `cannot clean up owned Codex configuration processes` after the helper reports
+   readiness. Preserve the requirement that owned helpers stop before returning
+   or removing staging files; determine whether the failure is in ownership,
+   process-state observation or the fixture. A prior green run or a rerun alone
+   does not explain or close this failure.
 
 3. [ ] **Ship the native app through one-line installers.** Add Windows, macOS and
    Linux commands that download the appropriate binary, install it and launch it
@@ -485,6 +493,10 @@ that the fixes are absent or that the rejected experience is now approved.
     not prove cleanup before return. Reproduce the constructor failure, verify
     descriptor closure and retain audited dependency provenance alongside the
     terminal-mode and input-join evidence.
+    Check cancellation again before admitting a new model-initialization callback
+    after renderer startup; keep callbacks outside terminal-ownership locks so
+    synchronous cancellation cannot deadlock. State the observable-check boundary
+    accurately rather than promising atomic exclusion of a racing cancellation.
 
 21. [ ] **Make native visual evidence fail safely and remain reproducible.**
     Discovered 2026-11-03 in independent capture-tool review: valid blank PNGs,
@@ -501,4 +513,9 @@ that the fixes are absent or that the rejected experience is now approved.
     inputs and distinguish capture-tool revision from served-reference source
     hashes. Pin these failure cases with executed negative regressions and retain
     honest provenance for existing captures rather than rewriting their history.
+    Preserve schema 1/2 verification when old captures lack client observations:
+    retain their original integrity/content checks and explicitly label absent
+    semantic proof. Keep current-schema observations mandatory. The stricter
+    predicate must not make the 361 original rows without client metadata
+    unverifiable or fill their missing fields from a newer fixture.
     This supports P0 acceptance; artifact integrity alone is not a visual PASS.
