@@ -21,7 +21,7 @@ const deferred = () => {
 
 async function adapter(stall, options = {}) {
   const timers = new Map(); let nextTimer = 0;
-  const writes = new Map(), calls = [];
+  const writes = new Map(), calls = [], removals = [];
   const manifestPath = resolve(dirname(file), '../../.cache/a18/manifest.json');
   const ansi = Buffer.from('\u001b[?1049honeline-ccc');
   const manifest = structuredClone(options.manifest ?? { kind: 'native-pty', captures: [{ id: 'test-native', theme: 'dark', cols: 1, rows: 1,
@@ -53,12 +53,13 @@ async function adapter(stall, options = {}) {
       if (key === manifestPath) return JSON.stringify(manifest);
       if (String(key).endsWith('.ansi')) return ansi;
       if (String(key).endsWith('browser-lifecycle.mjs') && options.lifecycleSource) return options.lifecycleSource;
+      if (String(key).endsWith('browser-job.py') && options.browserJobSource) return options.browserJobSource;
       return Buffer.from('test-only-pinned-asset');
     },
     writeFile: async (path, data) => writes.set(path, data), mkdir: async () => {},
     mkdtemp: async prefix => prefix + 'test-only-stage',
     rename: async (from, to) => { assert.ok(writes.has(from)); writes.set(to, writes.get(from)); writes.delete(from); },
-    rm: async path => { for (const key of writes.keys()) if (key.startsWith(path + '/')) writes.delete(key); },
+    rm: async path => { removals.push(path); for (const key of writes.keys()) if (key.startsWith(path + '/')) writes.delete(key); },
     validateEvidence: async () => ({ level: 'test-only-boundary' }),
     execFileSync: (_command, args) => args[0] === 'rev-parse' ? '0'.repeat(40) : '',
     setTimeout: (fn, milliseconds) => {
@@ -69,7 +70,8 @@ async function adapter(stall, options = {}) {
   };
   // The lifecycle helper accepts the same fake clock as the renderer when loaded
   // into this sandbox, so deadline tests never depend on scheduler speed.
-  const lifecycleSource = (await readFile(lifecycleURL, 'utf8')).replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+  const lifecycleSource = (await readFile(lifecycleURL, 'utf8')).replace(/^import .*;\n/gm, '').replace(/^export /gm, '')
+    .replaceAll('import.meta.url', JSON.stringify(lifecycleURL.href));
   const code = source.replace(/^import .*;\n/gm, '').replaceAll('import.meta.url', JSON.stringify(pathToFileURL(file).href))
     .replace(/const \{ chromium \} = await import\([^;]+;/, 'const { chromium } = globalThis.testPlaywright;')
     .replace('profile => pinnedBrowserCommand(modules, profile)', 'globalThis.testCommand')
@@ -104,7 +106,7 @@ async function adapter(stall, options = {}) {
     assert.ok(timers.size, 'expected an active lifecycle deadline');
     const [id, fn] = timers.entries().next().value; timers.delete(id); fn(); await flush();
   };
-  return { run, finish, flush, drive, tick, held, writes, calls, context, page, browser, manifest, manifestPath,
+  return { run, finish, flush, drive, tick, held, writes, calls, removals, context, page, browser, manifest, manifestPath,
     preview: () => sandbox.previewRun('http://127.0.0.1:12345/reference', join(dirname(manifestPath), 'reference'), browser),
     latest: () => JSON.parse(writes.get(manifestPath)), sandbox };
 }
@@ -141,11 +143,13 @@ test('a lifecycle timeout fails remaining pending rows without reusing the unhea
   assert.equal(a.calls.filter(call => call === 'browser.newContext').length, 1);
 });
 
-function fakeChromium(stall, { noExit = false } = {}) {
+function fakeChromium(stall, { noExit = false, survivingDescendant = false } = {}) {
   const held = deferred(), calls = [];
+  let descendantAlive = survivingDescendant;
   const child = new EventEmitter(); child.exitCode = null; child.signalCode = null; child.pid = 123456;
-  child.stderr = new EventEmitter();
-  const exit = () => { child.exitCode = 0; child.emit('close', 0); };
+  child.stderr = new EventEmitter(); child.stdout = new EventEmitter(); child.stdin = new EventEmitter();
+  const status = message => child.stdout.emit('data', JSON.stringify(message) + '\n');
+  const exit = () => { status({ event: 'drained' }); child.exitCode = 0; child.emit('close', 0); };
   const browser = { close: async () => { calls.push('browser.close'); if (stall === 'browser.close') return held.promise; } };
   const chromium = {
     connectOverCDP: async (endpoint, options) => { calls.push(['connect', endpoint, options]); return stall === 'connect' ? held.promise : browser; },
@@ -155,12 +159,16 @@ function fakeChromium(stall, { noExit = false } = {}) {
     if (stall !== 'launch') queueMicrotask(() => child.stderr.emit('data', 'DevTools listening on ws://127.0.0.1:12345/test-owned\n'));
     return child;
   };
-  const kill = (pid, signal) => {
-    assert.equal(pid, -child.pid); calls.push(signal);
-    if (!noExit && (signal === 'SIGKILL' || stall !== 'process-exit')) exit();
+  child.stdin.write = data => {
+    const signal = data === 'kill\n' ? 'SIGKILL' : 'SIGTERM'; calls.push(signal);
+    assert.equal(child.exitCode, null, 'control must not target a finished/recycled supervisor');
+    if (signal === 'SIGKILL') descendantAlive = false;
+    if (survivingDescendant && signal === 'SIGTERM') status({ event: 'leader-exit', returncode: 0 });
+    else if (!noExit && (signal === 'SIGKILL' || stall !== 'process-exit')) exit();
   };
   const configure = a => {
-    a.sandbox.spawn = spawn; a.sandbox.process.platform = 'linux'; a.sandbox.process.kill = kill;
+    a.sandbox.spawn = spawn; a.sandbox.process.platform = 'linux';
+    a.sandbox.process.kill = () => assert.fail('Node must never signal a numeric/recycled PGID');
     a.sandbox.testPlaywright = { chromium };
     a.sandbox.testCommand = async () => ({ executable: '/test-only-chromium', args: [] });
   };
@@ -168,8 +176,43 @@ function fakeChromium(stall, { noExit = false } = {}) {
     configure(a);
     return a.sandbox.launchRun(chromium, { env: {}, scratch: '/test-only-scratch', command: a.sandbox.testCommand });
   };
-  return { chromium, browser, child, calls, held, launch, configure };
+  return { chromium, browser, child, calls, held, launch, configure, status, descendantAlive: () => descendantAlive };
 }
+
+test('leader exit with a stalled descendant cannot complete cleanup or publish evidence', async () => {
+  const a = await adapter(), fake = fakeChromium(undefined, { survivingDescendant: true });
+  const job = await a.drive(fake.launch(a));
+  void a.run(job.close); await a.flush();
+  assert.equal(a.latest().captures[0].status, 'captured-ansi', 'leader exit was incorrectly accepted as complete owned-job cleanup');
+  await assert.rejects(a.finish(), /process exit deadline/);
+  assert.equal(fake.descendantAlive(), false);
+  assert.equal(a.latest().captures[0].status, 'failed');
+  assert.equal([...a.writes.keys()].some(path => /\.(png|frame\.json)$/.test(path)), false);
+});
+
+test('leader exit before cleanup retains the identity anchor until descendant reap', async () => {
+  const a = await adapter(), fake = fakeChromium(undefined, { survivingDescendant: true });
+  const job = await a.drive(fake.launch(a));
+  fake.status({ event: 'leader-exit', returncode: 0 }); await a.flush();
+  assert.equal(fake.child.exitCode, null, 'the supervisor must outlive the command leader');
+  await assert.rejects(a.drive(job.close()), /process exit deadline/);
+  assert.equal(fake.descendantAlive(), false);
+  assert.deepEqual(fake.calls.filter(call => typeof call === 'string'), ['browser.close', 'SIGTERM', 'SIGKILL']);
+  await assert.rejects(a.drive(job.close()), /process exit deadline/);
+  assert.equal(fake.calls.filter(call => call === 'SIGKILL').length, 1, 'no recycled PGID or repeated control after completion');
+});
+
+test('supervisor close without subtree completion cannot remove the profile or publish', async () => {
+  const a = await adapter(), fake = fakeChromium();
+  const job = await a.drive(fake.launch(a));
+  fake.child.exitCode = 0; fake.child.emit('close', 0);
+  void a.run(job.close);
+  await assert.rejects(a.finish(), /without complete subtree reap/);
+  assert.equal(a.latest().captures[0].status, 'failed');
+  assert.equal(a.removals.some(path => path.includes('browser-profile-')), false);
+  assert.equal(fake.calls.includes('SIGTERM'), false);
+  assert.equal([...a.writes.keys()].some(path => /\.(png|frame\.json)$/.test(path)), false);
+});
 
 for (const stall of ['browser.close', 'process-exit']) {
   test(`${stall} timeout kills and reaps only the owned browser process group`, async () => {
@@ -222,51 +265,93 @@ test('a native page stall and a cleanup stall compose into failed evidence and o
   assert.equal([...a.writes.keys()].some(path => /\.(png|frame\.json)$/.test(path)), false);
 });
 
-test('owned cleanup actually reaps a stubborn Node child without touching an unrelated child', { timeout: 5000 }, async () => {
-  const a = await adapter(), signals = [];
-  let child, unrelated;
-  const closed = process => new Promise(resolve => process.once('close', resolve));
-  try {
-    unrelated = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-    const unrelatedClosed = closed(unrelated);
-    let ready;
-    const handshake = new Promise(resolve => { ready = resolve; });
-    a.sandbox.spawn = (executable, args, options) => {
-      child = spawnChild(executable, args, options);
-      child.stderr.once('data', ready);
-      return child;
-    };
-    a.sandbox.process.platform = process.platform;
-    a.sandbox.process.kill = (pid, signal) => {
-      assert.equal(pid, -child.pid); signals.push(signal); process.kill(pid, signal);
-    };
-    const command = async () => ({ executable: process.execPath, args: ['-e',
-      "process.on('SIGTERM', () => {}); process.stderr.write('DevTools listening on ws://127.0.0.1:12345/test-only\\n'); setInterval(() => {}, 1000)"] });
-    const launching = a.sandbox.launchRun({ connectOverCDP: async () => ({ close: async () => {} }) },
-      { env: process.env, scratch: '/test-only-scratch', command });
-    await handshake;
-    const job = await launching;
-    const childClosed = closed(child);
-    const closing = job.close().then(() => null, error => error);
-    await a.flush(); await a.tick(); // Expires graceful exit, then sends SIGKILL.
-    await childClosed;
-    const failure = await closing;
-    assert.match(failure.message, /process exit deadline/);
-    assert.equal(child.signalCode, 'SIGKILL');
-    assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
-    assert.equal(unrelated.exitCode, null);
-    assert.equal(unrelated.signalCode, null);
-    unrelated.kill('SIGTERM'); await unrelatedClosed;
-  } finally {
-    // Exact test-owned handles only, including when an assertion fails.
-    if (child && child.exitCode === null && child.signalCode === null) {
-      const done = closed(child); process.kill(-child.pid, 'SIGKILL'); await done;
+async function osDeadline(promise) {
+  let timer;
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('tiny process barrier deadline')), 3000); })]); }
+  finally { clearTimeout(timer); }
+}
+
+for (const variant of ['same group', 'escaped session', 'graceful positive control']) {
+  const escape = variant === 'escaped session', stubborn = variant !== 'graceful positive control';
+  test(`owned cleanup actually reaps leader-exit descendant (${variant}) and preserves unrelated child`, { timeout: 10000 }, async () => {
+    const a = await adapter(), controls = [], statuses = [];
+    let child, childClosed, unrelated, unrelatedClosed, descendantPID, leaderPID;
+    const leaderExited = deferred();
+    try {
+      unrelated = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      unrelatedClosed = new Promise(resolve => unrelated.once('close', resolve));
+      a.sandbox.spawn = (executable, args, options) => {
+        child = spawnChild(executable, args, options);
+        childClosed = new Promise(resolve => child.once('close', resolve));
+        let output = '', errors = '';
+        child.stdout.on('data', data => {
+          output += data;
+          while (output.includes('\n')) {
+            const end = output.indexOf('\n'), message = JSON.parse(output.slice(0, end)); output = output.slice(end + 1);
+            statuses.push(message);
+            if (message.event === 'started') leaderPID = message.pid;
+            if (message.event === 'leader-exit') leaderExited.resolve();
+          }
+        });
+        child.stderr.on('data', data => { errors += data; const match = errors.match(/DESCENDANT_PID=(\d+)/); if (match) descendantPID = Number(match[1]); });
+        const write = child.stdin.write.bind(child.stdin);
+        child.stdin.write = data => { controls.push(data); return write(data); };
+        return child;
+      };
+      a.sandbox.process.platform = process.platform;
+      a.sandbox.process.kill = () => assert.fail('no numeric PGID signal from Node');
+      const fixture = `import os,signal,sys
+reader,writer=os.pipe()
+descendant=os.fork()
+if descendant == 0:
+    os.close(reader)
+    ${escape ? 'os.setsid()' : 'pass'}
+    signal.signal(signal.SIGTERM,${stubborn ? 'signal.SIG_IGN' : 'signal.SIG_DFL'})
+    os.write(writer,b'ready');os.close(writer)
+    for fd in (0,1,2): os.close(fd)
+    while True: signal.pause()
+os.close(writer);os.read(reader,5);os.close(reader)
+sys.stderr.write(f'DESCENDANT_PID={descendant}\\nDevTools listening on ws://127.0.0.1:12345/test-only\\n');sys.stderr.flush()
+while True: signal.pause()
+`;
+      const job = await osDeadline(a.sandbox.launchRun({ connectOverCDP: async () => ({ close: async () => {} }) },
+        { env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' }, scratch: '/test-only-scratch', command: async () => ({ executable: 'python3', args: ['-u', '-c', fixture] }) }));
+      void a.run(job.close);
+      await osDeadline(leaderExited.promise); await a.flush();
+      assert.ok(descendantPID && leaderPID);
+      if (stubborn) {
+        assert.equal(child.exitCode, null, 'identity anchor must remain alive after leader exit');
+        assert.equal(statuses.some(status => status.event === 'drained'), false);
+        assert.equal(a.latest().captures[0].status, 'captured-ansi');
+        await a.tick(); // Deterministic graceful timeout requests pidfd kill/reap.
+      }
+      await osDeadline(childClosed);
+      if (stubborn) {
+        await assert.rejects(a.finish(), /process exit deadline/);
+        assert.equal(a.latest().captures[0].status, 'failed');
+        assert.equal([...a.writes.keys()].some(path => /\.(png|frame\.json)$/.test(path)), false);
+      } else {
+        await a.finish();
+        assert.equal(a.latest().captures[0].status, 'rendered');
+      }
+      assert.equal(child.exitCode, 0);
+      assert.ok(statuses.some(status => status.event === 'reaped' && status.pid === leaderPID));
+      assert.ok(statuses.some(status => status.event === 'reaped' && status.pid === descendantPID && status.returncode === (stubborn ? -9 : -15)));
+      assert.equal(statuses.at(-1).event, 'drained');
+      assert.deepEqual(controls, stubborn ? ['terminate\n', 'kill\n'] : ['terminate\n']);
+      assert.equal(unrelated.exitCode, null); assert.equal(unrelated.signalCode, null);
+      if (stubborn) await assert.rejects(a.drive(job.close()), /process exit deadline/);
+      else await a.drive(job.close());
+      assert.equal(controls.length, stubborn ? 2 : 1, 'completed/recycled anchor cannot receive another control');
+    } finally {
+      // Closing this owned pipe requests subtree kill while keeping its live
+      // subreaper/identity anchor available until all descendants are reaped.
+      if (child && child.exitCode === null && child.signalCode === null) child.stdin.end();
+      if (childClosed) await osDeadline(childClosed);
+      if (unrelated) { unrelated.kill('SIGTERM'); await osDeadline(unrelatedClosed); }
     }
-    if (unrelated && unrelated.exitCode === null && unrelated.signalCode === null) {
-      const done = closed(unrelated); unrelated.kill('SIGKILL'); await done;
-    }
-  }
-});
+  });
+}
 
 for (const stall of ['launch', 'connect']) {
   test(`CLI ${stall} timeout records separate failure evidence without rewriting a resume manifest`, async () => {
@@ -290,11 +375,11 @@ test('CLI refuses non-local reference URL/output before spawning or writing fail
   }
 });
 
-test('CLI helper provenance mismatch preserves all output, including failure evidence', async () => {
+for (const key of ['lifecycleSource','browserJobSource'])test(`CLI ${key} provenance mismatch preserves all output, including failure evidence`, async () => {
   const first = await adapter(); void first.run(); await first.finish();
   const manifest = first.latest();
   manifest.captures.push({ ...structuredClone(manifest.captures[0]), id: 'pending-new', status: 'captured-ansi' });
-  const a = await adapter(undefined, { manifest, lifecycleSource: Buffer.from('different lifecycle source') });
+  const a = await adapter(undefined, { manifest, [key]: Buffer.from('different capture helper source') });
   const fake = fakeChromium(); Object.assign(fake.browser, a.browser); fake.configure(a);
   a.sandbox.process.argv = ['node', file, 'native', a.manifestPath];
   await assert.rejects(a.drive(a.sandbox.mainRun()), /provenance\/environment mismatch/);

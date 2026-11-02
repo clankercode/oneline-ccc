@@ -41,6 +41,7 @@ async function native(manifestPath, browser, finish = async () => {}) {
     render_source_sha256: hash(await readFile(new URL('./render.mjs', import.meta.url))),
     evidence_source_sha256: hash(await readFile(new URL('./evidence.mjs', import.meta.url))),
     lifecycle_source_sha256: hash(await readFile(new URL('./browser-lifecycle.mjs', import.meta.url))),
+    browser_job_source_sha256: hash(await readFile(new URL('./browser-job.py', import.meta.url))),
     browser_transport: 'owned Chromium process with loopback CDP' };
   // Freeze the environment before any resumed writes, including failure writes.
   // Legacy manifests lacking the complete fingerprint require a fresh run.
@@ -228,6 +229,7 @@ async function preview(url, output, browser, theme = 'dark', screen = 'dashboard
       capture_tool_source_dirty: execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8' }).trim(),
       capture_tool_render_sha256: hash(await readFile(new URL('./render.mjs', import.meta.url))),
       capture_tool_lifecycle_sha256: hash(await readFile(new URL('./browser-lifecycle.mjs', import.meta.url))),
+      capture_tool_browser_job_sha256: hash(await readFile(new URL('./browser-job.py', import.meta.url))),
       served_reference: { revision: null, dirty: null, untracked: null, verification: 'Fetched resource hashes only; server checkout revision and local modifications are unknown',
         resources: fetched.sort((a,b)=>a.url.localeCompare(b.url)) },
       chromium: browser.version(), fonts_ready: true, fixture: 'Existing illustrative browser data; not equivalent to native fakeBackend',

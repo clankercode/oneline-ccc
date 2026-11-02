@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 // Bounds promises which Playwright's action timeout does not cover. A timed-out
 // operation is never resumed; a late resource is disposed through its own handle.
@@ -50,22 +50,43 @@ export async function pinnedBrowserCommand(modules, profile) {
       '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--no-startup-window'] };
 }
 
-// Own the ChildProcess before waiting for launch or connect. launchServer() in
-// pinned Playwright does not return a process handle until launch completes;
-// racing that promise alone cannot terminate a browser stalled during startup.
+// The Linux subreaper stays alive as the group's identity anchor until every
+// descendant has been reaped. A browser leader's exit or inherited-FD closure
+// cannot complete cleanup. Node sends control through this owned pipe, never a
+// numeric group signal that could race a recycled PGID after supervisor exit.
 export async function launchOwnedBrowser(chromium, { env, scratch, command }) {
-  if (process.platform === 'win32') throw new Error('Native capture requires a POSIX owned browser process group');
+  if (process.platform !== 'linux') throw new Error('Native capture requires a Linux browser job subreaper');
   const profile = await mkdtemp(join(scratch, 'browser-profile-'));
   let child;
   try {
     const spec = await command(profile);
-    child = spawn(spec.executable, spec.args, { env, detached: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    child = spawn('python3', [fileURLToPath(new URL('./browser-job.py', import.meta.url)), JSON.stringify([spec.executable, ...spec.args])],
+      { env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
   } catch (error) { await rm(profile, { recursive: true, force: true }); throw error; }
-  let didExit = false, resolveExit, rejectLaunch, resolveLaunch;
+  let didExit = false, drained = false, supervisorFailure, resolveExit, rejectLaunch, resolveLaunch;
   const exited = new Promise(resolve => { resolveExit = resolve; });
   const launched = new Promise((resolve, reject) => { resolveLaunch = resolve; rejectLaunch = reject; });
-  child.once('error', error => { didExit = true; resolveExit(); rejectLaunch(error); });
-  child.once('close', () => { didExit = true; resolveExit(); rejectLaunch(new Error('Owned browser exited before launch completed')); });
+  child.once('error', error => { supervisorFailure = error; didExit = true; resolveExit(); rejectLaunch(error); });
+  child.once('close', code => {
+    didExit = true;
+    if (code !== 0 || !drained) supervisorFailure ??= new Error('Owned browser supervisor exited without complete subtree reap');
+    resolveExit(); rejectLaunch(supervisorFailure ?? new Error('Owned browser exited before launch completed'));
+  });
+  // The job may finish between requesting closure and writing its control pipe.
+  child.stdin.on('error', error => { if (error.code !== 'EPIPE') supervisorFailure ??= error; });
+  let status = '';
+  child.stdout.on('data', data => {
+    status += data;
+    while (status.includes('\n')) {
+      const end = status.indexOf('\n'), line = status.slice(0, end); status = status.slice(end + 1);
+      try {
+        const message = JSON.parse(line);
+        if (message.event === 'drained') drained = true;
+        else if (message.event === 'error') { supervisorFailure = new Error(message.message); rejectLaunch(supervisorFailure); }
+        else if (message.event === 'leader-exit') rejectLaunch(new Error('Owned browser leader exited before launch completed'));
+      } catch (error) { supervisorFailure = error; rejectLaunch(error); }
+    }
+  });
   let stderr = '';
   child.stderr.on('data', data => {
     stderr = (stderr + data).slice(-8192);
@@ -77,28 +98,28 @@ export async function launchOwnedBrowser(chromium, { env, scratch, command }) {
       resolveLaunch(endpoint.href);
     } catch (error) { rejectLaunch(error); }
   });
-  const signal = name => {
-    // detached:true creates this exact owned process group. Never enumerate or
-    // match process names, and never signal it again after observing child exit.
-    if (!didExit && child.pid) {
-      try { process.kill(-child.pid, name); }
-      catch (error) { if (error.code !== 'ESRCH') throw error; }
-    }
+  const request = mode => {
+    if (!didExit) child.stdin.write(mode + '\n');
+  };
+  const completed = async () => {
+    await exited;
+    if (supervisorFailure) throw supervisorFailure;
+    if (!drained) throw new Error('Owned browser subtree completion was not acknowledged');
   };
   let closing, browser;
   const close = () => closing ??= (async () => {
     let failure;
     try {
       if (browser) await closeBrowserResource(browser, 'browser connection cleanup');
-      signal('SIGTERM');
-      await browserDeadline('browser process exit', () => exited, browserCleanupTimeout);
+      request('terminate');
+      await browserDeadline('browser process exit', completed, browserCleanupTimeout);
     } catch (error) {
       failure = error;
       try {
-        signal('SIGKILL');
-        await browserDeadline('owned browser reap', () => exited, browserCleanupTimeout);
+        request('kill');
+        await browserDeadline('owned browser reap', completed, browserCleanupTimeout);
       } catch (killError) { failure = new Error(`${failure.message}; ${killError.message}`); }
-    } finally { if (didExit) await rm(profile, { recursive: true, force: true }); }
+    } finally { if (didExit && drained && !supervisorFailure) await rm(profile, { recursive: true, force: true }); }
     if (failure) throw failure;
   })();
   try {

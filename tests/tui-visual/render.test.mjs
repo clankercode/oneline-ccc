@@ -38,7 +38,7 @@ function solidPNG(w, h) {
 }
 
 async function adapter({ frame = structuredClone(savedFrame), png = savedPNG, version = original.renderer.chromium,
-                         manifest = structuredClone(original), contextError = false, referenceBody = null, lifecycleSource = null } = {}) {
+                         manifest = structuredClone(original), contextError = false, referenceBody = null, lifecycleSource = null, browserJobSource = null } = {}) {
   manifest.captures = manifest.captures.slice(0, 1);
   manifest.captures[0].status = 'captured-ansi';
   manifest.captures[0].fixture.expected_view ??= { content: savedFrame.text.join('\n'), alt_screen: true };
@@ -73,6 +73,7 @@ async function adapter({ frame = structuredClone(savedFrame), png = savedPNG, ve
       const key=resolve(path instanceof URL ? fileURLToPath(path) : path);
       if(key===manifestPath)return JSON.stringify(manifest);
       if(key===join(dirname(file),'browser-lifecycle.mjs') && lifecycleSource!==null)return lifecycleSource;
+      if(key===join(dirname(file),'browser-job.py') && browserJobSource!==null)return browserJobSource;
       if(writes.has(key))return writes.get(key);
       return fs.readFile(path,...args);
     },
@@ -100,6 +101,7 @@ test('real production evidence remains accepted as a positive control',async () 
   assert.equal(a.latest().captures[0].status,'rendered');
   assert.match(a.latest().captures[0].evidence_validation.level,/production-view/);
   assert.equal(a.latest().renderer.lifecycle_source_sha256,createHash('sha256').update(await fs.readFile(new URL('./browser-lifecycle.mjs',import.meta.url))).digest('hex'));
+  assert.equal(a.latest().renderer.browser_job_source_sha256,createHash('sha256').update(await fs.readFile(new URL('./browser-job.py',import.meta.url))).digest('hex'));
 });
 test('renderer rejects header-only frame against production output',async () => {
   const frame = structuredClone(savedFrame);
@@ -130,11 +132,11 @@ test('mixed resume refuses changed renderer without rewriting old provenance',as
   assert.equal(a.writes.size,0);
   assert.deepEqual(a.manifest.renderer,oldRenderer);
 });
-test('mixed resume refuses changed lifecycle source before context creation or artifact mutation',async () => {
+for (const [name,key] of [['lifecycle','lifecycleSource'],['browser job','browserJobSource']])test(`mixed resume refuses changed ${name} source before context creation or artifact mutation`,async () => {
   const first=await adapter();delete first.manifest.renderer;await first.run();
   const manifest=first.latest(),old=structuredClone(manifest.captures[0]);old.id='immutable-old-rendered';
   const oldRenderer=structuredClone(manifest.renderer);
-  const a=await adapter({manifest,lifecycleSource:Buffer.from('changed lifecycle helper source'),contextError:true});
+  const a=await adapter({manifest,[key]:Buffer.from('changed capture helper source'),contextError:true});
   a.manifest.captures.unshift(old);
   await assert.rejects(a.run(),/renderer.*provenance|environment.*mismatch/i);
   assert.equal(a.writes.size,0);
@@ -153,6 +155,7 @@ test('reference records served bytes separately from tool revision',async () => 
   assert.equal(record.served_reference.revision,null);
   assert.ok(record.served_reference.resources.some(resource=>resource.sha256===createHash('sha256').update(body).digest('hex')));
   assert.equal(record.capture_tool_lifecycle_sha256,createHash('sha256').update(await fs.readFile(new URL('./browser-lifecycle.mjs',import.meta.url))).digest('hex'));
+  assert.equal(record.capture_tool_browser_job_sha256,createHash('sha256').update(await fs.readFile(new URL('./browser-job.py',import.meta.url))).digest('hex'));
 });
 
 // Re-encode genuine screenshot RGB with a chosen alpha. Valid PNG chunks/CRCs,
