@@ -255,21 +255,27 @@ func (p *nativeConsoleDriver) read(t *testing.T, wait time.Duration) {
 	if err != nil && !errors.Is(err, io.EOF) {
 		t.Fatal("native console read:", err)
 	}
-	p.transcript = append(p.transcript, data...)
-	p.screen.feed(data)
-	if len(p.transcript) > 2<<20 {
-		t.Fatal("native console output exceeded fixture bound")
-	}
-	if p.screen.err != nil {
-		t.Fatal(p.screen.err)
-	}
-	if strings.Contains(p.screen.text(), nativeConsoleKey) {
-		t.Fatal("dummy credential leaked into observed console cells")
-	}
-	if err := nativeConsoleOutputError(p.transcript); err != nil {
+	if err := p.consume(data); err != nil {
 		t.Fatal(err)
 	}
 }
+
+// Both ordinary reads and the final native-host drain go through this oracle.
+// screen.err latches transient cell exposure during feed, before later updates
+// can erase it. Raw and stripped transcript checks remain complementary.
+func (p *nativeConsoleDriver) consume(data []byte) error {
+	if len(data) > 2<<20-len(p.transcript) {
+		return errors.New("native console output exceeded fixture bound")
+	}
+	p.transcript = append(p.transcript, data...)
+	p.screen.feed(data)
+	if p.screen.err != nil {
+		return p.screen.err
+	}
+	return nativeConsoleOutputError(p.transcript)
+}
+
+func (p *nativeConsoleDriver) consumeDrain() error { return p.consume(p.host.drained()) }
 
 func (p *nativeConsoleDriver) await(t *testing.T, from int, wants ...string) {
 	t.Helper()
@@ -326,12 +332,7 @@ func (p *nativeConsoleDriver) finish(t *testing.T, scenario string) {
 	if err := p.host.close(); err != nil {
 		t.Fatal("native console final cleanup:", err)
 	}
-	p.transcript = append(p.transcript, p.host.drained()...)
-	p.screen.feed(p.host.drained())
-	if p.screen.err != nil {
-		t.Fatal(p.screen.err)
-	}
-	if err := nativeConsoleOutputError(p.transcript); err != nil {
+	if err := p.consumeDrain(); err != nil {
 		t.Fatal(err)
 	}
 	code, launches, interactive := 0, 0, scenario != "plain"
