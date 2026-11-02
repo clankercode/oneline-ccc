@@ -26,7 +26,8 @@ These development artifacts have no authenticated bootstrap or self-updater.
 
 ## First use
 
-1. Select Codex, press Space to stage management, then Enter to configure it.
+1. Press F6 to focus the client list. Select Codex with Up/Down, press Space to
+   stage management, then Enter to configure it.
 2. Keep the current values or select a model and context budget. Use the endpoint
    editor for your gateway URL. Confirm the route supports the chosen budget.
 3. Use Gateway to enter a hidden session key, or retain an existing environment
@@ -34,10 +35,32 @@ These development artifacts have no authenticated bootstrap or self-updater.
 4. Review the exact changes, acknowledge the pages, and select Apply.
 5. Launch the selected client from the dashboard or command palette.
 
-`?` opens shortcut help. Ctrl+P searches commands and destinations. Tab moves
-between controls, arrows move through clients, Escape returns while keeping the
-draft, and `q` exits with a guard for unsaved work. Selection, management and
-installation are separate. Dark, light and monochrome themes are available.
+The current navigation bindings are:
+
+| Input | Native behavior outside text entry |
+| --- | --- |
+| `?` / Ctrl+P | Open shortcut help / search commands and destinations |
+| F6 / Shift+F6 | Move forward / backward between navigation, list, form, action and help regions; restore the region's focused control |
+| Tab / Shift+Tab | Visit every control forward / backward, including across regions |
+| Left / Right on the navigation bar | Move between horizontal tabs; Enter opens the focused tab's content |
+| `[` / `]` | Switch to the previous / next section directly from content |
+| Up / Down | Move within the current list, form or action region |
+| Enter / Space | Activate the focused control / stage a checkbox choice |
+| Escape | Close the top layer or return to the earlier visit, retaining safe drafts |
+| `q` / Ctrl+C | Request safe exit; unsaved work and running operations retain their guards |
+
+The visible **More** menu opens Gateway, Service, Repair, SSH, Utilities and
+Settings. Help and Commands are also visible controls; Tab traversal remains
+available when a terminal intercepts a shortcut. Text editors keep ordinary
+characters as input. Contextual footers describe editor and overlay bindings.
+Selection, management and installation are separate. Dark, light and monochrome
+themes are available.
+
+Native visual and interaction acceptance is **open** after the rejected
+implementation. These navigation changes do not certify visual fidelity or a
+smooth complete journey. The [P0 remediation](plans/remaining-items-so-far.md#p0-native-tui-visual-quality-and-interaction-remediation)
+requires per-screen native/mockup comparisons and independent visual and
+interaction review.
 
 Existing choices prefill the editors. Budgets and feature flags imported from
 Codex are not evidence of route capacity or tier entitlement: a first import
