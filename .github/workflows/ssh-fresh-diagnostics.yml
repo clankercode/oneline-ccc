@@ -1,0 +1,14 @@
+name: Fresh Windows SSH startup diagnostics (manual)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fresh-ssh:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe fresh hostkeys and current administrator startup
+        shell: powershell
+        run: ./tests/ssh-native-fresh-smoke.ps1
