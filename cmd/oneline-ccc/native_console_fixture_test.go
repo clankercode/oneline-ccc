@@ -31,6 +31,8 @@ var nativeConsoleRaw func() error
 var nativeConsoleCooked func() error
 var nativeConsoleAssertRaw func() error
 var nativeConsoleContext func(context.Context) (context.Context, func(), error)
+var nativeConsoleDiagnostics func(io.Writer)
+var nativeConsoleBeforeExit func() error
 
 type nativeConsoleBackend struct {
 	*fakeEngine
@@ -127,16 +129,22 @@ func TestNativeConsoleFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer diag.Close()
+	fmt.Fprintf(diag, "FIXTURE scenario=%s stage=diagnostics-open\n", scenario)
+	if nativeConsoleDiagnostics != nil {
+		nativeConsoleDiagnostics(diag)
+	}
 	// This is the subprocess's stderr only. stdin/stdout stay native handles.
 	previousStderr := os.Stderr
 	os.Stderr = diag
 	defer func() { os.Stderr = previousStderr }()
 	before, err := nativeConsoleModes()
+	fmt.Fprintf(diag, "MODE_BEFORE snapshot=%s error=%v\n", before, err)
 	if err != nil {
 		t.Fatal(err)
 	}
 	parent, finishControl, err := nativeConsoleContext(context.Background())
 	if err != nil {
+		fmt.Fprintf(diag, "FAIL stage=cancellation-context error=%v\n", err)
 		t.Fatal(err)
 	}
 	defer finishControl()
@@ -190,6 +198,12 @@ func TestNativeConsoleFixture(t *testing.T) {
 		t.Fatalf("backend boundary: code=%d engines=%d inspect=%d forbidden=%d launches=%d", code, constructed, b.inspect, b.forbidden.Load(), b.launches.Load())
 	}
 	fmt.Fprintf(diag, "A7_COMPLETE code=%d engines=1 inspect=1 forbidden=0 launches=%d modes=restored input=joined\n", code, wantLaunch)
+	if nativeConsoleBeforeExit != nil {
+		if err := nativeConsoleBeforeExit(); err != nil {
+			fmt.Fprintf(diag, "FAIL stage=parent-restoration-checkpoint error=%v\n", err)
+			t.Fatal(err)
+		}
+	}
 }
 
 func nativeConsoleEnv(root, scenario, noColor string) []string {
