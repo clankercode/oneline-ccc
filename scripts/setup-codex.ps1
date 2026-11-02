@@ -381,16 +381,30 @@ function Start-CodexConfigProcess([string]$Executable, [string]$Stage) {
 function Stop-CodexConfigProcess($Connection) {
     if (-not $Connection) { return }
     $process = $Connection.Process
+    $reaped = $false
     try {
-        if (-not $process.HasExited) {
+        # A failed Start has no owned PID to stop.
+        try { $null = $process.Id } catch { return }
+        # A close/flush failure must never skip wait, kill, and reap.
+        try {
             if ($Connection.Input) { $Connection.Input.Close() }
             else { $process.StandardInput.Close() }
-            if (-not $process.WaitForExit(2000)) {
-                $process.Kill()
-                $null = $process.WaitForExit(2000)
-            }
+        } catch { }
+        finally {
+            try { $process.StandardInput.BaseStream.Close() } catch { }
         }
-    } catch { } finally { $process.Dispose() }
+        try { $reaped = $process.WaitForExit(2000) } catch { }
+        if (-not $reaped) {
+            try { $process.Kill() } catch { }
+            try { $reaped = $process.WaitForExit(2000) } catch { }
+        }
+        if (-not $reaped) { throw 'Codex configuration process could not be stopped.' }
+    } finally {
+        # Framework Process.Dispose does not close redirected streams.
+        try { $process.StandardOutput.Close() } catch { }
+        try { $process.StandardError.Close() } catch { }
+        $process.Dispose()
+    }
 }
 
 function Invoke-CodexConfigRpc($Connection, [string]$Method, [hashtable]$Parameters) {
@@ -429,22 +443,42 @@ function Initialize-CodexConfigConnection($Connection) {
 }
 
 function Remove-CodexConfigStageTree([string]$Path) {
-    $attributes = [IO.File]::GetAttributes($Path)
-    $isDirectory = ($attributes -band [IO.FileAttributes]::Directory) -ne 0
-    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-        if ($isDirectory) { [IO.Directory]::Delete($Path, $false) }
-        else { [IO.File]::Delete($Path) }
-        return
-    }
-    if (($attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
-        [IO.File]::SetAttributes($Path, ($attributes -band (-bnot [IO.FileAttributes]::ReadOnly)))
-    }
-    if ($isDirectory) {
-        foreach ($entry in [IO.Directory]::GetFileSystemEntries($Path)) {
-            Remove-CodexConfigStageTree $entry
+    $isDirectory = $false
+    try {
+        $attributes = [IO.File]::GetAttributes($Path)
+        $isDirectory = ($attributes -band [IO.FileAttributes]::Directory) -ne 0
+        if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            if ($isDirectory) { [IO.Directory]::Delete($Path, $false) }
+            else { [IO.File]::Delete($Path) }
+            return
         }
-        [IO.Directory]::Delete($Path, $false)
-    } else { [IO.File]::Delete($Path) }
+        if (($attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+            [IO.File]::SetAttributes($Path, ($attributes -band (-bnot [IO.FileAttributes]::ReadOnly)))
+        }
+        if ($isDirectory) {
+            foreach ($entry in [IO.Directory]::GetFileSystemEntries($Path)) {
+                Remove-CodexConfigStageTree $entry
+            }
+            [IO.Directory]::Delete($Path, $false)
+        } else { [IO.File]::Delete($Path) }
+    } catch {
+        $cause = $_.Exception.GetBaseException()
+        if (-not $cause.Data.Contains('CodexCleanupEntry')) {
+            $category = 'other-file'
+            $name = [IO.Path]::GetFileName($Path)
+            if ($isDirectory) { $category = 'directory' }
+            elseif ($name -ceq 'config.toml') { $category = 'config' }
+            elseif ($Path -match '[/\\]arg0(?:-windows)?[/\\]') {
+                if ($name -ceq '.lock') { $category = 'arg0-lock' }
+                elseif ($name -match '\.exe$') { $category = 'arg0-executable' }
+                else { $category = 'arg0-alias' }
+            } elseif ($Path -match '[/\\]skills[/\\]') { $category = 'skills' }
+            elseif ($name -match '\.(db|sqlite)(-wal|-shm)?$') { $category = 'database' }
+            elseif ($name -match '\.(log|jsonl)$') { $category = 'log' }
+            $cause.Data['CodexCleanupEntry'] = $category
+        }
+        throw
+    }
 }
 
 function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot) {
@@ -487,7 +521,31 @@ function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot) {
                 145 { $category = 'directory-not-empty' }
             }
         }
+        $entry = $cause.Data['CodexCleanupEntry']
+        if ($entry -cmatch '^(arg0-lock|arg0-alias|arg0-executable|skills|config|log|database|directory|other-file)$') {
+            $category += '; entry=' + $entry
+        }
         throw ('Default Codex configuration staging cleanup failed (' + $category + '). Existing configuration was not changed.')
+    }
+}
+
+function Protect-CodexConfigStage([string]$Stage) {
+    if ($env:OS -eq 'Windows_NT') {
+        $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $acl = New-Object Security.AccessControl.DirectorySecurity
+        $acl.SetAccessRuleProtection($true, $false)
+        $acl.SetOwner($owner)
+        foreach ($sid in @($owner.Value, 'S-1-5-18', 'S-1-5-32-544') | Select-Object -Unique) {
+            $identity = New-Object Security.Principal.SecurityIdentifier($sid)
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+                $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+            $acl.AddAccessRule($rule)
+        }
+        Set-Acl -LiteralPath $Stage -AclObject $acl -ErrorAction Stop
+    } else {
+        $chmod = Get-Command chmod -CommandType Application -ErrorAction Stop
+        & $chmod.Source 700 -- $Stage 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'Staging permissions could not be restricted.' }
     }
 }
 
@@ -522,6 +580,7 @@ function Get-CodexDefaultConfig(
         $root = [IO.Path]::GetFullPath($ScratchRoot)
         $stage = Join-Path $root ('codex-default-' + [Guid]::NewGuid().ToString('N'))
         $null = [IO.Directory]::CreateDirectory($stage)
+        Protect-CodexConfigStage $stage
         $path = Join-Path $stage 'config.toml'
         [IO.File]::WriteAllText($path, $Existing, (New-Object Text.UTF8Encoding($false)))
         $connection = Start-CodexConfigProcess $CodexExecutable $stage
@@ -570,8 +629,8 @@ function Get-CodexDefaultConfig(
         return [IO.File]::ReadAllText($path)
     } catch { throw 'Default Codex configuration could not be merged safely. Existing configuration was not changed.' }
     finally {
-        Stop-CodexConfigProcess $connection
-        if ($stage) { Remove-CodexConfigStage $stage $root }
+        try { Stop-CodexConfigProcess $connection }
+        finally { if ($stage) { Remove-CodexConfigStage $stage $root } }
     }
 }
 

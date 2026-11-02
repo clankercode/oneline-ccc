@@ -190,3 +190,20 @@ Console input encoding is changed only around Process.Start and restored in a
 finally block, with the explicit stdin writer retaining BOM-free UTF-8. Failure
 still reaches existing process shutdown and staging cleanup. Actual .NET
 Framework stdin/BOM behavior remains a Windows CI result to collect.
+
+## Targeted shutdown and private staging review
+
+Reviewed only the latest shutdown, staging-permission, and cleanup-diagnostic
+changes. No new Important or Critical findings. A close/flush exception no longer
+skips bounded wait/kill/reap; redirected output/error streams close in finally.
+Caller cleanup also runs if shutdown throws. New stage permissions are restricted
+before existing config is copied. Cleanup diagnostics select fixed categories
+and never expose the native path or exception payload.
+
+Independent actual-function fault injection confirmed a throwing input Close
+still executes underlying-stream close, wait, kill, second wait/reap, output/error
+close, and process disposal in that order. Actual POSIX staging helper produced
+mode 0700. Evidence:
+`.cache/review-private-stage-242659fa72a64a599570da7b86846b72`.
+Windows ACL/.NET Framework sharing behavior remains native CI evidence; no broad
+review or test round was run.
