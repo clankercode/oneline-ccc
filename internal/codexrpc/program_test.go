@@ -29,14 +29,7 @@ func TestVersionProcess(t *testing.T) {
 			}
 			fmt.Print("codex-cli 0.166.0\n")
 		case "hold-pipes":
-			deadline := time.Now().Add(2 * time.Second)
-			for time.Now().Before(deadline) {
-				if _, err := os.Stat("release"); err == nil {
-					break
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-			_ = os.WriteFile("released", nil, 0600)
+			runCleanupHelper("pipe-helper-address")
 		case "oversize":
 			fmt.Print("codex-cli " + strings.Repeat("x", 2<<20))
 		case "stderr":
@@ -57,28 +50,49 @@ func versionFixture(mode string, args ...string) Program {
 
 func TestVersionBoundsInheritedPipes(t *testing.T) {
 	stage := t.TempDir()
-	t.Cleanup(func() {
-		if err := os.WriteFile(filepath.Join(stage, "release"), nil, 0600); err != nil {
-			t.Error(err)
-		}
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, err := os.Stat(filepath.Join(stage, "released")); err == nil {
-				return
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		t.Error("fixture descendant did not finish")
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	start := time.Now()
-	value, err := Version(ctx, versionFixture("pipes"), stage)
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("inherited pipes exceeded bounded cancellation: %s", elapsed)
+	type result struct {
+		value string
+		err   error
 	}
-	if err == nil || value != "" {
-		t.Error("canceled version returned success or child output")
+	done := make(chan result, 1)
+	go func() {
+		value, err := Version(ctx, versionFixture("pipes"), stage)
+		done <- result{value, err}
+	}()
+	// Wait for a genuinely active inherited-pipe holder before cancellation;
+	// process startup speed must not decide whether this regression is exercised.
+	var address string
+	deadline := time.After(3 * time.Second)
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for address == "" {
+		select {
+		case <-ticker.C:
+			data, _ := os.ReadFile(filepath.Join(stage, "pipe-helper-address"))
+			address = string(data)
+		case <-deadline:
+			t.Fatal("inherited-pipe helper did not become ready")
+		}
+	}
+	defer releaseHelper(address)
+	start := time.Now()
+	cancel()
+	select {
+	case got := <-done:
+		if got.err == nil || got.value != "" {
+			t.Error("canceled version returned success or child output")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("inherited pipes exceeded bounded cancellation")
+	}
+	if time.Since(start) > time.Second {
+		t.Error("inherited pipes exceeded bounded cancellation")
+	}
+	checkHelperStopped(t, address)
+	if err := os.RemoveAll(stage); err != nil {
+		t.Fatal("inherited-pipe helper retained the stage", err)
 	}
 }
 

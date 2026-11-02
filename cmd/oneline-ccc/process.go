@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"syscall"
 	"time"
+
+	"github.com/clankercode/oneline-ccc/internal/processowner"
 )
 
 func launch(ctx context.Context, o flags, e engine, d dependencies) int {
@@ -61,22 +63,16 @@ func runProcess(ctx context.Context, cmd *exec.Cmd, in io.Reader, out, errout io
 	cmd.Stdin = in
 	cmd.Stdout = out
 	cmd.Stderr = errout
-	tree, err := prepareProcessTree(cmd)
+	tree, err := processowner.Prepare(cmd)
 	if err != nil {
+		if errors.Is(err, processowner.ErrPolicy) {
+			return errArguments
+		}
 		return err
 	}
-	defer func() { result = errors.Join(result, tree.close()) }()
-	if cmd.Cancel != nil {
-		cmd.Cancel = tree.terminate
-	}
+	defer func() { result = errors.Join(result, tree.Close()) }()
 	cmd.WaitDelay = 2 * time.Second
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	if err := tree.started(); err != nil {
-		_ = tree.terminate()
-		_ = cmd.Process.Kill() // Also covers a failed suspended Windows assignment.
-		_ = cmd.Wait()
+	if err := tree.Start(); err != nil {
 		return err
 	}
 	finished := make(chan error, 1)
@@ -88,7 +84,7 @@ func runProcess(ctx context.Context, cmd *exec.Cmd, in io.Reader, out, errout io
 		}
 		return err
 	case <-ctx.Done():
-		cleanupErr := tree.terminate()
+		cleanupErr := tree.Terminate()
 		<-finished
 		if errors.Is(cleanupErr, os.ErrProcessDone) {
 			cleanupErr = nil

@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/clankercode/oneline-ccc/internal/processowner"
 )
 
 type Program struct {
@@ -34,7 +36,7 @@ func ConfigEnvironment(stage string) []string {
 	return append(env, "CODEX_HOME="+stage, "LLMP_API_KEY=fixture-only-config-validation", "OPENAI_API_KEY=fixture-only-config-validation", "RUST_LOG=error")
 }
 
-func Run(parent context.Context, program Program, stage string, action func(*Client) error) error {
+func Run(parent context.Context, program Program, stage string, action func(*Client) error) (result error) {
 	ctx, cancel := context.WithTimeout(parent, 25*time.Second)
 	defer cancel()
 	args := append(append([]string{}, program.Args...), "app-server", "--listen", "stdio://")
@@ -46,20 +48,33 @@ func Run(parent context.Context, program Program, stage string, action func(*Cli
 	if err != nil {
 		return errors.New("cannot open configuration transport")
 	}
+	defer input.Close()
 	output, err := command.StdoutPipe()
 	if err != nil {
 		return errors.New("cannot open configuration transport")
 	}
+	defer output.Close()
 	stderr, err := command.StderrPipe()
 	if err != nil {
 		return errors.New("cannot open configuration transport")
 	}
-	if err = command.Start(); err != nil {
+	defer stderr.Close()
+	owner, err := processowner.Prepare(command)
+	if err != nil {
+		return errors.New("cannot establish configuration process ownership")
+	}
+	if err = owner.Start(); err != nil {
+		if owner.Close() != nil {
+			return errors.New("cannot start or clean up the selected Codex executable")
+		}
 		return errors.New("cannot start the selected Codex executable")
 	}
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
+	stderrDone := make(chan struct{})
+	go func() { defer close(stderrDone); _, _ = io.Copy(io.Discard, stderr) }()
 	lines := make(chan []byte, 1)
+	stdoutDone := make(chan struct{})
 	go func() {
+		defer close(stdoutDone)
 		defer close(lines)
 		scan := bufio.NewScanner(output)
 		scan.Buffer(make([]byte, 8192), 5<<20)
@@ -79,10 +94,23 @@ func Run(parent context.Context, program Program, stage string, action func(*Cli
 		select {
 		case <-done:
 		case <-time.After(time.Second):
-			_ = command.Process.Kill()
+			if terminateErr := owner.Terminate(); terminateErr != nil && !errors.Is(terminateErr, os.ErrProcessDone) {
+				result = errors.Join(result, errors.New("cannot terminate owned Codex configuration processes"))
+				_ = command.Process.Kill()
+			}
 			<-done
 		}
+		// Even a clean direct-process exit can leave descendants holding CWD or
+		// handles in the stage. Complete owned-tree cleanup before the adapter
+		// is allowed to remove it, and report failure without native path text.
+		if owner.Close() != nil {
+			result = errors.Join(result, errors.New("cannot clean up owned Codex configuration processes"))
+		}
 		cancel()
+		_ = output.Close()
+		_ = stderr.Close()
+		<-stdoutDone
+		<-stderrDone
 	}()
 	client := &Client{ctx: ctx, input: input, output: lines}
 	if err = client.Call("initialize", map[string]any{"clientInfo": map[string]string{"name": "oneline-ccc", "version": "0.1.0-dev"}, "capabilities": map[string]bool{"experimentalApi": true}}, nil); err != nil {

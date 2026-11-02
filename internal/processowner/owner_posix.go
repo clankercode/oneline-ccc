@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package main
+package processowner
 
 import (
 	"errors"
@@ -15,22 +15,22 @@ import (
 // CLI and TUI launches share an owned process group. Tea suspends terminal
 // handling around its runner; interactive children receive foreground ownership
 // here, and the caller's foreground group is restored before the runner returns.
-type processTree struct {
+type nativeOwner struct {
 	cmd        *exec.Cmd
 	terminal   *os.File
 	foreground int
 }
 
-func prepareProcessTree(cmd *exec.Cmd) (*processTree, error) {
+func prepareNative(cmd *exec.Cmd) (*nativeOwner, error) {
 	attr := syscall.SysProcAttr{}
 	if cmd.SysProcAttr != nil {
 		attr = *cmd.SysProcAttr
 	}
 	// Never adopt or signal a group/session supplied by another owner.
 	if attr.Pgid != 0 || attr.Setsid || attr.Setctty || attr.Foreground {
-		return nil, errArguments
+		return nil, ErrPolicy
 	}
-	tree := &processTree{cmd: cmd}
+	tree := &nativeOwner{cmd: cmd}
 	attr.Setpgid = true
 	if terminal, ok := cmd.Stdin.(*os.File); ok {
 		info, err := terminal.Stat()
@@ -43,7 +43,7 @@ func prepareProcessTree(cmd *exec.Cmd) (*processTree, error) {
 			foreground, err := unix.IoctlGetInt(int(terminal.Fd()), unix.TIOCGPGRP)
 			if err == nil {
 				if foreground != syscall.Getpgrp() {
-					return nil, errArguments
+					return nil, ErrPolicy
 				}
 				tree.terminal, tree.foreground = terminal, foreground
 				attr.Foreground, attr.Ctty = true, int(terminal.Fd())
@@ -55,15 +55,15 @@ func prepareProcessTree(cmd *exec.Cmd) (*processTree, error) {
 	cmd.SysProcAttr = &attr
 	return tree, nil
 }
-func (p *processTree) started() error { return nil }
-func (p *processTree) terminate() error {
+func (p *nativeOwner) started() error { return nil }
+func (p *nativeOwner) terminate() error {
 	err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 	if errors.Is(err, syscall.ESRCH) {
 		return os.ErrProcessDone
 	}
 	return err
 }
-func (p *processTree) close() error {
+func (p *nativeOwner) close() error {
 	var cleanupErr error
 	if p.cmd.Process != nil {
 		cleanupErr = p.terminate()

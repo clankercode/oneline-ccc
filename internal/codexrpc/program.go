@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"runtime"
 	"time"
+
+	"github.com/clankercode/oneline-ccc/internal/processowner"
 )
 
 // FindProgram bypasses token-loading wrappers; only native executable headers
@@ -95,7 +97,7 @@ func (o *versionOutput) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func Version(ctx context.Context, p Program, stage string) (string, error) {
+func Version(ctx context.Context, p Program, stage string) (version string, result error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, p.Path, append(append([]string{}, p.Args...), "--version")...)
@@ -107,7 +109,20 @@ func Version(ctx context.Context, p Program, stage string) (string, error) {
 	output := &versionOutput{cancel: cancel}
 	c.Stdout = output
 	c.Stderr = io.Discard
-	if err := c.Run(); err != nil || ctx.Err() != nil {
+	owner, err := processowner.Prepare(c)
+	if err != nil {
+		return "", errors.New("Codex version process ownership failed")
+	}
+	defer func() {
+		if owner.Close() != nil {
+			version = ""
+			result = errors.Join(result, errors.New("cannot clean up owned Codex version processes"))
+		}
+	}()
+	if err = owner.Start(); err != nil {
+		return "", errors.New("Codex version probe failed")
+	}
+	if err = c.Wait(); err != nil || ctx.Err() != nil {
 		return "", errors.New("Codex version probe failed")
 	}
 	match := versionIdentity.FindSubmatch(output.data)

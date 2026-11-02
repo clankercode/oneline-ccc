@@ -1,4 +1,4 @@
-package main
+package processowner
 
 import (
 	"syscall"
@@ -12,11 +12,11 @@ func TestWindowsNativeTreePolicyPreservesConsoleAndOwnsDescendants(t *testing.T)
 	cmd := childFixture("exit7")
 	original := &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_UNICODE_ENVIRONMENT}
 	cmd.SysProcAttr = original
-	tree, err := prepareProcessTree(cmd)
+	tree, err := Prepare(cmd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tree.close()
+	defer tree.Close()
 	if cmd.SysProcAttr == original || original.CreationFlags != windows.CREATE_UNICODE_ENVIRONMENT {
 		t.Fatal("backend attributes mutated")
 	}
@@ -29,7 +29,7 @@ func TestWindowsNativeTreePolicyPreservesConsoleAndOwnsDescendants(t *testing.T)
 		t.Fatal("native console Ctrl+C policy changed")
 	}
 	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-	if err := windows.QueryInformationJobObject(tree.job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
+	if err := windows.QueryInformationJobObject(tree.native.job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
 		t.Fatal(err)
 	}
 	if limits.BasicLimitInformation.LimitFlags != windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE {

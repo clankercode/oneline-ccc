@@ -90,17 +90,22 @@ func settings(p core.Profile) map[string]any {
 	}
 	return values
 }
-func (a *Adapter) edit(ctx context.Context, before []byte, values map[string]any) ([]byte, error) {
+func (a *Adapter) edit(ctx context.Context, before []byte, values map[string]any) (data []byte, err error) {
 	stage, err := a.stage()
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(stage)
-	path := filepath.Join(stage, "config.toml")
+	defer func() {
+		if cleanupErr := stage.close(); cleanupErr != nil {
+			data = nil
+			err = errors.Join(err, cleanupErr)
+		}
+	}()
+	path := filepath.Join(stage.path, "config.toml")
 	if err = configtxn.PrivateFile(path, before); err != nil {
 		return nil, err
 	}
-	err = codexrpc.Run(ctx, a.Program, stage, func(c *codexrpc.Client) error {
+	err = codexrpc.Run(ctx, a.Program, stage.path, func(c *codexrpc.Client) error {
 		var read struct {
 			Layers []struct {
 				Name    struct{ Type, File, Profile string }
@@ -141,7 +146,7 @@ func (a *Adapter) edit(ctx context.Context, before []byte, values map[string]any
 	if err != nil {
 		return nil, err
 	}
-	err = codexrpc.Run(ctx, a.Program, stage, func(c *codexrpc.Client) error {
+	err = codexrpc.Run(ctx, a.Program, stage.path, func(c *codexrpc.Client) error {
 		var read struct{ Config map[string]any }
 		if e := c.Call("config/read", map[string]any{"includeLayers": false}, &read); e != nil {
 			return e
@@ -163,7 +168,7 @@ func (a *Adapter) edit(ctx context.Context, before []byte, values map[string]any
 		return nil, err
 	}
 	if catalogPath := text(values["model_catalog_json"]); catalogPath != "" {
-		if err = a.validateCatalog(ctx, stage, text(values["model"]), values["features.ultrafast_mode"] == true); err != nil {
+		if err = a.validateCatalog(ctx, stage.path, text(values["model"]), values["features.ultrafast_mode"] == true); err != nil {
 			return nil, err
 		}
 	}

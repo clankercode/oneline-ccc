@@ -3,10 +3,7 @@ package codex
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -29,8 +26,8 @@ func New(home, scratch, explicit string) *Adapter {
 	p, _ := codexrpc.FindProgram(explicit)
 	return &Adapter{Home: home, Scratch: scratch, Program: p}
 }
-func (a *Adapter) Inspect(ctx context.Context) (core.Client, error) {
-	c := core.Client{ID: "codex", Name: "Codex", Profile: core.Defaults(), Status: "NOT INSTALLED"}
+func (a *Adapter) Inspect(ctx context.Context) (c core.Client, err error) {
+	c = core.Client{ID: "codex", Name: "Codex", Profile: core.Defaults(), Status: "NOT INSTALLED"}
 	if a.Program.Path == "" {
 		c.Reason = "Native Codex executable not found; wrappers are not executed during detection."
 		return c, nil
@@ -41,8 +38,15 @@ func (a *Adapter) Inspect(ctx context.Context) (core.Client, error) {
 	if err != nil {
 		return c, err
 	}
-	defer os.RemoveAll(stage)
-	c.Version, err = codexrpc.Version(ctx, a.Program, stage)
+	defer func() {
+		if cleanupErr := stage.close(); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
+			c.Supported = false
+			c.Status = "UNVERIFIED"
+			c.Reason = "Private Codex staging cleanup requires reconciliation."
+		}
+	}()
+	c.Version, err = codexrpc.Version(ctx, a.Program, stage.path)
 	if err != nil {
 		c.Status = "UNVERIFIED"
 		c.Reason = "Cannot verify the selected native Codex executable."
@@ -104,23 +108,6 @@ func (a *Adapter) Inspect(ctx context.Context) (core.Client, error) {
 // Apply revalidates the snapshot after explicitly creating the private home.
 func (a *Adapter) readConfig(name string) (configtxn.Write, error) {
 	return configtxn.ReadUncreated(filepath.Join(a.Home, name))
-}
-func (a *Adapter) stage() (string, error) {
-	if err := configtxn.PrivateDir(a.Scratch); err != nil {
-		return "", err
-	}
-	id := make([]byte, 16)
-	if _, err := rand.Read(id); err != nil {
-		return "", errors.New("Cannot create private Codex staging directory")
-	}
-	stage := filepath.Join(a.Scratch, "codex-stage-"+hex.EncodeToString(id))
-	if _, err := os.Lstat(stage); !errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("Cannot allocate a fresh Codex staging directory")
-	}
-	if err := configtxn.PrivateDir(stage); err != nil {
-		return "", err
-	}
-	return stage, nil
 }
 func table(value any) map[string]any {
 	m, _ := value.(map[string]any)

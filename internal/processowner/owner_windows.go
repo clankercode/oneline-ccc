@@ -1,4 +1,4 @@
-package main
+package processowner
 
 import (
 	"errors"
@@ -13,19 +13,19 @@ import (
 
 // Jobs own descendants without changing console process groups or Ctrl+C
 // delivery. A suspended start closes the spawn-before-assignment escape race.
-type processTree struct {
+type nativeOwner struct {
 	cmd   *exec.Cmd
 	job   windows.Handle
 	ready chan struct{}
 }
 
-func prepareProcessTree(cmd *exec.Cmd) (*processTree, error) {
+func prepareNative(cmd *exec.Cmd) (*nativeOwner, error) {
 	attr := syscall.SysProcAttr{}
 	if cmd.SysProcAttr != nil {
 		attr = *cmd.SysProcAttr
 	}
 	if attr.CreationFlags&windows.CREATE_SUSPENDED != 0 {
-		return nil, errArguments
+		return nil, ErrPolicy
 	}
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -40,9 +40,9 @@ func prepareProcessTree(cmd *exec.Cmd) (*processTree, error) {
 	}
 	attr.CreationFlags |= windows.CREATE_SUSPENDED
 	cmd.SysProcAttr = &attr
-	return &processTree{cmd: cmd, job: job, ready: make(chan struct{})}, nil
+	return &nativeOwner{cmd: cmd, job: job, ready: make(chan struct{})}, nil
 }
-func (p *processTree) started() error {
+func (p *nativeOwner) started() error {
 	// CommandContext cancellation can arrive immediately after Start. It must
 	// wait for assignment/resume (or its failure), never bypass Job ownership.
 	defer close(p.ready)
@@ -69,7 +69,7 @@ func resumeInitialThread(pid uint32) error {
 	for err = windows.Thread32First(snapshot, &entry); err == nil; err = windows.Thread32Next(snapshot, &entry) {
 		if entry.OwnerProcessID == pid {
 			if threadID != 0 {
-				return errArguments
+				return ErrPolicy
 			}
 			threadID = entry.ThreadID
 		}
@@ -90,11 +90,11 @@ func resumeInitialThread(pid uint32) error {
 		return err
 	}
 	if count != 1 {
-		return errArguments
+		return ErrPolicy
 	}
 	return nil
 }
-func (p *processTree) terminate() error {
+func (p *nativeOwner) terminate() error {
 	<-p.ready
 	return windows.TerminateJobObject(p.job, 1)
 }
@@ -104,7 +104,7 @@ type jobAccounting struct {
 	TotalPageFaultCount, TotalProcesses, ActiveProcesses, TotalTerminatedProcesses     uint32
 }
 
-func (p *processTree) close() error {
+func (p *nativeOwner) close() error {
 	defer windows.CloseHandle(p.job)
 	// TerminateJobObject is asynchronous. Observe active count reaching zero,
 	// rather than returning while an owned process can still execute.

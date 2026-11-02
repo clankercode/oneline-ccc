@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package main
+package processowner
 
 import (
 	"os"
@@ -15,14 +15,14 @@ func TestPOSIXTreeRefusesForeignGroupsAndPreservesBackendAttributes(t *testing.T
 	for _, attr := range []*syscall.SysProcAttr{{Pgid: syscall.Getpgrp()}, {Setsid: true}, {Setctty: true}, {Foreground: true}} {
 		cmd := childFixture("exit7")
 		cmd.SysProcAttr = attr
-		if _, err := prepareProcessTree(cmd); err == nil || cmd.Process != nil {
+		if _, err := Prepare(cmd); err == nil || cmd.Process != nil {
 			t.Fatal("foreign group/session was accepted")
 		}
 	}
 	cmd := childFixture("exit7")
 	original := &syscall.SysProcAttr{Noctty: true}
 	cmd.SysProcAttr = original
-	if _, err := prepareProcessTree(cmd); err != nil {
+	if _, err := Prepare(cmd); err != nil {
 		t.Fatal(err)
 	}
 	if cmd.SysProcAttr == original || original.Setpgid || !cmd.SysProcAttr.Noctty || !cmd.SysProcAttr.Setpgid || cmd.SysProcAttr.Pgid != 0 {
@@ -45,14 +45,14 @@ func TestPOSIXProcessGroupPreparationWithPipeInput(t *testing.T) {
 	}
 	cmd := childFixture("ready-wait")
 	cmd.Stdin = input
-	tree, err := prepareProcessTree(cmd)
+	tree, err := Prepare(cmd)
 	if err != nil {
 		t.Fatalf("pipe input refused before child launch: %v", err)
 	}
-	if tree.terminal != nil || cmd.SysProcAttr.Foreground || !cmd.SysProcAttr.Setpgid {
+	if tree.native.terminal != nil || cmd.SysProcAttr.Foreground || !cmd.SysProcAttr.Setpgid {
 		t.Fatal("pipe input incorrectly took terminal ownership")
 	}
-	if err := tree.close(); err != nil {
+	if err := tree.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
