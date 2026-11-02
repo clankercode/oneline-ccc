@@ -21,14 +21,23 @@ func TestDarwinZombieOnlyGroupDiagnostic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer owner.Close()
+	started, cleanupComplete := false, false
+	defer func() {
+		// Fatal probe exits still clean up while the unreaped root pins its
+		// identity. Never signal this numeric group again after the sole Wait.
+		if !cleanupComplete {
+			_ = owner.Close()
+		}
+		if started {
+			_ = cmd.Wait()
+		}
+	}()
 	if err := owner.Start(); err != nil {
 		t.Fatal(err)
 	}
+	started = true
 	// Keep the fixture unreaped until both operations have been measured. Wait
 	// still belongs to this caller, and the original PID cannot be reused here.
-	defer cmd.Wait()
-	defer owner.Terminate()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		info, err := unix.SysctlKinfoProc("kern.proc.pid", cmd.Process.Pid)
@@ -58,4 +67,5 @@ func TestDarwinZombieOnlyGroupDiagnostic(t *testing.T) {
 			t.Errorf("unexpected zombie-only group result: %v", err)
 		}
 	}
+	cleanupComplete = true
 }
