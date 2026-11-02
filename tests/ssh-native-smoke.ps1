@@ -26,7 +26,28 @@ $baselineSshRule = Get-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenS
 if ($baselineSshRule) { Disable-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenSSH-Server-In-TCP' }
 Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block
 
-& (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
+try {
+    & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
+} catch {
+    $setupFailure = $_
+    $diagnosticUser = Get-LocalUser -Name onelinefixture -ErrorAction SilentlyContinue
+    if ($diagnosticUser) {
+        Write-Output ('SSH user-token diagnostic: enabled={0}, userSid={1}, processSid={2}' -f $diagnosticUser.Enabled, $diagnosticUser.SID.Value, [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+        $diagnosticConfig = Join-Path $env:ProgramData 'ssh\sshd_config'
+        if (-not (Test-Path -LiteralPath $diagnosticConfig)) { $diagnosticConfig = Join-Path $sshRoot 'sshd_config_default' }
+        foreach ($diagnosticUserName in @('onelinefixture', ($env:COMPUTERNAME + '\onelinefixture').ToLowerInvariant())) {
+            $diagnosticErrorAction = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $diagnosticOutput = @(& (Join-Path $sshRoot 'sshd.exe') -ddd -T -f $diagnosticConfig -C "user=$diagnosticUserName,host=localhost,addr=127.0.0.1" 2>&1)
+                $diagnosticExit = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $diagnosticErrorAction }
+            Write-Output ("SSH user-token probe user={0}, exit={1}" -f $diagnosticUserName, $diagnosticExit)
+            $diagnosticOutput | ForEach-Object { [string]$_ } | Where-Object { $_ -match 'ga_init|unable to generate user token|not running as system|returning process token' } | Write-Output
+        }
+    }
+    throw $setupFailure
+}
 $sshd = Join-Path $sshRoot 'sshd.exe'
 & $sshd -t
 if ($LASTEXITCODE -ne 0) { throw 'Installed sshd configuration is invalid' }
