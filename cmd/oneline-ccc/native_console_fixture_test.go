@@ -33,6 +33,7 @@ var nativeConsoleAssertRaw func() error
 var nativeConsoleContext func(context.Context) (context.Context, func(), error)
 var nativeConsoleDiagnostics func(io.Writer)
 var nativeConsoleBeforeExit func() error
+var nativeConsolePrepare func() (func() error, error)
 
 type nativeConsoleBackend struct {
 	*fakeEngine
@@ -132,6 +133,19 @@ func TestNativeConsoleFixture(t *testing.T) {
 	fmt.Fprintf(diag, "FIXTURE scenario=%s stage=diagnostics-open\n", scenario)
 	if nativeConsoleDiagnostics != nil {
 		nativeConsoleDiagnostics(diag)
+	}
+	if nativeConsolePrepare != nil {
+		restore, err := nativeConsolePrepare()
+		if err != nil {
+			fmt.Fprintf(diag, "FAIL stage=bind-private-console error=%v\n", err)
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := restore(); err != nil {
+				t.Error("fixture console cleanup:", err)
+			}
+		}()
+		fmt.Fprintf(diag, "PREPARED stdinTTY=%t stdoutTTY=%t\n", term.IsTerminal(os.Stdin.Fd()), term.IsTerminal(os.Stdout.Fd()))
 	}
 	// This is the subprocess's stderr only. stdin/stdout stay native handles.
 	previousStderr := os.Stderr

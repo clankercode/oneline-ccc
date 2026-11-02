@@ -26,6 +26,43 @@ var nativeConsolePeekPipe = nativeConsoleKernel.NewProc("PeekNamedPipe")
 var nativeConsoleUpdateAttribute = nativeConsoleKernel.NewProc("UpdateProcThreadAttribute")
 
 func init() {
+	nativeConsolePrepare = func() (func() error, error) {
+		// ConPTY attachment and inherited process standard handles are distinct.
+		// Match the PTY host's explicit stream attachment using real handles to
+		// this child's already-attached console, never AttachConsole/operator IO.
+		// https://learn.microsoft.com/windows/console/getstdhandle#remarks
+		oldIn, oldOut := os.Stdin, os.Stdout
+		oldInput, _ := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
+		oldOutput, _ := windows.GetStdHandle(windows.STD_OUTPUT_HANDLE)
+		in, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
+		if err != nil {
+			return nil, fmt.Errorf("open private CONIN$: %w", err)
+		}
+		out, err := os.OpenFile("CONOUT$", os.O_RDWR, 0)
+		if err != nil {
+			_ = in.Close()
+			return nil, fmt.Errorf("open private CONOUT$: %w", err)
+		}
+		rollback := func() error {
+			os.Stdin, os.Stdout = oldIn, oldOut
+			return errors.Join(windows.SetStdHandle(windows.STD_INPUT_HANDLE, oldInput), windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, oldOutput), in.Close(), out.Close())
+		}
+		var mode uint32
+		if err := windows.GetConsoleMode(windows.Handle(in.Fd()), &mode); err != nil {
+			return nil, errors.Join(err, rollback())
+		}
+		if err := windows.GetConsoleMode(windows.Handle(out.Fd()), &mode); err != nil {
+			return nil, errors.Join(err, rollback())
+		}
+		if err := windows.SetStdHandle(windows.STD_INPUT_HANDLE, windows.Handle(in.Fd())); err != nil {
+			return nil, errors.Join(err, rollback())
+		}
+		if err := windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, windows.Handle(out.Fd())); err != nil {
+			return nil, errors.Join(err, rollback())
+		}
+		os.Stdin, os.Stdout = in, out
+		return rollback, nil
+	}
 	nativeConsoleModes = func() (string, error) {
 		var input, output uint32
 		if err := windows.GetConsoleMode(windows.Handle(os.Stdin.Fd()), &input); err != nil {
