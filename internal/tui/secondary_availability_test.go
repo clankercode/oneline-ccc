@@ -108,3 +108,37 @@ func TestUnknownMonitorRequiresInspectionBeforeMutation(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardUsesSameMonitorInstallationPrerequisite(t *testing.T) {
+	for _, status := range []string{"Unknown", "Conflict", "Stopped", "Failed", "Not installed"} {
+		t.Run(status, func(t *testing.T) {
+			m, f := loaded(t)
+			m.snapshot.Service.Status = status
+			m.focusID("service:install")
+			if m.focused().id != "service:install" {
+				t.Fatal("Dashboard installation route is absent")
+			}
+			if status == "Not installed" {
+				if m.focused().reason != "" {
+					t.Fatal("absent monitor installation was refused")
+				}
+				press(m, "enter")
+				if m.modal != "service:install" || m.modalFocus != 0 || f.serviceCalls != 0 {
+					t.Fatal("installation did not reach safe review without work")
+				}
+				press(m, "tab")
+				run(t, m, press(m, "enter"))
+				if f.serviceCalls != 1 || f.serviceAction != "install" {
+					t.Fatal("explicitly confirmed installation was not dispatched")
+				}
+				return
+			}
+			if m.focused().reason == "" {
+				t.Fatalf("Dashboard offers installation for %s", status)
+			}
+			if press(m, "enter") != nil || m.modal != "" || f.serviceCalls != 0 {
+				t.Fatal("Dashboard refused installation opened review or scheduled work")
+			}
+		})
+	}
+}

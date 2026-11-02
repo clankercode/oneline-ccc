@@ -52,7 +52,7 @@ func (m *model) controls() []control {
 		add("launch", "Launch selected client", why)
 		if !m.observerDismissed && m.snapshot.Service.Status != "Running" {
 			add("observer:off", "Continue without monitor (optional)", "")
-			add("service:install", "Review monitor installation", "")
+			add("service:install", "Review monitor installation", m.monitorReason("install"))
 		}
 	case "Models":
 		cs = append(cs, m.modelsControls(why, d)...)
