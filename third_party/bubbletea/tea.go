@@ -1192,7 +1192,11 @@ func (p *Program) Run() (returnModel Model, returnErr error) {
 	starting = false
 	p.terminalMu.Unlock()
 
-	// Initialize the program.
+	// Skip Init if cancellation is already observable after terminal setup.
+	// The callback stays outside terminalMu; cancellation can race its entry.
+	if p.ctx.Err() != nil {
+		return model, ErrProgramKilled
+	}
 	initCmd := model.Init()
 	if p.ctx.Err() != nil {
 		return model, ErrProgramKilled

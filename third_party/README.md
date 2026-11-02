@@ -38,17 +38,21 @@ Acquisition, release, restoration and forced shutdown share a lock; Kill cancels
 before waiting for that lock. A renderer is stopped only after it has started,
 and its flush loop is joined before restoration or restart. Successfully
 restored mode snapshots are consumed once. Run also closes only the TTY handles
-it opened itself, after input completion and mode restoration. Startup
-cancellation skips further model initialization/rendering, and a simultaneous
-root cancellation is joined with the original failure. RestoreTerminal rolls
-back failed reacquisition and refuses to reacquire after shutdown.
+it opened itself, after input completion and mode restoration. Startup checks
+skip subsequent work when cancellation is already observable, including a check
+immediately before model initialization and another before rendering. Callbacks
+remain outside the ownership lock; these checks do not atomically exclude
+cancellation racing with callback entry. A simultaneous root cancellation is
+joined with the original failure. RestoreTerminal rolls back failed
+reacquisition and refuses to reacquire after shutdown.
 
 Linux PTY regressions exercise size and reader-setup errors after raw mode,
 concurrent cancellation, partial-setup/model-init panics, runtime read errors
 and graceful rendering. An additional test-only overlay returns a setup error
 after real MakeRaw, with and without concurrent cancellation; its reproduction
 is retained in the A6 report/workspace. Dependency barriers cover Kill during initialization,
-an unstarted renderer, pre-acquisition cancellation and panic join ordering.
+an unstarted renderer, pre-acquisition and renderer-start cancellation, reentrant
+Kill from model initialization, and panic join ordering.
 The invalid-descriptor constructor probes run in reaped fixture processes:
 pinned cancelreader's EpollCtl error branch leaves its private wake-pipe files
 for finalization/process exit. That inherited constructor allocation leak is

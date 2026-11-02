@@ -164,3 +164,42 @@ func TestStartupPanicJoinsInputBeforeClose(t *testing.T) {
 		<-r.closed
 	})
 }
+
+type a6ReviewCancelRenderer struct {
+	startupLifecycleRenderer
+	cancel context.CancelFunc
+}
+
+func (r *a6ReviewCancelRenderer) start() {
+	r.startupLifecycleRenderer.start()
+	r.cancel()
+}
+
+func TestA6ReviewCanceledDuringRendererStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	m := &startupLifecycleModel{init: func() Cmd {
+		calls++
+		return nil
+	}}
+	p := NewProgram(m, WithContext(ctx),
+		WithInput(strings.NewReader("")), WithOutput(io.Discard),
+		WithoutSignalHandler())
+	r := &a6ReviewCancelRenderer{cancel: cancel}
+	p.renderer = r
+	_, err := p.Run()
+	if !errors.Is(err, ErrProgramKilled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("error identity: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("Model.Init ran %d time(s) after renderer startup canceled the root context; views=%d starts=%d closes=%d",
+			calls, m.views, r.starts, r.closes)
+	}
+	p.Kill()
+	p.Kill()
+	p.Wait()
+	if m.views != 0 || r.starts != 1 || r.closes != 1 {
+		t.Errorf("canceled startup lifetime: views=%d starts=%d closes=%d", m.views, r.starts, r.closes)
+	}
+}

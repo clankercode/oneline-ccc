@@ -78,7 +78,7 @@
 +}
 --- /dev/null
 +++ b/bubbletea/startup_lifetime_test.go
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,205 @@
 +package tea
 +
 +import (
@@ -245,6 +245,45 @@
 +		<-r.closed
 +	})
 +}
++
++type a6ReviewCancelRenderer struct {
++	startupLifecycleRenderer
++	cancel context.CancelFunc
++}
++
++func (r *a6ReviewCancelRenderer) start() {
++	r.startupLifecycleRenderer.start()
++	r.cancel()
++}
++
++func TestA6ReviewCanceledDuringRendererStart(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	calls := 0
++	m := &startupLifecycleModel{init: func() Cmd {
++		calls++
++		return nil
++	}}
++	p := NewProgram(m, WithContext(ctx),
++		WithInput(strings.NewReader("")), WithOutput(io.Discard),
++		WithoutSignalHandler())
++	r := &a6ReviewCancelRenderer{cancel: cancel}
++	p.renderer = r
++	_, err := p.Run()
++	if !errors.Is(err, ErrProgramKilled) || !errors.Is(err, context.Canceled) {
++		t.Fatalf("error identity: %v", err)
++	}
++	if calls != 0 {
++		t.Errorf("Model.Init ran %d time(s) after renderer startup canceled the root context; views=%d starts=%d closes=%d",
++			calls, m.views, r.starts, r.closes)
++	}
++	p.Kill()
++	p.Kill()
++	p.Wait()
++	if m.views != 0 || r.starts != 1 || r.closes != 1 {
++		t.Errorf("canceled startup lifetime: views=%d starts=%d closes=%d", m.views, r.starts, r.closes)
++	}
++}
 --- a/bubbletea/tea.go
 +++ b/bubbletea/tea.go
 @@ -524,6 +524,9 @@
@@ -377,10 +416,11 @@
  
  	// Start the renderer.
  	p.startRenderer()
-@@ -1146,30 +1185,30 @@
+@@ -1146,30 +1185,34 @@
  			ansi.RequestModeUnicodeCore)
  	}
  
+-	// Initialize the program.
 +	// Register every owned handler before Kill can complete. User callbacks
 +	// run outside the acquisition lock so Init can itself call Kill/release.
 +	p.handlers.add(p.handleResize())
@@ -388,7 +428,11 @@
 +	starting = false
 +	p.terminalMu.Unlock()
 +
- 	// Initialize the program.
++	// Skip Init if cancellation is already observable after terminal setup.
++	// The callback stays outside terminalMu; cancellation can race its entry.
++	if p.ctx.Err() != nil {
++		return model, ErrProgramKilled
++	}
  	initCmd := model.Init()
 -	if initCmd != nil {
 -		ch := make(chan struct{})
@@ -427,7 +471,7 @@
  
  	// Run event loop, handle updates and draw.
  	var err error
-@@ -1287,24 +1326,18 @@
+@@ -1287,24 +1330,18 @@
  // shutdown performs operations to free up resources and restore the terminal
  // to its original state.
  func (p *Program) shutdown(kill bool) {
@@ -459,7 +503,7 @@
  			p.stopRenderer(kill)
  		}
  
-@@ -1369,14 +1402,12 @@
+@@ -1369,14 +1406,12 @@
  }
  
  func (p *Program) releaseTerminal(reset bool) error {
@@ -479,7 +523,7 @@
  		p.stopRenderer(false)
  		if reset {
  			p.renderer.reset()
-@@ -1389,7 +1420,21 @@
+@@ -1389,7 +1424,21 @@
  // RestoreTerminal reinitializes the Program's input reader, restores the
  // terminal to the former state when the program was running, and repaints.
  // Use it to reinitialize a Program after running ReleaseTerminal.
@@ -502,7 +546,7 @@
  	atomic.StoreUint32(&p.ignoreSignals, 0)
  
  	if err := p.initTerminal(); err != nil {
-@@ -1454,7 +1499,10 @@
+@@ -1454,7 +1503,10 @@
  
  	// Start the renderer.
  	p.renderer.start()
@@ -513,7 +557,7 @@
  		for {
  			select {
  			case <-p.rendererDone:
-@@ -1473,10 +1521,14 @@
+@@ -1473,10 +1525,14 @@
  // If kill is true, the renderer will be stopped immediately without flushing
  // the last frame.
  func (p *Program) stopRenderer(kill bool) {
@@ -528,7 +572,7 @@
  
  	if !kill {
  		// flush locks the mutex
-@@ -1484,4 +1536,5 @@
+@@ -1484,4 +1540,5 @@
  	}
  
  	_ = p.renderer.close()
