@@ -46,16 +46,14 @@ func (m *model) helpGroups() []helpGroup {
 		}},
 		{"CURRENT CONTROL", m.helpControl()},
 		{"TEXT ENTRY", []helpBinding{
-			{"", "Type/paste stays in the editor; shortcut letters and Space become text."},
+			{"", "Type/paste stays in the editor; letters/Space are text. Ctrl+C still requests safe exit."},
 			{"", "Left/Right moves the caret. Enter saves the field; Esc keeps the previous draft."},
 			{"", "Key input: Enter focuses Save. Tab/Shift+Tab visits options; only input accepts text."},
 			{"", "Persistence: Space/Enter toggles. Save stores the key; Back drops unsaved text."},
-			{"", "Ctrl+C still requests safe exit, including during text entry."},
 		}},
 		{"HELP PAGES", []helpBinding{
 			{"", "Down / Tab / PgDown: next page. Up / Shift+Tab / PgUp: previous page."},
-			{"", "Stops at first/last page; reverse moves immediately. Resize reflows all text."},
-			{"", "Enter / Esc / ?: close Help and return focus. Drafts stay unchanged."},
+			{"", "Stops at first/last; reverse works. Resize reflows. Close restores focus and keeps drafts."},
 		}},
 	}
 	return groups

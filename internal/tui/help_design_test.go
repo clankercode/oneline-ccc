@@ -47,11 +47,11 @@ func TestHelpGroupsAndFullProseFitEveryPage(t *testing.T) {
 				}
 				text := helpText(m)
 				for _, want := range []string{
-					"Type/paste stays in the editor; shortcut letters and Space become text.",
+					"Type/paste stays in the editor; letters/Space are text. Ctrl+C still requests safe exit.",
 					"Left/Right moves the caret. Enter saves the field; Esc keeps the previous draft.",
 					"Key input: Enter focuses Save. Tab/Shift+Tab visits options; only input accepts text.",
 					"Persistence: Space/Enter toggles. Save stores the key; Back drops unsaved text.",
-					"Stops at first/last page; reverse moves immediately. Resize reflows all text.",
+					"Stops at first/last; reverse works. Resize reflows. Close restores focus and keeps drafts.",
 				} {
 					if !strings.Contains(text, want) {
 						t.Errorf("prose lost across page boundary: %q", want)
@@ -80,6 +80,19 @@ func TestHelpUsefulFirstNarrowPage(t *testing.T) {
 					t.Errorf("unkeyed destination %q belongs in Commands", destination)
 				}
 			}
+		}
+	}
+}
+
+func TestHelpWideKeepsGuidanceTogether(t *testing.T) {
+	m, _ := loaded(t)
+	m.width, m.height = 120, 40
+	m.focusID("help")
+	press(m, "?")
+	frame := ansi.Strip(m.View().Content)
+	for _, want := range []string{"Page 1 of 1", "TEXT ENTRY", "HELP PAGES", "first/last", "Close help"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("wide Help unnecessarily separates guidance %q:\n%s", want, frame)
 		}
 	}
 }
