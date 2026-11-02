@@ -17,7 +17,7 @@ func (m *model) View() tea.View {
 	w, h := max(1, m.width), max(1, m.height)
 	header := m.shellHeader()
 	lines, focusLine, start, available := m.layout()
-	footer := m.shellFooter(m.scrollScope(start, available, len(lines)))
+	footer := m.shellFooter("")
 	out := append([]string(nil), header...)
 	remaining := available
 	// Dialog/editor scope is independent of the scrolling body.
@@ -28,9 +28,13 @@ func (m *model) View() tea.View {
 	pinned := focusLine >= 0 && (focusLine < start || focusLine >= start+remaining)
 	reserve := 0
 	if pinned {
-		reserve = min(remaining, m.focusContext(lines, focusLine))
+		// Manual paging advances by available-1 rows. Keep one anchor
+		// so document rows remain contiguous and none are skipped.
+		reserve = min(remaining, 1)
 	}
-	for i := start; i < min(len(lines), start+remaining-reserve); i++ {
+	visible := remaining - reserve
+	footer = m.shellFooter(m.scrollScope(start, visible, len(lines)))
+	for i := start; i < min(len(lines), start+visible); i++ {
 		out = append(out, m.bodyLine(lines[i].text))
 	}
 	if pinned {
@@ -59,7 +63,12 @@ func (m *model) View() tea.View {
 	}
 	return v
 }
-func (m *model) bodyLine(s string) string { return m.shellLine(s, surfaceBase) }
+func (m *model) bodyLine(s string) string {
+	if m.screen == "Review" && m.modal == "" && m.editor == nil {
+		return m.fill(s, max(1, m.width), surfaceBase)
+	}
+	return m.shellLine(s, surfaceBase)
+}
 func (m *model) focusStyle(s string, w int) string {
 	if m.options.NoColor {
 		return s
@@ -97,11 +106,6 @@ func (m *model) screenRows() []row {
 	c, ok := m.client()
 	d := m.draft()
 	switch m.screen {
-	case "Dashboard":
-		if len(m.snapshot.Clients) == 0 {
-			text("No clients found. Refresh inspection or use Commands.")
-		}
-		text("Gateway: Gateway A | Authentication / inference: not verified")
 	case "Models":
 		if ok {
 			text("Selected: " + c.Name + " | " + c.Status)
@@ -170,13 +174,6 @@ func (m *model) screenRows() []row {
 		if i < navCount {
 			continue
 		}
-		if m.screen == "Dashboard" && c.id == "configure" && ok {
-			text("")
-			text("Selected: " + m.selected + " | Model: " + m.clientModel() + " / " + tierLabel(m.appliedTier()))
-			text(fmt.Sprintf("Applied budget: %d", m.snapshotProfileBudget()))
-			text("Available tiers: " + tierAvailability(m.appliedTiers()))
-			text("Space stages management; Enter opens settings.")
-		}
 		if m.screen == "Models" {
 			switch c.id {
 			case "enabled", "model:gpt-6.1-sol", "budget:272000", "tier:Standard", "capacity", "advanced:model", "discover":
@@ -199,7 +196,4 @@ func tierAvailability(confirmed bool) string {
 	}
 	return "Not verified"
 }
-func (m *model) clientModel() string          { c, _ := m.client(); return c.Profile.Model }
-func (m *model) snapshotProfileBudget() int64 { c, _ := m.client(); return c.Profile.Budget }
-func (m *model) appliedTier() string          { c, _ := m.client(); return c.Profile.Tier }
-func (m *model) appliedTiers() bool           { c, _ := m.client(); return c.Managed && c.Profile.TiersConfirmed }
+func (m *model) appliedTiers() bool { c, _ := m.client(); return c.Managed && c.Profile.TiersConfirmed }

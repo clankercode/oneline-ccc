@@ -21,7 +21,7 @@ func (m *model) layout() (lines []row, focusLine, start, available int) {
 	if m.wideDashboard() {
 		lines = body
 	} else {
-		lines = m.column(body, m.contentWidth())
+		lines = m.column(body, m.bodyWidth())
 	}
 	available = max(1, m.height-len(m.shellHeader())-len(m.shellFooter("")))
 	focusLine = -1
@@ -47,7 +47,16 @@ func (m *model) layout() (lines []row, focusLine, start, available int) {
 			}
 		}
 	}
-	start = max(0, min(start, max(0, len(lines)-available)))
+	lastStart := max(0, len(lines)-available)
+	if m.scroll >= 0 && m.modal == "" && m.editor == nil && focusLine >= 0 {
+		// A pinned focus anchor consumes one viewport row. Include the
+		// document's final row when clamping explicit paging.
+		candidate := min(start, lastStart)
+		if focusLine < candidate || focusLine >= candidate+available {
+			lastStart = max(0, len(lines)-available+1)
+		}
+	}
+	start = max(0, min(start, lastStart))
 	return
 }
 
@@ -55,5 +64,18 @@ func (m *model) focusContext(lines []row, focus int) int {
 	if m.screen == "Dashboard" && m.modal == "" && m.editor == nil && m.region(m.focus, m.focused()) == "Clients" {
 		return min(3, len(lines)-focus)
 	}
+	if m.screen == "Dashboard" && m.modal == "" && m.editor == nil && m.focused().reason != "" {
+		return min(4, len(lines)-focus)
+	}
 	return 1
+}
+
+// Review pages are authority-bearing and are currently paged at terminal width
+// by panels.go. Preserve that body footprint until A3c can revise pagination
+// and its behavioral coverage together; an inset must not hide reviewed rows.
+func (m *model) bodyWidth() int {
+	if m.screen == "Review" && m.modal == "" && m.editor == nil {
+		return max(1, m.width)
+	}
+	return m.contentWidth()
 }

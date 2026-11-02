@@ -194,3 +194,91 @@ func TestCompositionHelpRetainsScopeWhileCloseFollowsFocus(t *testing.T) {
 		assertFrame(t, m)
 	}
 }
+
+func TestCompositionDisabledActionKeepsReasonAndNextStepVisible(t *testing.T) {
+	m := compositionFixture(t)
+	m.selected = "client-3"
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {40, 12}} {
+		m.width, m.height = size[0], size[1]
+		for _, id := range []string{"plan", "launch"} {
+			m.focusID(id)
+			m.scroll = -1
+			frame := ansi.Strip(m.View().Content)
+			if !strings.Contains(frame, "Unavailable:") || !strings.Contains(frame, "Next:") {
+				t.Fatalf("%dx%d focused %s loses reason/next step: %s", m.width, m.height, id, frame)
+			}
+			assertFrame(t, m)
+		}
+	}
+}
+
+func TestCompositionLongClientSummaryKeepsTierAndManagementNearby(t *testing.T) {
+	m := compositionFixture(t)
+	m.width, m.height = 40, 12
+	m.snapshot.Clients[0].Name = strings.Repeat("長い名前", 20)
+	m.snapshot.Clients[0].Profile.Model = strings.Repeat("exact-模型-", 20)
+	frame := ansi.Strip(m.View().Content)
+	for _, s := range []string{"Standard", "managed", "Selected"} {
+		if !strings.Contains(frame, s) {
+			t.Fatalf("long client hides %q near focus: %s", s, frame)
+		}
+	}
+	assertFrame(t, m)
+}
+
+func TestCompositionReviewAckRetainsWholePageViewport(t *testing.T) {
+	m, _ := loaded(t)
+	m.plan = &core.Plan{ID: strings.Repeat("plan-", 20), Revision: strings.Repeat("revision-", 20), ClientID: "codex", Desired: m.draft(), Changes: []core.Change{{Field: "model", Before: strings.Repeat("before_", 30), After: strings.Repeat("after_", 30)}}}
+	m.goTo("Review")
+	for _, size := range [][2]int{{120, 40}, {100, 30}, {80, 24}, {60, 20}, {40, 12}} {
+		m.width, m.height = size[0], size[1]
+		m.focusID("review:read")
+		m.scroll = -1
+		for page := range m.reviewPages() {
+			m.reviewPage = page
+			_, _, start, _ := m.layout()
+			if start != 0 {
+				t.Fatalf("%dx%d page %d acknowledgment hides first review rows (start %d)", m.width, m.height, page, start)
+			}
+			assertFrame(t, m)
+		}
+	}
+}
+
+func TestCompositionManualPagingDoesNotSkipDetailBehindPinnedFocus(t *testing.T) {
+	m := compositionFixture(t)
+	m.width, m.height = 40, 12
+	var words []string
+	for i := 0; i < 75; i++ {
+		words = append(words, fmt.Sprintf("notice%02d", i))
+	}
+	m.snapshot.Clients[0].Reason = strings.Join(words, " ")
+	m.scroll = 0
+	var frames string
+	for i := 0; i < 100; i++ {
+		frames += ansi.Strip(m.View().Content) + "\n"
+		_, _, before, _ := m.layout()
+		press(m, "pgdown")
+		_, _, after, _ := m.layout()
+		if before == after {
+			break
+		}
+	}
+	for _, word := range words {
+		if !strings.Contains(frames, word) {
+			t.Fatalf("manual paging skipped %q behind pinned focus", word)
+		}
+	}
+	assertFrame(t, m)
+}
+
+func TestCompositionMultilineStatusStaysInItsShellRow(t *testing.T) {
+	m := compositionFixture(t)
+	m.width, m.height = 40, 12
+	m.status = "Inspection failed:\n" + strings.Repeat("very long evidence\n", 12)
+	assertFrame(t, m)
+	frame := strings.Split(ansi.Strip(m.View().Content), "\n")
+	if len(frame) != m.height || !strings.Contains(frame[2], "Inspection failed:") {
+		t.Fatal("multiline status displaced composed frame rows")
+	}
+}

@@ -104,10 +104,7 @@ func (m *model) shellHeader() []string {
 		title += " / Edit " + m.editor.field
 	}
 	width := m.contentWidth()
-	ellipsis := "…"
-	if m.options.ASCII {
-		ellipsis = "..."
-	}
+	ellipsis := m.ellipsis()
 	names := []string{"Dashboard", "Models", "Review", "Jobs", "More"}
 	var tabs []string
 	for i, name := range names {
@@ -132,7 +129,7 @@ func (m *model) shellHeader() []string {
 		}
 		tabs = append(tabs, label)
 	}
-	status := m.public(m.status)
+	status := strings.Join(strings.Fields(m.public(m.status)), " ")
 	if m.busy != "" && !strings.HasPrefix(status, "Working:") {
 		status = "Working: " + m.public(m.busy) + " | " + status
 	}
@@ -238,10 +235,14 @@ func (m *model) actionRows(c control, index, width int, primary bool) []row {
 	}
 	rs := []row{r}
 	if c.reason != "" {
-		rs = append(rs, row{text: m.note("    Unavailable: " + m.public(c.reason))})
 		if index == m.focus {
-			rs = append(rs, row{text: m.note("    Next: Configure to inspect; Esc keeps drafts.")})
+			next := "Next: Configure to inspect; Esc keeps drafts."
+			if _, ok := m.client(); !ok {
+				next = "Next: r refresh inspection; ? Help."
+			}
+			rs = append(rs, row{text: m.note(next)})
 		}
+		rs = append(rs, row{text: m.note("Unavailable: " + m.public(c.reason))})
 	}
 	return m.column(rs, width)
 }
@@ -264,4 +265,11 @@ func wrapHints(hint string, width int) []string {
 		}
 	}
 	return append(lines, current)
+}
+
+func (m *model) ellipsis() string {
+	if m.options.ASCII {
+		return "..."
+	}
+	return "…"
 }

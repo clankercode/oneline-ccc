@@ -122,10 +122,15 @@ func (m *model) clientRows(c core.Client, index, width int) []row {
 	if !c.Installed && !strings.Contains(strings.ToLower(status), "not installed") {
 		status += " / Not installed"
 	}
-	name := prefix + checkbox(m.drafts[c.ID].Enabled) + " " + m.public(c.Name)
-	label := name + "  " + m.statusText(status)
+	// Keep a bounded list summary, with the exact values in applied detail.
+	// Long names/model IDs must not displace management and tier information.
+	status = ansi.Truncate(m.public(status), max(1, min(16, width/2)), m.ellipsis())
+	nameWidth := max(1, width-8-ansi.StringWidth(status))
+	name := prefix + checkbox(m.drafts[c.ID].Enabled) + " " + ansi.Truncate(m.public(c.Name), nameWidth, m.ellipsis())
+	gap := strings.Repeat(" ", max(2, width-ansi.StringWidth(name)-ansi.StringWidth(status)))
+	label := name + gap + m.statusText(status)
 	if selected {
-		label = m.heading(name) + "  " + m.statusText(status)
+		label = m.heading(name) + gap + m.statusText(status)
 	}
 	management := "Not managed"
 	if c.Managed {
@@ -137,10 +142,12 @@ func (m *model) clientRows(c core.Client, index, width int) []row {
 	if m.drafts[c.ID] != m.baselines[c.ID] {
 		management += " / Draft"
 	}
-	model := c.Profile.Model + " / " + tierLabel(c.Profile.Tier)
-	if c.Profile.Model == "" {
-		model = "Custom configuration / " + tierLabel(c.Profile.Tier)
+	tier := m.public(tierLabel(c.Profile.Tier))
+	model := m.public(c.Profile.Model)
+	if model == "" {
+		model = "Custom configuration"
 	}
+	model = ansi.Truncate(model, max(1, width-9-ansi.StringWidth(tier)), m.ellipsis()) + " / " + tier
 	rows := []row{{text: label, focus: focused, selected: selected}, {text: "      " + m.public(model), selected: selected}, {text: "      " + m.note(management), selected: selected}, {}}
 	return m.column(rows, width)
 }
