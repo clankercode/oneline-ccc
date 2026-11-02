@@ -31,7 +31,7 @@ function New-Case([string]$Name) {
     return $directory
 }
 function Get-Profile([string]$HomeDirectory) { return Join-Path $HomeDirectory 'llmp.config.toml' }
-function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit, [switch]$UseVersionFixture, [string]$OfficialCatalogFixture, [switch]$UseNativeIdentityFixture, [switch]$AssertUnchangedEnvironment) {
+function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit, [switch]$UseVersionFixture, [string]$OfficialCatalogFixture, [switch]$UseNativeIdentityFixture, [switch]$AssertUnchangedEnvironment, [object[]]$PromptAnswers, [string]$UserKeyFixture) {
     $arguments = @{
         BaseUrl = 'https://fixture.invalid/v1/'; Model = 'fixture-model'
         ContextWindow = 353000; AutoCompactTokenLimit = 300000
@@ -45,7 +45,20 @@ function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [
     $argumentsPath = Join-Path $root ($identifier + '.json')
     Write-Utf8 $argumentsPath ($arguments | ConvertTo-Json)
     $runner = Join-Path $root ($identifier + '.ps1')
-    $escapedInstaller = $installer.Replace("'", "''")
+    # Every child uses a protected synthetic User-key source, including absent-key
+    # cases and calls using other seams. Never consult this workstation's saved key.
+    $source = [IO.File]::ReadAllText($installer)
+    $tokens = $null; $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
+    $getter = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-LLMPUserApiKey'
+    }, $false))
+    if ($parseErrors.Count -ne 0 -or $getter.Count -ne 1) { throw 'User credential fixture seam changed' }
+    $body = $getter[0].Body.Extent
+    $source = $source.Remove($body.StartOffset, $body.EndOffset - $body.StartOffset).Insert($body.StartOffset, '{ return $env:CODEX_USER_KEY_FIXTURE }')
+    $fixtureInstaller = Join-Path $root ($identifier + '.installer.ps1')
+    Write-Utf8 $fixtureInstaller $source
+    $escapedInstaller = $fixtureInstaller.Replace("'", "''")
     $escapedArguments = $argumentsPath.Replace("'", "''")
     $invocation = "& '$escapedInstaller' @options"
     if ($Bootstrap) { $invocation = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('$escapedInstaller'))) @options" }
@@ -114,6 +127,30 @@ foreach (`$definition in @(`$definitions | Sort-Object { `$_.Body.Extent.StartOf
 & ([ScriptBlock]::Create(`$source)) @options
 "@
     }
+    if ($PSBoundParameters.ContainsKey('PromptAnswers')) {
+        $answersPath = Join-Path $root ($identifier + '.answers.json')
+        Write-Utf8 $answersPath (ConvertTo-Json -InputObject @($PromptAnswers))
+        $escapedAnswers = $answersPath.Replace("'", "''")
+        $invocation = @"
+`$global:fixtureAnswers = New-Object 'System.Collections.Generic.Queue[object]'
+`$answers = Get-Content -Raw -LiteralPath '$escapedAnswers' | ConvertFrom-Json
+foreach (`$answer in `$answers) { `$global:fixtureAnswers.Enqueue(`$answer) }
+function Read-Host([string]`$Prompt, [switch]`$AsSecureString) {
+    Write-Host `$Prompt
+    if (`$global:fixtureAnswers.Count -eq 0) { throw 'Unexpected interactive prompt' }
+    `$answer = [string]`$global:fixtureAnswers.Dequeue()
+    if (`$AsSecureString) {
+        if (`$answer.Length -eq 0) { return New-Object Security.SecureString }
+        return ConvertTo-SecureString `$answer -AsPlainText -Force
+    }
+    return `$answer
+}
+"@ + "`n" + $invocation + "`nif (`$global:fixtureAnswers.Count -ne 0) { throw 'Unused interactive answers' }"
+    }
+    if ($UserKeyFixture) {
+        if ($NoCredential) { $invocation += "`nif (`$env:LLMP_API_KEY -cne `$env:CODEX_USER_KEY_FIXTURE) { throw 'Saved User credential was not activated' }" }
+        else { $invocation += "`nif (`$env:LLMP_API_KEY -cne 'fixture-only-not-a-real-credential') { throw 'Process credential precedence changed' }" }
+    }
     $rollbackCheck = ''
     if ($AssertUnchangedEnvironment) {
         $invocation = "`$oldPath = `$env:Path`n`$options.ApiKey = ConvertTo-SecureString 'fixture-replacement-credential' -AsPlainText -Force`n" + $invocation
@@ -161,6 +198,7 @@ Write-Output `$_.Exception.Message; exit 1 }
     $start.RedirectStandardError = $true
     $start.EnvironmentVariables['CODEX_HOME'] = $HomeDirectory
     $start.EnvironmentVariables['LLMP_API_KEY'] = $dummyKey
+    $start.EnvironmentVariables['CODEX_USER_KEY_FIXTURE'] = $UserKeyFixture
     if ($OfficialCatalogFixture) { $start.EnvironmentVariables['CODEX_OFFICIAL_CATALOG_FIXTURE'] = $OfficialCatalogFixture }
     if ($NoCredential) { $start.EnvironmentVariables['LLMP_API_KEY'] = '' }
     foreach ($name in $EnvironmentOverrides.Keys) { $start.EnvironmentVariables[$name] = [string]$EnvironmentOverrides[$name] }
@@ -174,13 +212,14 @@ Write-Output `$_.Exception.Message; exit 1 }
         if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Installer exceeded 30 second deadline' }
         $output = $stdoutTask.GetAwaiter().GetResult() + $stderrTask.GetAwaiter().GetResult()
         Assert-True (-not $output.Contains($dummyKey)) 'Installer exposed dummy credential in output'
+        if ($UserKeyFixture) { Assert-True (-not $output.Contains($UserKeyFixture)) 'Installer exposed saved User credential' }
         Assert-True (-not $output.Contains('fixture-replacement-credential')) 'Installer exposed replacement credential in output'
         if ($Failure) { Assert-True ($process.ExitCode -ne 0) 'Invalid input unexpectedly succeeded' }
         else { Assert-True ($process.ExitCode -eq 0) ('Installer failed: ' + $output) }
         return $output
     } finally { $process.Dispose() }
 }
-function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfiles) {
+function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfiles, [string[]]$Absent = @()) {
     $values = @{
         model_provider = 'oneline_llmp'; model = 'fixture-model'; service_tier = 'default'
         model_context_window = 353000; model_auto_compact_token_limit = 300000
@@ -191,7 +230,7 @@ function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfi
     }
     foreach ($name in $Extra.Keys) { $values[$name] = $Extra[$name] }
     $expectation = Join-Path $root ([Guid]::NewGuid().ToString('N') + '.expected.json')
-    $absent = @()
+    $absent = @($Absent)
     if (-not $AllowProfiles) { $absent += 'profiles' }
     foreach ($setting in @('model_catalog_json')) {
         if (-not $Extra.ContainsKey($setting)) { $absent += $setting }
@@ -856,5 +895,6 @@ try {
         $fixture.Dispose()
     }
 }
+. (Join-Path $PSScriptRoot 'rerun-defaults.ps1')
 Write-Output ('Results: ' + $script:passed + ' passed; ' + $script:failures.Count + ' failed. Artifacts: ' + $root)
 if ($script:failures.Count -gt 0) { exit 1 }

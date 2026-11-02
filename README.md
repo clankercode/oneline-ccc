@@ -87,6 +87,54 @@ approval. If winget is unavailable, install [Node.js LTS](https://nodejs.org/),
 reopen PowerShell, and rerun setup. Existing Codex versions below 0.134.0 must be
 upgraded before using the separate profile.
 
+## Windows Explorer defaults
+
+After successful Codex setup, the installer enables **file name extensions** and
+**hidden files** for the current Windows user, before offering optional SSH setup.
+It sets only the DWORD values `HideFileExt=0` and `Hidden=1` under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced`; protected
+operating-system file visibility (`ShowSuperHidden`) and unrelated preferences
+are unchanged. Already-correct values are left untouched on reruns.
+
+Add `-SkipExplorerDefaults` to keep your Explorer preferences. This step also
+skips non-Windows and `-SkipInstall` configuration-only runs. `-DryRun` describes
+the proposed defaults without accessing or changing the registry. No administrator
+approval or Explorer restart is requested; refresh or reopen existing File Explorer
+windows if needed. A preference failure prints a local warning and leaves Codex
+setup successful. The standalone SSH helper never changes these preferences.
+
+To reverse the preferences later, use File Explorer's View options to hide file
+name extensions or hidden items again.
+
+## Rerunning setup
+
+Press Enter to keep the current LLMP URL, model, service tier and context budget.
+The active `oneline_llmp` configuration supplies defaults; otherwise setup uses
+its saved LLMP profile. Other providers' model/context/tier values are not
+imported. Explicit command arguments take precedence. A custom compaction
+threshold is retained while context stays the same; changing context recomputes
+90% unless you explicitly set a threshold.
+
+The key prompt accepts Enter to keep a saved key without displaying it. Setup
+checks `LLMP_API_KEY` in the current process, then the Windows user environment,
+so a PowerShell session without the saved variable can still reuse it. A typed
+or explicitly supplied key replaces it. Noninteractive reruns reuse known values
+and refuse missing required inputs.
+
+Unchanged reruns of installer-generated configuration do not create redundant
+backups. Changes still update
+the managed LLMP fields in main and named configurations, preserving unrelated
+settings and exact originals in backups. Switching endpoint/model does not
+inherit the previous route's tier/catalog. Installer-generated catalogs refresh
+against the selected native Codex release; external catalogs remain external.
+
+Dry-run never writes files. Exact generated configuration can supply its defaults;
+for arbitrary main TOML that needs native parsing, supply inputs explicitly in
+dry-run mode. Normal setup uses private native staging to read that TOML safely.
+
+To include the SSH offer in a rerun, add `-EnableSshServer`. You can also run the
+SSH helper independently; it does not need or change the Codex URL/key.
+
 ## Model discovery and service tiers
 
 Optional model discovery lists IDs from your base URL's `/models` route. It sends
@@ -124,8 +172,9 @@ model, for example:
 That example is not a capability claim. `fast` maps to the Responses API's
 `priority` request tier. Leave the tier unset when eligibility is unknown. Model
 IDs remain unchanged; setup does not invent tier-suffixed models. When you do not
-select a tier, setup explicitly writes `service_tier = 'default'` so an unrelated
-fast-tier preference in your base configuration is not inherited.
+select a tier, setup keeps a saved tier for the same LLMP route and model. Without
+a saved LLMP tier, it writes `service_tier = 'default'`; an unrelated provider's
+fast-tier preference is not inherited. Use `-ServiceTier default` to reset it.
 
 ## Optional Windows SSH server
 

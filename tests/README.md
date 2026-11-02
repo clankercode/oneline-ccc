@@ -89,3 +89,10 @@ authenticates over loopback, and injects a late failure to test rollback. Never
 run that integration smoke on a workstation; its fixture resources are discarded
 with the CI runner. SSH-specific final CI evidence is recorded in the verification
 report.
+
+The shared `run.ps1` harness also loads `rerun-defaults.ps1`. Its cases exercise
+omitted inputs and scripted Enter responses, hidden process/User key selection,
+active LLMP main-vs-profile precedence, unrelated-provider isolation, context
+and tier changes, and read-only dry-run reuse. The User-environment seam is
+injected only into a process-local copy; tests never access a real saved User
+key or persist fixture keys.
