@@ -63,7 +63,7 @@ func TestStartupTerminalFailureRestoresModes(t *testing.T) {
 				// Isolate this inherited constructor-error leak; assertions below
 				// still observe modes and goroutines before fixture process exit.
 				cmd := exec.Command(os.Args[0], "-test.run=^TestStartupTerminalFailureRestoresModes$/^"+mode+"$", "-test.timeout=15s", "-test.v")
-				cmd.Env = []string{"ONELINE_A6_INPUT_ERROR_CHILD=" + mode, "TERM=xterm-256color", "GOMAXPROCS=2"}
+				cmd.Env = []string{"ONELINE_A6_INPUT_ERROR_CHILD=" + mode, "TERM=xterm-256color", "GOMAXPROCS=1"}
 				out, err := cmd.CombinedOutput() // starts, waits and reaps this fixture
 				if err != nil {
 					t.Fatalf("input-init fixture: %v\n%s", err, out)

@@ -27,7 +27,7 @@ func (f *foregroundMutation) Inspect(context.Context) (core.Snapshot, error) {
 	p := core.Defaults()
 	p.BaseURL = "https://fixture.invalid/v1"
 	p.CapacityConfirmed = true
-	return core.Snapshot{Clients: []core.Client{{ID: "codex", Name: "Codex", Installed: true, Supported: true, Profile: p}}}, nil
+	return core.Snapshot{Clients: []core.Client{{ID: "codex", Name: "Codex", Installed: true, Supported: true, Profile: p}}, Service: core.ServiceInfo{Backend: "fixture", Status: "Not installed"}}, nil
 }
 func (f *foregroundMutation) Plan(_ context.Context, id string, d core.Desired) (core.Plan, error) {
 	return core.Plan{ID: "fixture-plan", Revision: "fixture-revision", ClientID: id, Desired: d, Changes: []core.Change{{Field: "Management", Before: "false", After: "true"}}}, nil
@@ -105,9 +105,7 @@ func prepareForeground(t *testing.T, m tea.Model, kind string) (tea.Model, tea.C
 		work = key(tea.KeyEnter, "", 0)
 	case "service":
 		palette("Service")
-		for i := 0; i < 4; i++ {
-			key(tea.KeyDown, "", 0)
-		}
+		key(tea.KeyDown, "", 0) // Inspect -> installation review for absent monitor.
 		key(tea.KeyEnter, "", 0)
 		key(tea.KeyTab, "", 0)
 		work = key(tea.KeyEnter, "", 0)

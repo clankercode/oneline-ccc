@@ -135,7 +135,7 @@ func startNoColorPTY(t *testing.T, mode, value string) *noColorPTY {
 	p.app = exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNoColorTerminalFixture$")
 	p.app.Env = []string{
 		"ONELINE_NO_COLOR_TERMINAL_FIXTURE=1", "ONELINE_NO_COLOR_ROOT=" + p.root, "ONELINE_NO_COLOR_MODE=" + mode,
-		"NO_COLOR=" + value, "TERM=xterm-256color", "COLORTERM=truecolor", "GOMAXPROCS=2",
+		"NO_COLOR=" + value, "TERM=xterm-256color", "COLORTERM=truecolor", "GOMAXPROCS=1",
 		"HOME=" + filepath.Join(p.root, "home"), "XDG_CONFIG_HOME=" + filepath.Join(p.root, "config"), "TMPDIR=" + p.root,
 	}
 	p.app.Stdin, p.app.Stdout, p.app.Stderr = p.slave, p.slave, file("diagnostics")
@@ -458,7 +458,7 @@ func TestNoColorTerminalInteractive(t *testing.T) {
 			p.assertKeyHidden(t, "> [ ] Persist using backend credential storage")
 			p.await(t, p.send(t, "\x1b[Z"), "> API key: [hidden]")
 			p.assertKeyHidden(t, "> API key: [hidden]")
-			p.await(t, p.send(t, "\x1b"), "Session-only storage is the default; no key reveal.")
+			p.await(t, p.send(t, "\x1b"), "> Enter API key (hidden)")
 			p.palette(t, "Configure selected client", "> [ ] Manage client")
 			p.send(t, " ")
 			p.palette(t, "Dashboard", "Draft pending / applied values shown above")
