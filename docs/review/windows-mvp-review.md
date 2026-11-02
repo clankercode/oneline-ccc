@@ -169,5 +169,24 @@ registry/PATH behavior still requires native CI. No broader review round was run
 
 Final frozen-source confirmation: the tested NullString restore remains present.
 Test owner reports 72/0 and native smoke success on Codex 0.166, including the
-four rollback states; coordinator's independent 0.165 run is separate evidence
-still in progress at this note. No major review findings remain pending.
+four rollback states; coordinator's independent 0.165 run subsequently passed 72/0 as well. No major review findings remain pending.
+
+## Targeted staging cleanup and UTF-8 review
+
+Reviewed only the new cleanup helpers and bounded Console.InputEncoding change.
+No new Important or Critical finding. Cleanup requires an immediate GUID-named
+child of the supplied scratch root, refuses a reparse stage root, removes child
+links without recursion through their targets, normalizes read-only ordinary
+entries, and retries with bounded delays. Failure categories expose no paths or
+native exception payload. Cleanup runs before live configuration commit.
+
+Independent actual-helper checks removed a stage containing file/directory
+symlinks while preserving the external sentinel, refused a root symlink, and
+refused a nonstage external directory. Evidence:
+`.cache/review-stage-e3b3c6559e7542528d71bc34237f5b60`.
+These are Linux filesystem checks, not native Windows junction/ACL validation.
+
+Console input encoding is changed only around Process.Start and restored in a
+finally block, with the explicit stdin writer retaining BOM-free UTF-8. Failure
+still reaches existing process shutdown and staging cleanup. Actual .NET
+Framework stdin/BOM behavior remains a Windows CI result to collect.

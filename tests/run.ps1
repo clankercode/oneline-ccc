@@ -31,7 +31,7 @@ function New-Case([string]$Name) {
     return $directory
 }
 function Get-Profile([string]$HomeDirectory) { return Join-Path $HomeDirectory 'llmp.config.toml' }
-function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit) {
+function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit, [switch]$UseVersionFixture) {
     $arguments = @{
         BaseUrl = 'https://fixture.invalid/v1/'; Model = 'fixture-model'
         ContextWindow = 353000; AutoCompactTokenLimit = 300000
@@ -49,6 +49,30 @@ function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [
     $escapedArguments = $argumentsPath.Replace("'", "''")
     $invocation = "& '$escapedInstaller' @options"
     if ($Bootstrap) { $invocation = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('$escapedInstaller'))) @options" }
+    if ($UseVersionFixture) {
+        # Resolve the executable explicitly in an isolated copy. Keep the real
+        # version probe, native stderr handling, exit check and parser intact.
+        $invocation = @"
+`$source = [IO.File]::ReadAllText('$escapedInstaller')
+`$tokens = `$null; `$parseErrors = `$null
+`$ast = [Management.Automation.Language.Parser]::ParseInput(`$source, [ref]`$tokens, [ref]`$parseErrors)
+if (`$parseErrors.Count -ne 0) { throw 'Version fixture could not parse installer' }
+`$resolvers = @(`$ast.FindAll({ param(`$node)
+    `$node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    `$node.Name -cin @('Get-CodexCommand', 'Get-NativeCodexExecutable')
+}, `$false))
+if (`$resolvers.Count -ne 2 -or @(`$resolvers | Select-Object -ExpandProperty Name -Unique).Count -ne 2) { throw 'Version fixture resolver seam changed' }
+foreach (`$resolver in @(`$resolvers | Sort-Object { `$_.Body.Extent.StartOffset } -Descending)) {
+    `$replacement = '{ return `$null }'
+    if (`$resolver.Name -ceq 'Get-CodexCommand') {
+        `$replacement = '{ return [pscustomobject]@{ Source = `$env:CODEX_VERSION_EXECUTABLE; Name = [IO.Path]::GetFileName(`$env:CODEX_VERSION_EXECUTABLE) } }'
+    }
+    `$body = `$resolver.Body.Extent
+    `$source = `$source.Remove(`$body.StartOffset, `$body.EndOffset - `$body.StartOffset).Insert(`$body.StartOffset, `$replacement)
+}
+& ([ScriptBlock]::Create(`$source)) @options
+"@
+    }
     $rollbackCheck = ''
     if ($FaultAfterFirstCommit) {
         # Fault only the isolated in-memory copy; production transaction code stays intact.
@@ -201,20 +225,12 @@ foreach ($versionCase in @(
         }
         Write-Utf8 $fakeCommand $commandText
         if ($env:OS -ne 'Windows_NT') { & chmod +x $fakeCommand; Assert-True ($LASTEXITCODE -eq 0) 'Cannot make fixture executable' }
-        $fixturePath = $env:PATH
-        if ($env:OS -eq 'Windows_NT') {
-            # The installer deliberately prefers any native codex.exe over npm
-            # shims. Isolate this cmd fixture from installed native directories.
-            $fixturePath = (@($env:PATH -split ';' | Where-Object {
-                $_ -and -not [IO.File]::Exists((Join-Path ([Environment]::ExpandEnvironmentVariables($_.Trim('"'))) 'codex.exe'))
-            })) -join ';'
-        }
         $environment = @{
-            PATH = $fakeDirectory + [IO.Path]::PathSeparator + $fixturePath
+            CODEX_VERSION_EXECUTABLE = $fakeCommand
             CODEX_VERSION_MARKER = $marker
             CODEX_TEST_NATIVE = $nativeCodex
         }
-        $output = Invoke-Installer $homeDirectory -EnvironmentOverrides $environment -Failure:$versionCase.Fail
+        $output = Invoke-Installer $homeDirectory -EnvironmentOverrides $environment -Failure:$versionCase.Fail -UseVersionFixture
         Assert-True (Test-Path -LiteralPath $marker) 'Version fixture was not invoked'
         Assert-True (-not $output.Contains('fixture PATH alias warning')) 'Version probe exposed native stderr'
         if ($versionCase.Fail) {
@@ -300,7 +316,9 @@ new = tomllib.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8-sig"))
 for key in ("custom_inline", "custom_date", "custom_multiline", "custom.quoted", "custom_dotted", "custom_array", "profiles", "mcp_servers"):
     assert old[key] == new[key], "Unrelated TOML value changed"
 '@
-    & $Python -c $check $before $base
+    $checkPath = Join-Path $root 'verify-arbitrary-toml.py'
+    Write-Utf8 $checkPath $check
+    & $Python $checkPath $before $base
     Assert-True ($LASTEXITCODE -eq 0) 'Arbitrary TOML semantics changed'
     $merged = [IO.File]::ReadAllText($base)
     foreach ($comment in @('# preserve heading', '# preserve model comment', '# preserve inline comment', '# preserve provider comment', '# preserve profile comment', '# preserve args comment')) {

@@ -48,9 +48,9 @@ corrected to `main` and the failed deployment jobs rerun successfully.
 Optional SSH adds a separate Windows integration gate for capability, service,
 firewall, account, effective authentication policy, actual loopback key login,
 and injected late-failure restoration. That feature's final CI result is recorded
-after the expanded workflow completes. Its disposable runner explicitly disables
-preexisting inbound Allow rules before setup to establish a clean test baseline;
-the production helper never performs that cleanup and refuses broad or ambiguous
+after the expanded workflow completes. Its disposable runner disables only the known broad default OpenSSH rule
+before setup and requires enabled firewall profiles with default inbound Block.
+Other app rules stay intact. The production helper refuses broad or ambiguous
 app/firewall rules requiring operator review.
 
 ## Limits
