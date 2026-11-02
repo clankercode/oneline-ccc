@@ -113,9 +113,7 @@ func (m *model) screenRows() []row {
 	case "Jobs":
 		return m.jobsRows()
 	case "Gateway":
-		text("Gateway A | Endpoint edit is local only")
-		text("Credential: " + m.snapshot.Credential)
-		text("Session-only storage is the default; no key reveal.")
+		return m.gatewayRows()
 	case "Service":
 		text("Optional background observation; setup works without it.")
 		text("Backend: " + m.snapshot.Service.Backend)
@@ -133,8 +131,7 @@ func (m *model) screenRows() []row {
 		text("Utility install/update is unavailable: no verified installer.")
 		text("No broader adapters are promised by this build.")
 	case "Settings":
-		text("Local display preferences | Version " + m.options.Version)
-		text("Verified native configuration: Codex only.")
+		return m.settingsRows()
 	}
 	cs := m.controls()
 	for i, c := range cs {
