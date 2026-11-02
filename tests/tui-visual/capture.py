@@ -33,13 +33,14 @@ EDITORS = ["edit-filter", "edit-model", "edit-budget", "edit-compaction", "edit-
 SCENARIOS = SCREENS + MODALS + EDITORS
 EXTENSIONS = {"more": {"semantic_id": "nav:More", "availability": "production nav:More required; observed at integration base cb936e6",
                        "modal_inventory_after_integration": 8, "variants": ["baseline", "last-item"]}}
-VARIANTS = {"dashboard": ["no-results", "pending-focus", "filter-match", "filter-unicode"], "palette": ["no-results"], "help": ["last-page"],
+VARIANTS = {"models": ["inline-model", "inline-budget", "inline-tier", "advanced-expanded", "advanced-collapsed"], "dashboard": ["no-results", "pending-focus", "filter-match", "filter-unicode"], "palette": ["no-results"], "help": ["last-page"],
             "review": ["last-page", "acknowledged"], "edit-budget": ["invalid"],
             "edit-compaction": ["invalid"], "edit-endpoint": ["invalid"], "more": ["last-item"]}
 GAPS = ["loading and asynchronous progress/cancellation", "discovery loading/error/empty",
         "plan no-op/stale/conflict/failure/apply receipt journeys", "service running/stopped/unknown/conflict/unavailable",
         "SSH/child handoff and terminal return", "key save/persistent/error and draft focus-return journeys",
         "long multiline repair briefs, editor caret/paste/save/cancel permutations",
+        "Models discovery empty/error/busy/reorder/missing/same-ID-different-source capture fixtures and chooser commit/cancel PTY journeys",
         "Windows and macOS terminal evidence", "independent native/reference visual and geometry acceptance",
         "More first/last evidence is bounded to explicitly captured sizes/themes; complete modal matrix remains open",
         "Help intermediate pages and complete compact pagination/geometry matrix remain unverified",

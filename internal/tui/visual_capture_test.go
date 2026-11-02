@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -169,6 +170,25 @@ func visualScene(m *model, scenario, state, variant, theme string, cols, rows in
 		return fmt.Errorf("review plan missing")
 	}
 	switch variant {
+	case "inline-model", "inline-budget", "inline-tier", "advanced-expanded", "advanced-collapsed":
+		if scenario != "models" {
+			return fmt.Errorf("Models variant requires Models")
+		}
+		o, err := visualModels(m)
+		if err != nil {
+			return err
+		}
+		if o["selected_id"] != "codex" {
+			return fmt.Errorf("Models selected identity not reached")
+		}
+		if strings.HasPrefix(variant, "inline-") {
+			field := strings.TrimPrefix(variant, "inline-")
+			if o["chooser"] != field || modelsLeafPanelForCapture(m.focused().id) != field {
+				return fmt.Errorf("Models inline chooser/focus not reached")
+			}
+		} else if o["chooser"] != "" || o["advanced"] != (variant == "advanced-expanded") {
+			return fmt.Errorf("Models Advanced disclosure not reached")
+		}
 	case "baseline":
 		if scenario == "more" {
 			o, err := visualMore(m)
@@ -350,6 +370,71 @@ func visualMore(m *model) (visualMoreState, error) {
 	return out, nil
 }
 
+// Reflection keeps the guarded tool compilable on pre-selector production.
+// Only observed private scalar form state is read; no production state is set.
+func modelsLeafPanelForCapture(id string) string {
+	for _, prefix := range []string{"model:", "budget:", "tier:"} {
+		if strings.HasPrefix(id, prefix) {
+			return strings.TrimSuffix(prefix, ":")
+		}
+	}
+	if strings.HasPrefix(id, "discovered:") {
+		return "model"
+	}
+	return ""
+}
+
+func visualModels(m *model) (map[string]any, error) {
+	forms := reflect.ValueOf(m).Elem().FieldByName("modelsForms")
+	if !forms.IsValid() {
+		return nil, fmt.Errorf("Models inline selectors require candidate production source")
+	}
+	form := forms.MapIndex(reflect.ValueOf(m.selected))
+	chooser, advanced := "", false
+	if form.IsValid() {
+		chooser = form.FieldByName("chooser").String()
+		advanced = form.FieldByName("advanced").Bool()
+	}
+	lines, _, _, _ := m.layout()
+	body := make([]string, 0, len(lines))
+	for _, r := range lines {
+		body = append(body, strings.TrimRight(ansi.Strip(m.bodyLine(r.text)), " "))
+	}
+	return map[string]any{"chooser": chooser, "advanced": advanced, "focused_id": m.focused().id, "focused_row": ansi.Strip(m.controlRow(m.focused(), m.focus).text), "selected_id": m.selected, "draft_sha256": visualDraftHash(m), "model": m.draft().Profile.Model, "budget": m.draft().Profile.Budget, "tier": m.draft().Profile.Tier, "body_rows": body, "header_rows": len(m.shellHeader()), "footer_rows": len(m.shellFooter("")), "padding": strings.TrimRight(ansi.Strip(m.bodyLine("")), " ")}, nil
+}
+
+// Observe the actual composed layout and project client identities through the
+// production clientRows first row. No capture-owned row/layout is rendered.
+func visualDashboardProjection(m *model) map[string]any {
+	lines, _, _, _ := m.layout()
+	body := make([]map[string]any, 0, len(lines))
+	for _, r := range lines {
+		body = append(body, map[string]any{"text": strings.TrimRight(ansi.Strip(m.bodyLine(r.text)), " "), "focused": r.focus, "selected": r.selected})
+	}
+	controls := make([]map[string]any, 0)
+	for i, c := range m.controls() {
+		id, ok := strings.CutPrefix(c.id, "client:")
+		if !ok {
+			continue
+		}
+		for _, client := range m.snapshot.Clients {
+			if client.ID != id {
+				continue
+			}
+			rows := m.clientRows(client, i, m.contentWidth())
+			first := strings.TrimRight(ansi.Strip(m.bodyLine(rows[0].text)), " ")
+			indices := make([]int, 0)
+			for n, r := range body {
+				if r["text"] == first {
+					indices = append(indices, n)
+				}
+			}
+			controls = append(controls, map[string]any{"id": c.id, "full_name": client.Name, "first_row": first, "body_indices": indices, "focused": i == m.focus, "selected": id == m.selected})
+		}
+	}
+	return map[string]any{"kind": "composed-dashboard-body-v1", "body_rows": body, "client_projections": controls, "header_rows": len(m.shellHeader()), "footer_rows": len(m.shellFooter("")), "padding": strings.TrimRight(ansi.Strip(m.bodyLine("")), " ")}
+}
+
 func visualDashboard(m *model) map[string]any {
 	clients := make([]map[string]any, 0, len(m.snapshot.Clients))
 	for _, c := range m.snapshot.Clients {
@@ -381,18 +466,31 @@ func visualDashboard(m *model) map[string]any {
 		}
 		out["unfiltered_production_client_controls"] = inventory
 		out["production_view"] = m.View().Content
+		out["production_projection"] = visualDashboardProjection(m)
 	}
 	return out
 }
 
 type visualSetup struct {
-	Actions     []string
-	Preparation map[string]any
-	Validation  *visualValidation
+	Actions      []string
+	Preparation  map[string]any
+	Validation   *visualValidation
+	ModelsBefore string
 }
 
 func (s *visualSetup) outcomes(m *model) (map[string]any, error) {
 	out := map[string]any{"status": m.status}
+	if s.ModelsBefore != "" {
+		o, err := visualModels(m)
+		if err != nil {
+			return nil, err
+		}
+		if visualDraftHash(m) != s.ModelsBefore {
+			return nil, fmt.Errorf("Models fixture navigation changed draft")
+		}
+		o["before_draft_sha256"] = s.ModelsBefore
+		out["models"] = o
+	}
 	if m.modal == "more" {
 		more, err := visualMore(m)
 		if err != nil {
@@ -817,6 +915,23 @@ func visualPrepare(t *testing.T, scenario, state, variant, theme string, cols, r
 		}
 	}
 	switch variant {
+	case "inline-model", "inline-budget", "inline-tier", "advanced-expanded", "advanced-collapsed":
+		if scenario != "models" {
+			t.Fatal("Models variant requires Models")
+		}
+		setup.ModelsBefore = visualDraftHash(m)
+		if _, err := visualModels(m); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(variant, "inline-") {
+			activateID("field:" + strings.TrimPrefix(variant, "inline-"))
+		} else {
+			activateID("models:advanced")
+			if variant == "advanced-collapsed" {
+				activateID("models:advanced")
+			}
+		}
+		setup.Actions = append(setup.Actions, "prepared-Models-disclosure; direct Update, not PTY journey")
 	case "baseline":
 	case "pending-focus", "filter-match", "filter-unicode":
 		if scenario != "dashboard" {

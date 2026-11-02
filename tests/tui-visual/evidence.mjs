@@ -69,6 +69,48 @@ function moreOutcome(entry,frame,o) {
   if(more.focused_id!==expected.id)throw new Error(`${entry.variant==='baseline'?'First':'Last'} More destination not reached`);
 }
 
+function composedDashboardRows(entry,frame,d) {
+  const p=d.production_projection,body=p?.body_rows,controls=p?.client_projections,clients=entry.fixture.clients;
+  if(p?.kind!=='composed-dashboard-body-v1' || !Array.isArray(body) || !Array.isArray(controls)
+    || !Number.isInteger(p.header_rows) || !Number.isInteger(p.footer_rows) || p.header_rows<1 || p.footer_rows<1
+    || p.header_rows+p.footer_rows>=entry.rows)throw new Error('Prepared composed production body observations missing');
+  const trim=s=>s.replace(/ +$/u,''),visible=frame.text.slice(p.header_rows,entry.rows-p.footer_rows);
+  let previous=-1;
+  for(const line of visible) {
+    if(trim(line)===p.padding)continue;
+    const index=body.findIndex((r,i)=>i>previous && r.text===trim(line));
+    if(index<0)throw new Error('Prepared production body row/order disagrees with actual frame');
+    previous=index;
+  }
+  const matching=d.clients.filter(c=>c.matching).map(c=>`client:${c.id}`);
+  if(JSON.stringify(controls.map(c=>c.id))!==JSON.stringify(matching)
+    || controls.filter(c=>c.focused).length!==1 || !controls.some(c=>c.focused && c.id===d.focused_id))throw new Error('Prepared composed focus must be an actual matching production client');
+  let selectedVisible=false;
+  for(const c of controls) {
+    const client=clients.find(client=>`client:${client.id}`===c.id),state=d.clients.find(state=>`client:${state.id}`===c.id);
+    if(!client || c.full_name!==client.name || c.selected!==(client.id===d.selected_id)
+      || !Array.isArray(c.body_indices))throw new Error('Prepared composed full identity/selection projection differs');
+    const match=/^\s*(>?\s*)\[([ x])\] (.*?) {2,}/u.exec(c.first_row);
+    if(!match || (match[2]==='x')!==state.enabled || match[1].includes('>')!==c.focused)throw new Error('Prepared composed management/focus row differs');
+    const fragment=match[3].replace(/(?:…|\.\.\.)$/u,'');
+    if(!fragment || !client.name.startsWith(fragment))throw new Error('Prepared composed truncated name loses full client identity connection');
+    for(const index of c.body_indices)if(!Number.isInteger(index) || body[index]?.text!==c.first_row
+      || body[index]?.focused!==c.focused || body[index]?.selected!==c.selected)throw new Error('Prepared production client/body mapping disagrees');
+    if(c.focused && (!c.body_indices.length || !visible.some(line=>trim(line)===c.first_row)))throw new Error('Prepared focused production client missing from frame');
+    if(c.selected && visible.some(line=>trim(line)===c.first_row))selectedVisible=true;
+  }
+  if(!selectedVisible) {
+    const selected=clients.find(c=>c.id===d.selected_id);
+    if(!selected || !visible.some(line=>line.includes('Selected: '+selected.name)))throw new Error('Prepared selected identity missing from actual composed frame');
+  }
+  if(d.filter) {
+    const cue=frame.text.find(line=>line.includes('Filter: '));
+    if(!cue)throw new Error('Prepared rendered filter indicator missing');
+    const fragment=cue.slice(cue.indexOf('Filter: ')+8).split(/ {2,}|\/ edit\/clear/u)[0].trim().replace(/(?:…|\.\.\.)$/u,'');
+    if(!fragment || !d.filter.startsWith(fragment))throw new Error('Prepared rendered filter prefix disagrees with actual query');
+  }
+}
+
 function preparedDashboard(entry,frame,o) {
   const p=entry.fixture.preparation,d=o.dashboard,clients=entry.fixture.clients;
   if(entry.scenario!=='dashboard' || p?.kind!=='prepared-fixture-state'
@@ -89,12 +131,14 @@ function preparedDashboard(entry,frame,o) {
   }
   if(o.filter.query!==d.filter || o.filter.matching_clients!==d.clients.filter(c=>c.matching).length)throw new Error('Prepared filter matching count/query mismatch');
 
+  const normalize=s=>s.replace(/\s+/gu,' ').trim(),text=normalize(frame.text.join(' '));
+  if(d.production_projection)composedDashboardRows(entry,frame,d);
+  else {
   const inventory=d.unfiltered_production_client_controls;
   if(!Array.isArray(inventory) || JSON.stringify(inventory.map(c=>c.id))!==JSON.stringify(ids.map(id=>`client:${id}`)))throw new Error('Prepared unfiltered production control inventory missing');
   const controls=d.production_client_controls,matching=d.clients.filter(c=>c.matching).map(c=>`client:${c.id}`);
   if(JSON.stringify(controls.map(c=>c.id))!==JSON.stringify(matching)
     || controls.filter(c=>c.focused).length!==1 || !controls.some(c=>c.id===d.focused_id && c.focused))throw new Error('Prepared focused client must be an actual matching production control');
-  const normalize=s=>s.replace(/\s+/gu,' ').trim(),text=normalize(frame.text.join(' '));
   for(const control of inventory) {
     const id=control.id.slice(7),client=clients.find(c=>c.id===id),state=d.clients.find(c=>c.id===id);
     if(typeof control.label!=='string' || !control.label.includes(client.name)
@@ -111,6 +155,7 @@ function preparedDashboard(entry,frame,o) {
       || control.label.includes(' | Draft')!==state.dirty
       || normalize(control.row_text)!==normalize((control.focused?'> ':'  ')+control.label))throw new Error('Prepared production control management/selection/draft observations disagree');
     if((control.focused || control.selected) && !text.includes(normalize(control.row_text)))throw new Error('Prepared focused/selected production row missing from actual frame');
+  }
   }
   if(entry.variant==='pending-focus') {
     const c=d.clients.find(c=>c.id==='codex'),claude=d.clients.find(c=>c.id==='claude'),before=p.before.clients?.find(c=>c.id==='codex');
@@ -132,7 +177,7 @@ function preparedDashboard(entry,frame,o) {
         return ['id','enabled','baseline_enabled','dirty','draft_sha256','baseline_sha256'].some(key=>before[key]!==after[key]);
       }))throw new Error('Prepared filter-only transition changed selected identity or drafts');
     const selected=/\bSelected: (\S+) \|/.exec(text);
-    if(selected?.[1]!==d.selected_id)throw new Error('Prepared selected identity disagrees with actual frame detail row');
+    if(!d.production_projection && selected?.[1]!==d.selected_id)throw new Error('Prepared selected identity disagrees with actual frame detail row');
     const unicode=entry.variant==='filter-unicode',query=unicode?'Codex 模型 — café · a deliberately long client name':'claude',id=unicode?'codex':'claude';
     if(entry.state!==(unicode?'unicode':'parity') || p.before.filter!=='' || p.query!==query || d.filter!==query
       || JSON.stringify(p.keys)!==JSON.stringify(['/','paste','enter'])
@@ -161,11 +206,33 @@ function semanticOutcomes(entry,frame) {
     if(entry.scenario==='review' && entry.variant==='acknowledged' && (o.review_acknowledged!==true || !text.includes('Complete review acknowledged')))throw new Error('Review acknowledgment outcome missing');
   }
   switch(entry.variant) {
+    case 'inline-model':case 'inline-budget':case 'inline-tier':case 'advanced-expanded':case 'advanced-collapsed': {
+      const m=o.models;
+      if(entry.scenario!=='models' || !m || m.selected_id!=='codex' || m.draft_sha256!==m.before_draft_sha256
+        || !/^[0-9a-f]{64}$/.test(m.draft_sha256))throw new Error('Models selector/identity/unchanged draft observations missing');
+      if(entry.variant.startsWith('inline-')) {
+        const field=entry.variant.slice(7),prefix=field+':',identity={model:m.model,budget:String(m.budget),tier:m.tier || 'Standard'}[field];
+        if(m.focused_id!==prefix+identity || typeof m.focused_row!=='string' || !text.replace(/\s+/gu,' ').includes(m.focused_row.replace(/\s+/gu,' ').trim()) || m.chooser!==field || !(m.focused_id.startsWith(prefix) || field==='model' && m.focused_id.startsWith('discovered:'))
+          || !text.includes({model:'Choose model ID',budget:'Choose context budget',tier:'Choose default request tier'}[field]))throw new Error('Models inline chooser/focus not visible');
+      } else {
+        if(m.focused_id!=='models:advanced' || m.chooser!=='' || m.advanced!==(entry.variant==='advanced-expanded'))throw new Error('Models Advanced disclosure state differs');
+        const marker=m.advanced?'[-]':'[+]';
+        if(!frame.text.some(line=>line.includes('Advanced') && line.includes(marker)))throw new Error('Models Advanced disclosure marker missing from actual frame');
+      }
+      if(!Array.isArray(m.body_rows) || !Number.isInteger(m.header_rows) || !Number.isInteger(m.footer_rows))throw new Error('Models production body observations missing');
+      let previous=-1;
+      for(const line of frame.text.slice(m.header_rows,entry.rows-m.footer_rows)) {
+        const actual=line.trimEnd();if(actual===m.padding)continue;
+        const index=m.body_rows.findIndex((row,i)=>i>previous && row===actual);
+        if(index<0)throw new Error('Models production body differs from captured frame');previous=index;
+      }
+      return 'observed-Models-disclosure-and-frame; prepared setup not PTY-delivered; commit/cancel journeys unproven';
+    }
     case 'baseline':break;
     case 'last-item':if(entry.scenario!=='more')throw new Error('Last item requires More');break;
     case 'pending-focus':case 'filter-match':case 'filter-unicode':
       preparedDashboard(entry,frame,o);
-      return 'observed-prepared-model-and-frame-controls; setup not PTY-delivered'+(entry.variant==='pending-focus'?'':'; active filter query is model-observed only; rendered cue unproven');
+      return 'observed-prepared-model-and-frame-controls; setup not PTY-delivered'+(entry.variant==='pending-focus'?'':o.dashboard.production_projection?'; rendered filter indicator and query prefix frame-bound; full query model-observed where truncated':'; active filter query is model-observed only; rendered cue unproven');
     case 'last-page':if(!['help','review'].includes(entry.scenario))throw new Error('Invalid page variant');break;
     case 'acknowledged':if(entry.scenario!=='review')throw new Error('Invalid acknowledgment variant');break;
     case 'no-results': {

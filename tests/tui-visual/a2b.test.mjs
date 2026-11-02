@@ -18,7 +18,7 @@ for(const [name,d] of Object.entries(data)) {
   test(`genuine ${name} has observed semantic proof`,async()=>{
     const level=(await check(d)).semantic_level;
     if(name.startsWith('more-'))assert.equal(level,'observed-model-and-production-view');
-    else { assert.match(level,/observed-prepared-model-and-frame-controls/);assert.match(level,/setup not PTY/);if(name.startsWith('filter-'))assert.match(level,/query is model-observed only; rendered cue unproven/); }
+    else { assert.match(level,/observed-prepared-model-and-frame-controls/);assert.match(level,/setup not PTY/);if(name.startsWith('filter-'))assert.match(level,d.entry.fixture.semantic_outcomes.dashboard.production_projection?/rendered filter indicator and query prefix frame-bound/:/query is model-observed only; rendered cue unproven/); }
   });
   if(name.startsWith('more-')) {
     test(`${name} rejects first/last relabeling`,async()=>{

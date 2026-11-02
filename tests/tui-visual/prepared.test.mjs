@@ -58,6 +58,19 @@ for(const name of ['filter-match','filter-unicode'])test(`${name}: genuine selec
   const d=await load(paths[name]);
   // Visible selected identity is a separate claim from an active-filter cue.
   const result=await check(d);
-  assert.match(d.frame.text.join(' '),/Selected: codex \|/);
-  assert.match(result.semantic_level,/query is model-observed only/);
+  if(d.entry.fixture.semantic_outcomes.dashboard.production_projection)assert.match(result.semantic_level,/rendered filter indicator and query prefix frame-bound/);
+  else {assert.match(d.frame.text.join(' '),/Selected: codex \|/);assert.match(result.semantic_level,/query is model-observed only/);}
+});
+
+for(const name of ['pending','filter-match','filter-unicode'])test(`${name}: composed body/control identity projection rejects real Pi relabeling`,{skip:!paths[name]},async()=>{
+  const d=await load(paths[name]),o=d.entry.fixture.semantic_outcomes.dashboard,p=o.production_projection;
+  if(!p)return;
+  p.client_projections.find(c=>c.focused).id='client:pi';synchronize(d);
+  await assert.rejects(check(d),/matching|identity|projection|production/i);
+});
+for(const name of ['pending','filter-match','filter-unicode'])test(`${name}: actual body row mapping cannot be reassigned`,{skip:!paths[name]},async()=>{
+  const d=await load(paths[name]),p=d.entry.fixture.semantic_outcomes.dashboard.production_projection;
+  if(!p)return;
+  const c=p.client_projections.find(c=>c.focused);c.body_indices=[p.body_rows.findIndex(row=>row.text!==c.first_row)];synchronize(d);
+  await assert.rejects(check(d),/body|mapping|production/i);
 });
