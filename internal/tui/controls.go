@@ -77,8 +77,12 @@ func (m *model) controls() []control {
 		add("key", "Enter API key (hidden)", "")
 		add("back", "Back", "")
 	case "Service":
-		for _, a := range []string{"status", "start", "stop", "restart", "install", "uninstall"} {
-			add("service:"+a, strings.Title(a)+" monitor", "")
+		actions := []string{"status", "start", "stop", "restart", "install", "uninstall"}
+		if m.snapshot.Service.Status == "Not installed" {
+			actions = []string{"status", "install", "start", "stop", "restart", "uninstall"}
+		}
+		for _, a := range actions {
+			add("service:"+a, strings.Title(a)+" monitor", m.monitorReason(a))
 		}
 		add("back", "Back", "")
 	case "Repair":
@@ -86,7 +90,7 @@ func (m *model) controls() []control {
 		add("repair:export", "Export brief to terminal scrollback", repairReason(m))
 		add("back", "Back", "")
 	case "SSH":
-		add("ssh", "Hand off to SSH command", "")
+		add("ssh", "Hand off to SSH command", m.sshReason())
 		add("back", "Back", "")
 	case "Utilities":
 		add("unavailable", "Install / update unavailable", "No reviewed utility installer or updater is provided by this backend")

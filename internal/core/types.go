@@ -61,6 +61,12 @@ type ModelInfo struct {
 	Source  string
 }
 
+// SSHSetupAvailability reports a handoff prerequisite without preparing a
+// command. Backends opt in explicitly; it is not evidence of remote access.
+type SSHSetupAvailability interface {
+	SSHSetupUnavailableReason() string
+}
+
 // Backend executes explicit foreground actions; rendering never performs writes.
 type Backend interface {
 	Inspect(context.Context) (Snapshot, error)

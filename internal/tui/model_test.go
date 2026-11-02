@@ -18,6 +18,14 @@ type fakeBackend struct {
 	plannedID, appliedID, appliedRevision, serviceAction, commandAction, commandID string
 	planErr, applyErr                                                              error
 	persistent                                                                     bool
+	sshAvailable                                                                   bool
+}
+
+func (f *fakeBackend) SSHSetupUnavailableReason() string {
+	if f.sshAvailable {
+		return ""
+	}
+	return "SSH handoff is unavailable in this fixture"
 }
 
 func fixture() *fakeBackend {

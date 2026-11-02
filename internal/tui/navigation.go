@@ -53,6 +53,14 @@ func (m *model) enter(screen string) {
 		m.restore(p)
 	} else {
 		m.focus, m.scroll = navCount, -1
+		// First entry offers useful work. Revisited controls retain their exact
+		// location, including unavailable entries the operator chose to inspect.
+		for i, c := range m.controls()[navCount:] {
+			if c.reason == "" {
+				m.focus = navCount + i
+				break
+			}
+		}
 	}
 }
 func (m *model) goTo(screen string) {

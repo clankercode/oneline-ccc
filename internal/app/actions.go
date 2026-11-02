@@ -17,13 +17,20 @@ import (
 	"github.com/clankercode/oneline-ccc/internal/core"
 )
 
+func (e *Engine) SSHSetupUnavailableReason() string {
+	if runtime.GOOS != "windows" || e.options.SSHCommand == nil {
+		return "SSH setup handoff is available only through the explicit Windows command"
+	}
+	return ""
+}
+
 func (e *Engine) Command(ctx context.Context, action, id string) (*exec.Cmd, error) {
 	if ctx.Err() != nil {
 		return nil, canceled()
 	}
 	if action == "ssh" {
-		if runtime.GOOS != "windows" || e.options.SSHCommand == nil {
-			return nil, errors.New("SSH setup handoff is available only through the explicit Windows command")
+		if reason := e.SSHSetupUnavailableReason(); reason != "" {
+			return nil, errors.New(reason)
 		}
 		command, err := e.options.SSHCommand(ctx)
 		if ctx.Err() != nil {

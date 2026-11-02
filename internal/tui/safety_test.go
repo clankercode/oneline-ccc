@@ -54,6 +54,8 @@ func TestTrustedTierEvidenceAndCodexOnly(t *testing.T) {
 }
 func TestServiceAndSSHExplicitConfirmation(t *testing.T) {
 	m, f := loaded(t)
+	m.snapshot.Service.Status = "Not installed"
+	f.sshAvailable = true
 	m.goTo("Service")
 	activate(t, m, "service:install")
 	if f.serviceCalls != 0 || m.modalFocus != 0 {
@@ -71,9 +73,22 @@ func TestServiceAndSSHExplicitConfirmation(t *testing.T) {
 	}
 	m.goTo("SSH")
 	activate(t, m, "ssh")
+	if m.modal != "ssh" || m.modalFocus != 0 {
+		t.Fatal("available SSH did not open safe review")
+	}
 	press(m, "esc")
 	if f.commandAction != "" {
 		t.Fatal("SSH invoked without acceptance")
+	}
+	activate(t, m, "ssh")
+	press(m, "tab")
+	cmd := press(m, "enter")
+	if cmd == nil {
+		t.Fatal("confirmed available SSH did not prepare a command")
+	}
+	_ = cmd() // Prepare only; never execute the returned command.
+	if f.commandAction != "ssh" {
+		t.Fatal("confirmed SSH did not reach the backend")
 	}
 }
 func TestPublicViewsNeverExposeRoutesExecutablesOrEscapes(t *testing.T) {

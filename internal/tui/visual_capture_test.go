@@ -879,12 +879,16 @@ func visualPrepare(t *testing.T, scenario, state, variant, theme string, cols, r
 			drain(press(m, "q"))
 		}
 	case "ssh-confirm":
+		// This is an explicit capable fixture, not host-platform access proof.
+		f.sshAvailable = true
 		nav("SSH")
 		activateID("ssh")
 	case "monitor-install":
 		nav("Service")
 		activateID("service:install")
 	case "monitor-uninstall":
+		f.snapshot.Service.Status = "Stopped"
+		m.snapshot.Service = f.snapshot.Service
 		nav("Service")
 		activateID("service:uninstall")
 	case "edit-filter":
