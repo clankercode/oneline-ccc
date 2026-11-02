@@ -102,7 +102,39 @@ fails both Windows interactive resize cases: its expected endpoint caret window
 does not match the new inset viewport. Original-author diagnosis must distinguish
 a stale expectation from input loss or replay defects while retaining full-value,
 masking and restoration checks. Its approval remains open; the earlier green
-run cannot stand in for this integrated gate.
+run cannot stand in for this integrated gate. The same combined run also
+times out in macOS fixture teardown after its failed resize assertion. The
+source-only corrections `2e1ab10` and `5ea1e6a` retain the exact complete-value
+oracle and bound/drain the single-waiter cleanup; independent review and a new
+actual native run remain pending.
+
+## Integrated page, layer and resource checkpoint
+
+All ten page bodies and the overlay/editor compositions have bounded independent
+source approval and are integrated through `0cfc82c`. Availability corrections
+start unavailable SSH/Utilities on Back and enforce inspected absent-monitor
+installation prerequisites on both Service and Dashboard. Models retains chooser
+context in the tiny viewport. Wrapped dialog guidance and complete control labels
+are covered at heights 12–14. None of those source checks is a pixel approval.
+
+The normal/race/vet gates pass at `e070d7d` using one CPU and the reviewed shared
+verification slot. They took 21.011, 128.929 and 0.861 seconds respectively;
+[resource measurements](tui-test-resources.md) explain costs and limits. Real
+terminal fixtures follow the composed UI without removing masking, mutation,
+shutdown or restoration assertions. The Linux no-color oracle still needs the
+explicit sticky transient-exposure check retained in backlog item 19.
+
+The exact hosted candidate `5ea1e6a` in run `41545126866` passed Linux, Windows
+and six static builds. Darwin console normal/race passed; Darwin RPC race cleanup
+still failed. Reviewed resize/teardown corrections therefore have native console
+evidence, while the remaining RPC lifetime diagnostic and production fix stay
+open. The isolated diagnostic candidate must not be confused with a product fix.
+
+Fresh PNG generation remains pending the browser-lifecycle correction. Review
+found that browser leader exit alone can hide a surviving descendant. The More
+evidence predicate also needs to follow real inset menu windows while retaining
+the full destination contract; its fresh ANSI-only and historical-image checks
+support the correction, with independent review and fresh PNG checks still open.
 
 ## Remaining acceptance
 
@@ -110,10 +142,9 @@ run cannot stand in for this integrated gate.
   source/geometry approval and interim image inspection. They, every other
   screen, editor and overlay still need the complete alternating review against
   pinned matching-state mockups on the exact final installed revision.
-- Reviewed capture tooling is integrated; composed multiline prepared-row and
-  new Models fixture association remain under independent review. Two actual
-  minimum-size Models chooser captures lack a visible chooser title and fail
-  the strict predicate; fix presentation instead of accepting the failed frames.
+- Reviewed capture tooling and composed multiline prepared-row/Models fixture
+  association are integrated. The minimum-size Models title fix has source
+  approval; its fresh PNGs remain pending the browser-lifecycle correction.
   Reviewed secondary references are available; compare every native
   surface with those targets. Existing captures retain their original provenance.
 - Wrapped-row Help and useful grouped shortcuts are corrected in source.

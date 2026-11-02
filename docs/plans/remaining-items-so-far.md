@@ -27,7 +27,12 @@ no-color and bounded startup/error corrections are integrated through `418283a`;
 Models field/disclosure source and grouped Help are now integrated through
 `889ace7`, with fresh full Go normal/race/vet gates passing. Their independent
 source approvals and sampled actual-image inspections do not close visual
-acceptance. Current work covers the remaining item 18 bodies/layers, item 20's
+acceptance. All ten page bodies and the modal/editor compositions are now
+integrated through `0cfc82c`, with independent bounded source reviews. Normal,
+race and vet gates pass at `e070d7d` under the reviewed one-CPU/shared-slot
+tooling. Fresh integrated screenshots and visual acceptance remain pending.
+Current work covers the
+remaining item 18 bodies/layers, item 20's
 constructor/platform gaps and item 21's capture-evidence fixes. See the
 [native remediation checkpoint](../verification/native-remediation-progress.md)
 for the exact integrated gates and their limits.
@@ -58,6 +63,7 @@ for shipped capabilities; older plans retain their original planning baselines.
 | [Native verification](../verification/native-foundation.md) | Actual configuration/terminal evidence and remaining production gates |
 | [Native delivery ledger](../ledgers/native-foundation-ledger.md) | Delivered work, decisions, reviews and final gates |
 | [Native remediation checkpoint](../verification/native-remediation-progress.md) | Integrated navigation, queued-input and no-color fixes with independent reviews; visual and platform acceptance still open |
+| [TUI verification resource budget](../verification/tui-test-resources.md) | CPU profile, serialized one-CPU commands, measured gate costs and remaining browser/capture limits |
 | [Native acceptance review](../ledgers/native-foundation-acceptance-rereview.md) | Final process/terminal corrections and the disclosed dependency race |
 | [Client compatibility contract](../compatibility/clients.md) | Client identities, supported Codex contract and adapter expansion gates |
 | [Platform and distribution contract](../compatibility/platforms.md) | OS/architecture support, native proof and release/bootstrap trust |
@@ -404,7 +410,13 @@ improved. A colored header above the old text listing does not meet the target.
   success precedes a newer session conflict; a single-receipt screenshot is
   insufficient. Preserve every history value and its scroll access. A11's first
   compact composer exposed the older success while hiding the latest conflict;
-  its independently requested correction remains open until reviewed.
+  its correction is independently reviewed and integrated at `b7fb2c3`;
+  final integrated pixel/state acceptance remains open.
+  Initial focus on secondary screens must also land on a useful action.
+  Reviewed source now starts unavailable SSH/Utilities on Back and makes an
+  absent monitor's Inspect/install-review route easier to find. Shared backend
+  availability and Dashboard installation prerequisites are covered through
+  `0c48e48`; confirm the actual final frames against the reference.
 - [ ] **Gateway:** group connection, credential storage and verification state;
   align field/value presentation and separate endpoint and hidden-key actions.
   The current summary-sentence/action stack does not match the reference. Keep
@@ -595,6 +607,18 @@ review loops, real keyboard journeys or final installed-revision acceptance.
     after renderer startup; keep callbacks outside terminal-ownership locks so
     synchronous cancellation cannot deadlock. State the observable-check boundary
     accurately rather than promising atomic exclusion of a racing cancellation.
+    The combined native run `41537608013` also hangs in Darwin fixture teardown
+    after a failed compact-editor assertion: its forced-termination fallback
+    waits without a bound. Preserve the single waiter and owned-process policy
+    while making failure cleanup bounded and diagnostic. A corrected resize
+    expectation does not itself prove that this cleanup path works.
+    Follow-up hosted run `41545126866` passes the Windows console and Darwin
+    console's normal/race checks on exact candidate `5ea1e6a`, but Darwin still
+    fails RPC error-response cleanup (`cannot terminate owned Codex configuration
+    processes`). Diagnose the first signal failure and root-wait ownership;
+    the earlier repeated-termination correction does not establish this route's
+    cause. Keep native failures visible and never signal a recycled group or
+    treat a generic permission refusal as successful cleanup.
 
 21. [ ] **Make native visual evidence fail safely and remain reproducible.**
     Discovered 2026-11-03 in independent capture-tool review: valid blank PNGs,
@@ -635,11 +659,18 @@ review loops, real keyboard journeys or final installed-revision acceptance.
     filter cue. The old single-label projection fails against the new layout;
     preserve a strict association with actual production body rows rather than
     relaxing the check. A2c's bounded implementation and five Models variants
-    are awaiting independent review. Synchronized false choice/focus identities
+    are independently reviewed and integrated through `ad6820c`.
+    Synchronized false choice/focus identities
     must also disagree with, and be rejected against, the actual focused row.
-    Two minimum-size chooser captures currently fail and remain production
-    presentation work above; missing discovery fixtures stay explicit gaps.
+    The minimum-size chooser-title source correction is independently reviewed
+    and integrated at `c3801b7`; affected fresh PNGs remain blocked by the browser
+    lifecycle correction. Missing discovery fixtures stay explicit gaps.
     This supports P0 acceptance; artifact integrity alone is not a visual PASS.
+    Keep browser launch, context and page creation bounded too. The tiny Models
+    follow-up produced genuine ANSI with both titles, but Chromium stalled at
+    `browserContext.newPage` and produced no PNG. Preserve those failures and
+    retry only the affected frames after fixing capture lifecycle; an idle held
+    CPU slot must not stall every subsequent worktree indefinitely.
 
 22. [ ] **Reduce unnecessary CPU load from TUI verification.**
     Requested by the operator during the visual campaign. Measure the Go tests,
@@ -661,5 +692,11 @@ review loops, real keyboard journeys or final installed-revision acceptance.
     toolchain and relevant build inputs; an unverifiable cache hit must fail
     closed. Demonstrate the reduction or a measured peak bound, distinguish peak
     concurrency from total work, document the resulting commands and report
-    remaining costs honestly. A16 is implementing profiling and bounded resource
-    controls; completion and independent review remain open.
+    remaining costs honestly. A16's rendering/width profile and resource controls
+    are independently reviewed and integrated at `e070d7d`. The 29 focused
+    controls pass, including wrapper-death/detached-descendant slot lifetime,
+    one-CPU hosts and exact command status after wait/timeouts. Full integrated
+    normal/race/vet pass with one CPU. Browser job cleanup, actual screenshot
+    smoke and the scene-backed evidence controller remain open; review found
+    that leader exit alone cannot certify that browser descendants stopped.
+    See the [measurements and commands](../verification/tui-test-resources.md).

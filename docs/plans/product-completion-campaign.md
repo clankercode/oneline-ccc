@@ -75,7 +75,10 @@ The global gate includes appropriate Go tests/race/vet, pinned native Codex
 journeys, six static builds, browser preview tests and native visual/keyboard
 captures. Run targeted gates per task and complete milestone gates before
 publication. Use disposable roots and scratch under the checkout, with build
-concurrency bounded to two. Never use real client configuration as a fixture.
+concurrency defaulting to one and a shared blocking slot across worktrees.
+Use focused checks while iterating and run the required full gate once for the
+integrated revision; repeat only for a new change, failure or unresolved risk.
+Never use real client configuration as a fixture.
 
 ## Dynamic backlog expansion
 
