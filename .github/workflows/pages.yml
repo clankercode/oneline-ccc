@@ -26,19 +26,17 @@ jobs:
         with:
           python-version: '3.12'
       - name: Test installer
-        shell: ${{ matrix.shell }}
-        run: ./tests/run.ps1
+        shell: pwsh
+        run: |
+          & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/run.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Installer harness failed' }
       - name: Install and load native Codex with a dummy credential
-        shell: ${{ matrix.shell }}
+        shell: pwsh
         env:
           LLMP_API_KEY: fixture-only-not-a-real-credential
         run: |
-          $env:CODEX_HOME = Join-Path $PWD '.cache/native-codex-smoke'
-          ./scripts/setup-codex.ps1 -BaseUrl 'https://fixture.invalid/v1' -Model 'fixture-model' -ContextWindow 500000 -NonInteractive -SkipPersistCredential
-          if ($LASTEXITCODE -ne 0) { throw 'Native Codex installation failed' }
-          $npmPrefix = Join-Path $env:APPDATA 'npm'
-          & (Join-Path $npmPrefix 'codex.cmd') --profile llmp debug prompt-input 'Offline configuration smoke test' | Out-File -Encoding utf8 .cache/native-prompt.json
-          if ($LASTEXITCODE -ne 0) { throw 'Native Codex profile loading failed' }
+          & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/native-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Native Codex smoke test failed' }
 
   deploy:
     name: Deploy verified site
@@ -73,12 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Load the hosted installer as a scriptblock
-        shell: ${{ matrix.shell }}
+        shell: pwsh
         run: |
-          $uri = 'https://clankercode.github.io/oneline-ccc/setup-codex.ps1'
-          $downloaded = Invoke-RestMethod $uri
-          $local = [IO.File]::ReadAllText((Join-Path $PWD 'scripts/setup-codex.ps1'))
-          if ($downloaded.Replace("`r`n", "`n") -cne $local.Replace("`r`n", "`n")) { throw 'Hosted installer differs from checkout' }
-          $env:CODEX_HOME = Join-Path $PWD '.cache/public-download'
-          & ([scriptblock]::Create($downloaded)) -BaseUrl 'https://fixture.invalid/v1' -Model 'fixture-model' -ContextWindow 500000 -DryRun -NonInteractive
-          if (Test-Path $env:CODEX_HOME) { throw 'Dry run modified configuration' }
+          & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/public-download-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Public download smoke test failed' }
