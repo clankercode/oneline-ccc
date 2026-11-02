@@ -113,6 +113,13 @@ func TestJobsCompositionIdleStartsAtUsefulAction(t *testing.T) {
 	if m.status != "No running action" {
 		t.Fatal("unavailable action did not explain itself")
 	}
+	m, _ = loaded(t)
+	m.width, m.height = 40, 12
+	m.receipts = []core.Receipt{{ID: "receipt1", ClientID: "codex", Outcome: "Succeeded", Summary: "Saved reviewed profile"}}
+	m.goTo("Jobs")
+	if !strings.Contains(ansi.Strip(m.View().Content), "Succeeded") {
+		t.Fatal("tiny Jobs hides the latest outcome behind unavailable actions")
+	}
 }
 
 func TestJobsCompositionLongReceiptsRemainReadable(t *testing.T) {

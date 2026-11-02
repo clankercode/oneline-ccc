@@ -143,8 +143,10 @@ func (m *model) reviewRows() []row {
 		pages := m.reviewDocumentPages()
 		page := max(0, min(m.reviewPage, len(pages)-1))
 		rs = append(rs, row{text: m.heading(fmt.Sprintf("Exact changes | Page %d of %d", page+1, len(pages)))})
-		scope := ansi.Truncate(m.public(pages[page][0].scope), max(1, m.width), m.ellipsis())
-		rs = append(rs, row{text: m.note(scope)})
+		if pages[page][0].role != reviewSection {
+			scope := ansi.Truncate(m.public(pages[page][0].scope), max(1, m.width), m.ellipsis())
+			rs = append(rs, row{text: m.note(scope)})
+		}
 		for _, line := range pages[page] {
 			rs = append(rs, row{text: m.reviewLineStyle(line)})
 		}
