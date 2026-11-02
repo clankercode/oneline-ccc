@@ -5,8 +5,9 @@ Configure native Codex to use LLMP by default and through its named profile.
 .DESCRIPTION
 Run locally with -File or invoke a downloaded scriptblock. Supply LLMP_API_KEY
 through the environment for automation; interactive entry uses a secure prompt.
--DryRun prints the proposed managed block without changing files, environment,
-or software. -SkipInstall permits isolated configuration tests on non-Windows.
+-DryRun prints proposed configuration and Explorer defaults without changing files,
+environment, registry or software. -SkipInstall permits isolated configuration tests
+without Explorer changes. -SkipExplorerDefaults preserves Explorer preferences.
 ContextWindow is an operator-selected budget, not a discovered model capability.
 #>
 [CmdletBinding()]
@@ -21,6 +22,7 @@ param(
     [string]$ModelCatalogPath,
     [switch]$NonInteractive,
     [switch]$SkipInstall,
+    [switch]$SkipExplorerDefaults,
     [switch]$DryRun,
     [switch]$InstallNode,
     [switch]$SkipPersistCredential,
@@ -928,6 +930,7 @@ function Get-ManagedLLMPDefaults([string]$Text) {
         $match = [regex]::Match($Text, '(?m)^' + $field + ' = ([0-9]+)\r?$')
         if ($match.Success) { $result[$field] = [long]$match.Groups[1].Value }
     }
+    $result.ultrafast_mode = $Text -match '(?m)^features\.ultrafast_mode = true\r?$'
     if ($result.base_url) { $result.base_url = (Get-ValidatedEndpoint $result.base_url -ExistingProfile).AbsoluteUri.TrimEnd('/') }
     return $result
 }
@@ -963,6 +966,7 @@ function Get-NativeLLMPDefaults([string]$Text, [string]$Executable, [string]$Scr
                 foreach ($field in @('model_context_window', 'model_auto_compact_token_limit')) {
                     if ($null -ne $config.$field) { $result[$field] = [long]$config.$field }
                 }
+                $result.ultrafast_mode = $config.features.ultrafast_mode -eq $true
             }
         }
         $diagnostics.Validated = $true
@@ -1060,6 +1064,68 @@ requires_openai_auth = false
 "@
     $block += "`n" + $endMarker
     return $block
+}
+
+function Set-ExplorerDefaults {
+    if ($SkipExplorerDefaults) {
+        Write-Host 'Explorer defaults skipped (-SkipExplorerDefaults); this step leaves preferences unchanged.'
+        return
+    }
+    if ($DryRun) {
+        Write-Host 'DryRun: normal Windows setup would show file extensions and hidden files (DWORD HideFileExt=0, Hidden=1). No registry access or changes.'
+        if ($SkipInstall) { Write-Host 'This invocation skips Explorer defaults because -SkipInstall selects isolated configuration mode.' }
+        elseif ($env:OS -ne 'Windows_NT') { Write-Host 'This invocation skips Explorer defaults because it is not running on Windows.' }
+        return
+    }
+    if ($SkipInstall) {
+        Write-Host 'Explorer defaults skipped (-SkipInstall isolated configuration mode); preferences unchanged.'
+        return
+    }
+    if ($env:OS -ne 'Windows_NT') {
+        Write-Host 'Explorer defaults skipped on non-Windows; preferences unchanged.'
+        return
+    }
+    # Stay in the original setup account: the optional SSH helper may elevate
+    # under a different user. Only these two HKCU values belong to this step.
+    $subkey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+    $preferences = @(
+        @{Name = 'HideFileExt'; Value = 0},
+        @{Name = 'Hidden'; Value = 1}
+    )
+    try {
+        $changes = @()
+        $readKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($subkey, $false)
+        try {
+            foreach ($preference in $preferences) {
+                $value = $null
+                if ($readKey) { $value = $readKey.GetValue($preference.Name, $null) }
+                if ($null -eq $value -or
+                    $readKey.GetValueKind($preference.Name) -ne [Microsoft.Win32.RegistryValueKind]::DWord -or
+                    $value -ne $preference.Value) {
+                    $changes += $preference
+                }
+            }
+        } finally { if ($readKey) { $readKey.Dispose() } }
+        if ($changes.Count -eq 0) {
+            Write-Host 'Explorer preferences already enable file extensions and hidden files; no registry changes made. Refresh or reopen File Explorer windows if needed.'
+            return
+        }
+        $writeKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($subkey)
+        try {
+            foreach ($preference in $changes) {
+                $writeKey.SetValue($preference.Name, [int]$preference.Value, [Microsoft.Win32.RegistryValueKind]::DWord)
+            }
+            foreach ($preference in $preferences) {
+                if ($writeKey.GetValueKind($preference.Name) -ne [Microsoft.Win32.RegistryValueKind]::DWord -or
+                    $writeKey.GetValue($preference.Name, $null) -ne $preference.Value) {
+                    throw 'Explorer preference verification failed.'
+                }
+            }
+        } finally { if ($writeKey) { $writeKey.Dispose() } }
+        Write-Host 'Explorer preferences now enable file extensions and hidden files. Refresh or reopen File Explorer windows to see changes; Explorer was not restarted.'
+    } catch {
+        Write-Warning 'Codex is configured, but Explorer preferences could not be fully updated. Use File Explorer View options to show file name extensions and hidden items; then refresh or reopen its windows.' -WarningAction Continue
+    }
 }
 
 function Invoke-SshServerSetup {
@@ -1169,6 +1235,9 @@ try {
     if ($sameRoute -and -not $ModelCatalogPath -and -not $PSBoundParameters.ContainsKey('SupportedServiceTiers') -and $tierDefault -cne 'default' -and $SupportedServiceTiers -cnotcontains $tierDefault) {
         $SupportedServiceTiers += $tierDefault
     }
+    if ($sameRoute -and -not $ModelCatalogPath -and -not $PSBoundParameters.ContainsKey('SupportedServiceTiers') -and $defaults.ultrafast_mode -and $SupportedServiceTiers -cnotcontains 'ultrafast') {
+        $SupportedServiceTiers += 'ultrafast'
+    }
     if (-not $NonInteractive -and -not $ServiceTier) {
         Write-Host ('Supported service tiers: ' + ((@('default') + $SupportedServiceTiers | Select-Object -Unique) -join ', ') + '. Fast uses the priority request tier.')
         $ServiceTier = (Read-Host ('Service tier [Enter to keep ' + $tierDefault + ']')).Trim()
@@ -1201,7 +1270,7 @@ try {
     $enableUltrafast = $eligibleRequests -ccontains 'ultrafast'
     $block = New-LLMPConfigBlock $BaseUrl $Model $ContextWindow $AutoCompactTokenLimit $ServiceTier $ModelCatalogPath $enableUltrafast
     $updated = Get-UpdatedConfig $existing $block
-    if ($DryRun) { Write-Output $block; return }
+    if ($DryRun) { Write-Output $block; Set-ExplorerDefaults; return }
     $onWindows = $env:OS -eq 'Windows_NT'
     if (-not $onWindows -and -not $SkipInstall) { throw 'Native install requires Windows. Use -SkipInstall with isolated CODEX_HOME for testing.' }
     if ($ApiKey.Length -eq 0) { throw 'API key must not be empty.' }
@@ -1324,6 +1393,7 @@ try {
     Write-Output 'LLMP is configured as the Codex default. Start with: codex'
     Write-Output 'The named configuration is also available with: codex --profile llmp'
     Write-Output 'The selected context budget does not increase the actual model capacity.'
+    Set-ExplorerDefaults
     $wantSsh = $EnableSshServer
     if ($onWindows -and -not $NonInteractive -and -not $wantSsh) {
         $wantSsh = (Read-Host 'Also set up Windows SSH server for local-subnet access? Administrator approval required [y/N]') -match '^(?i)y(es)?$'

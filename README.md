@@ -87,6 +87,25 @@ approval. If winget is unavailable, install [Node.js LTS](https://nodejs.org/),
 reopen PowerShell, and rerun setup. Existing Codex versions below 0.134.0 must be
 upgraded before using the separate profile.
 
+## Windows Explorer defaults
+
+After successful Codex setup, the installer enables **file name extensions** and
+**hidden files** for the current Windows user, before offering optional SSH setup.
+It sets only the DWORD values `HideFileExt=0` and `Hidden=1` under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced`; protected
+operating-system file visibility (`ShowSuperHidden`) and unrelated preferences
+are unchanged. Already-correct values are left untouched on reruns.
+
+Add `-SkipExplorerDefaults` to keep your Explorer preferences. This step also
+skips non-Windows and `-SkipInstall` configuration-only runs. `-DryRun` describes
+the proposed defaults without accessing or changing the registry. No administrator
+approval or Explorer restart is requested; refresh or reopen existing File Explorer
+windows if needed. A preference failure prints a local warning and leaves Codex
+setup successful. The standalone SSH helper never changes these preferences.
+
+To reverse the preferences later, use File Explorer's View options to hide file
+name extensions or hidden items again.
+
 ## Rerunning setup
 
 Press Enter to keep the current LLMP URL, model, service tier and context budget.
@@ -153,8 +172,9 @@ model, for example:
 That example is not a capability claim. `fast` maps to the Responses API's
 `priority` request tier. Leave the tier unset when eligibility is unknown. Model
 IDs remain unchanged; setup does not invent tier-suffixed models. When you do not
-select a tier, setup explicitly writes `service_tier = 'default'` so an unrelated
-fast-tier preference in your base configuration is not inherited.
+select a tier, setup keeps a saved tier for the same LLMP route and model. Without
+a saved LLMP tier, it writes `service_tier = 'default'`; an unrelated provider's
+fast-tier preference is not inherited. Use `-ServiceTier default` to reset it.
 
 ## Optional Windows SSH server
 

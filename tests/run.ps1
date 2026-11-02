@@ -45,7 +45,20 @@ function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [
     $argumentsPath = Join-Path $root ($identifier + '.json')
     Write-Utf8 $argumentsPath ($arguments | ConvertTo-Json)
     $runner = Join-Path $root ($identifier + '.ps1')
-    $escapedInstaller = $installer.Replace("'", "''")
+    # Every child uses a protected synthetic User-key source, including absent-key
+    # cases and calls using other seams. Never consult this workstation's saved key.
+    $source = [IO.File]::ReadAllText($installer)
+    $tokens = $null; $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
+    $getter = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-LLMPUserApiKey'
+    }, $false))
+    if ($parseErrors.Count -ne 0 -or $getter.Count -ne 1) { throw 'User credential fixture seam changed' }
+    $body = $getter[0].Body.Extent
+    $source = $source.Remove($body.StartOffset, $body.EndOffset - $body.StartOffset).Insert($body.StartOffset, '{ return $env:CODEX_USER_KEY_FIXTURE }')
+    $fixtureInstaller = Join-Path $root ($identifier + '.installer.ps1')
+    Write-Utf8 $fixtureInstaller $source
+    $escapedInstaller = $fixtureInstaller.Replace("'", "''")
     $escapedArguments = $argumentsPath.Replace("'", "''")
     $invocation = "& '$escapedInstaller' @options"
     if ($Bootstrap) { $invocation = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('$escapedInstaller'))) @options" }
@@ -120,7 +133,8 @@ foreach (`$definition in @(`$definitions | Sort-Object { `$_.Body.Extent.StartOf
         $escapedAnswers = $answersPath.Replace("'", "''")
         $invocation = @"
 `$global:fixtureAnswers = New-Object 'System.Collections.Generic.Queue[object]'
-foreach (`$answer in @(Get-Content -Raw -LiteralPath '$escapedAnswers' | ConvertFrom-Json)) { `$global:fixtureAnswers.Enqueue(`$answer) }
+`$answers = Get-Content -Raw -LiteralPath '$escapedAnswers' | ConvertFrom-Json
+foreach (`$answer in `$answers) { `$global:fixtureAnswers.Enqueue(`$answer) }
 function Read-Host([string]`$Prompt, [switch]`$AsSecureString) {
     Write-Host `$Prompt
     if (`$global:fixtureAnswers.Count -eq 0) { throw 'Unexpected interactive prompt' }
@@ -134,16 +148,6 @@ function Read-Host([string]`$Prompt, [switch]`$AsSecureString) {
 "@ + "`n" + $invocation + "`nif (`$global:fixtureAnswers.Count -ne 0) { throw 'Unused interactive answers' }"
     }
     if ($UserKeyFixture) {
-        # Replace only the Windows User-environment seam; no real User key reads/writes.
-        $invocation = @"
-`$source = [IO.File]::ReadAllText('$escapedInstaller')
-`$ast = [Management.Automation.Language.Parser]::ParseInput(`$source, [ref]`$null, [ref]`$null)
-`$getter = @(`$ast.FindAll({ param(`$node) `$node -is [Management.Automation.Language.FunctionDefinitionAst] -and `$node.Name -ceq 'Get-LLMPUserApiKey' }, `$false))
-if (`$getter.Count -ne 1) { throw 'User credential fixture seam changed' }
-`$body = `$getter[0].Body.Extent
-`$source = `$source.Remove(`$body.StartOffset, `$body.EndOffset - `$body.StartOffset).Insert(`$body.StartOffset, '{ return `$env:CODEX_USER_KEY_FIXTURE }')
-& ([ScriptBlock]::Create(`$source)) @options
-"@
         if ($NoCredential) { $invocation += "`nif (`$env:LLMP_API_KEY -cne `$env:CODEX_USER_KEY_FIXTURE) { throw 'Saved User credential was not activated' }" }
         else { $invocation += "`nif (`$env:LLMP_API_KEY -cne 'fixture-only-not-a-real-credential') { throw 'Process credential precedence changed' }" }
     }
@@ -194,7 +198,7 @@ Write-Output `$_.Exception.Message; exit 1 }
     $start.RedirectStandardError = $true
     $start.EnvironmentVariables['CODEX_HOME'] = $HomeDirectory
     $start.EnvironmentVariables['LLMP_API_KEY'] = $dummyKey
-    if ($UserKeyFixture) { $start.EnvironmentVariables['CODEX_USER_KEY_FIXTURE'] = $UserKeyFixture }
+    $start.EnvironmentVariables['CODEX_USER_KEY_FIXTURE'] = $UserKeyFixture
     if ($OfficialCatalogFixture) { $start.EnvironmentVariables['CODEX_OFFICIAL_CATALOG_FIXTURE'] = $OfficialCatalogFixture }
     if ($NoCredential) { $start.EnvironmentVariables['LLMP_API_KEY'] = '' }
     foreach ($name in $EnvironmentOverrides.Keys) { $start.EnvironmentVariables[$name] = [string]$EnvironmentOverrides[$name] }

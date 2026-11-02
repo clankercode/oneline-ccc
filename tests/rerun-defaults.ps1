@@ -51,9 +51,10 @@ env_key = "LLMP_API_KEY"
 requires_openai_auth = false
 [features]
 web_search_request = false
+ultrafast_mode = true
 '@
     Invoke-Installer $directory $keepInputs | Out-Null
-    Verify-Toml $main @{model = 'current-fixture-model'; service_tier = 'priority'; model_context_window = 272000; model_auto_compact_token_limit = 220000; 'model_providers.oneline_llmp.base_url' = 'https://current.fixture.invalid/v1'; 'features.web_search_request' = $false}
+    Verify-Toml $main @{model = 'current-fixture-model'; service_tier = 'priority'; model_context_window = 272000; model_auto_compact_token_limit = 220000; 'model_providers.oneline_llmp.base_url' = 'https://current.fixture.invalid/v1'; 'features.web_search_request' = $false; 'features.ultrafast_mode' = $true}
     Assert-True ([IO.File]::ReadAllText($main).Contains('# retain this unrelated setting')) 'Rerun dropped unrelated comment'
 }
 Test-Case 'rerun defaults: another active provider cannot supply LLMP defaults' {
@@ -116,4 +117,31 @@ Test-Case 'rerun defaults: Enter without any saved key refuses before configurat
     $output = Invoke-Installer $directory @{NonInteractive = $false} -NoCredential -PromptAnswers @('') -Failure
     Assert-True ($output.Contains('API key must not be empty')) 'Missing saved key did not receive the required-key error'
     Assert-True (@(Get-ChildItem $directory -Force).Count -eq 0) 'Missing key changed configuration'
+}
+
+foreach ($selectedTier in @('fast', 'default')) {
+    Test-Case ('rerun defaults: unchanged ' + $selectedTier + ' request retains Ultrafast menu and bytes') {
+        $directory = New-Case ('reuse-menu-' + $selectedTier)
+        Invoke-Installer $directory @{ServiceTier = $selectedTier; SupportedServiceTiers = @('fast', 'ultrafast')} | Out-Null
+        $before = Get-SetupFileBytes $directory
+        Invoke-Installer $directory $keepInputs | Out-Null
+        Assert-SetupFileBytes $directory $before
+    }
+}
+Test-Case 'rerun defaults: Enter retains a saved User key with no process key' {
+    $directory = New-Case 'reuse-user-key-enter'
+    $answers = @('')
+    if ($env:OS -eq 'Windows_NT') { $answers += 'n' }
+    $output = Invoke-Installer $directory @{NonInteractive = $false; ServiceTier = 'default'} -NoCredential -UserKeyFixture 'fixture-saved-user-key' -PromptAnswers $answers
+    Assert-True ($output.Contains('Enter to keep saved key; value hidden')) 'Saved-key prompt was not shown'
+    Verify-Toml (Join-Path $directory 'config.toml')
+}
+Test-Case 'rerun defaults: explicit capability restriction removes saved Ultrafast menu' {
+    $directory = New-Case 'reuse-menu-restriction'
+    Invoke-Installer $directory @{ServiceTier = 'fast'; SupportedServiceTiers = @('fast', 'ultrafast')} | Out-Null
+    $options = @{}; foreach ($name in $keepInputs.Keys) { $options[$name] = $null }
+    $options.SupportedServiceTiers = @('fast')
+    Invoke-Installer $directory $options | Out-Null
+    Verify-Toml (Join-Path $directory 'config.toml') @{service_tier = 'priority'}
+    Assert-True (-not [IO.File]::ReadAllText((Get-Profile $directory)).Contains('features.ultrafast_mode')) 'Explicit restriction kept Ultrafast menu'
 }
