@@ -145,3 +145,24 @@ Test-Case 'rerun defaults: explicit capability restriction removes saved Ultrafa
     Verify-Toml (Join-Path $directory 'config.toml') @{service_tier = 'priority'}
     Assert-True (-not [IO.File]::ReadAllText((Get-Profile $directory)).Contains('features.ultrafast_mode')) 'Explicit restriction kept Ultrafast menu'
 }
+foreach ($changeKind in @('restriction', 'route')) {
+    Test-Case ('rerun defaults: arbitrary main ' + $changeKind + ' keeps Ultrafast disabled on subsequent rerun') {
+        $directory = New-Case ('reuse-native-disable-' + $changeKind)
+        Invoke-Installer $directory @{ServiceTier = 'fast'; SupportedServiceTiers = @('fast', 'ultrafast')} | Out-Null
+        $main = Join-Path $directory 'config.toml'
+        Write-Utf8 $main ("# preserve unrelated comment`n" + [IO.File]::ReadAllText($main))
+        $options = @{}; foreach ($name in $keepInputs.Keys) { $options[$name] = $null }
+        if ($changeKind -eq 'restriction') { $options.SupportedServiceTiers = @('fast') }
+        else { $options.Model = 'changed-fixture-model'; $options.ServiceTier = 'default' }
+        Invoke-Installer $directory $options | Out-Null
+        $expected = @{service_tier = 'priority'}
+        if ($changeKind -eq 'route') { $expected = @{model = 'changed-fixture-model'; service_tier = 'default'} }
+        foreach ($pass in @(1, 2)) {
+            foreach ($path in @($main, (Get-Profile $directory))) {
+                Verify-Toml $path $expected -Absent 'features.ultrafast_mode'
+            }
+            Assert-True ([IO.File]::ReadAllText($main).Contains('# preserve unrelated comment')) 'Disabling capability removed unrelated content'
+            if ($pass -eq 1) { Invoke-Installer $directory $keepInputs | Out-Null }
+        }
+    }
+}

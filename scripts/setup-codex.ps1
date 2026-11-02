@@ -846,9 +846,11 @@ function Get-CodexDefaultConfig(
             if ($Settings.ContainsKey($key)) { $value = $Settings[$key] }
             $edits += @{keyPath = $key; value = $value; mergeStrategy = 'replace'}
         }
-        if ($Settings.features -and $Settings.features.ultrafast_mode -eq $true) {
-            $edits += @{keyPath = 'features.ultrafast_mode'; value = $true; mergeStrategy = 'replace'}
-        }
+        $ultrafastValue = $null
+        if ($Settings.features -and $Settings.features.ultrafast_mode -eq $true) { $ultrafastValue = $true }
+        # This managed flag must also be removed when route/capability changes
+        # disable it, otherwise a later rerun can mistake stale state for evidence.
+        $edits += @{keyPath = 'features.ultrafast_mode'; value = $ultrafastValue; mergeStrategy = 'replace'}
         foreach ($key in @('name', 'base_url', 'wire_api', 'env_key', 'requires_openai_auth')) {
             if (-not $provider.Contains($key) -or $null -eq $provider[$key]) { throw 'Provider missing.' }
             $edits += @{keyPath = ('model_providers.oneline_llmp.' + $key); value = $provider[$key]; mergeStrategy = 'replace'}

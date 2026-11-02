@@ -219,7 +219,7 @@ Write-Output `$_.Exception.Message; exit 1 }
         return $output
     } finally { $process.Dispose() }
 }
-function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfiles) {
+function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfiles, [string[]]$Absent = @()) {
     $values = @{
         model_provider = 'oneline_llmp'; model = 'fixture-model'; service_tier = 'default'
         model_context_window = 353000; model_auto_compact_token_limit = 300000
@@ -230,7 +230,7 @@ function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfi
     }
     foreach ($name in $Extra.Keys) { $values[$name] = $Extra[$name] }
     $expectation = Join-Path $root ([Guid]::NewGuid().ToString('N') + '.expected.json')
-    $absent = @()
+    $absent = @($Absent)
     if (-not $AllowProfiles) { $absent += 'profiles' }
     foreach ($setting in @('model_catalog_json')) {
         if (-not $Extra.ContainsKey($setting)) { $absent += $setting }
