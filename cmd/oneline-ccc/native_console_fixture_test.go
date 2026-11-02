@@ -201,7 +201,7 @@ func TestNativeConsoleFixture(t *testing.T) {
 		t.Fatalf("input/decoder still active after production return: %s", nativeInputStacks(string(stacks[:n])))
 	}
 	wantCode, wantLaunch := 0, int32(0)
-	if scenario == "cancel" {
+	if scenario == "cancel" || scenario == "abort-cleanup" {
 		wantCode = 130
 	}
 	if scenario == "handoff" {
@@ -243,6 +243,77 @@ type nativeConsoleHost interface {
 	cancel() error
 	close() error
 	drained() []byte
+}
+
+// One existing waiter owns process reaping. Drain must be nonblocking and is
+// serviced until that waiter completes or the phase expires. A drain error
+// remains a failure even if process exit subsequently succeeds.
+func nativeConsoleWaitAndDrain(wait <-chan error, limit time.Duration, drain func() error) (bool, error, error) {
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	var drainErr error
+	for {
+		select {
+		case err := <-wait:
+			return true, err, drainErr
+		case <-timer.C:
+			return false, nil, drainErr
+		case <-tick.C:
+			if drain != nil {
+				if err := drain(); err != nil && drainErr == nil {
+					drainErr = err
+				}
+			}
+		}
+	}
+}
+
+func TestNativeConsoleCleanupWait(t *testing.T) {
+	t.Run("unresponsive-waiter", func(t *testing.T) {
+		wait := make(chan error, 1)
+		fallback := time.AfterFunc(500*time.Millisecond, func() { wait <- nil })
+		defer fallback.Stop()
+		start := time.Now()
+		done, _, err := nativeConsoleWaitAndDrain(wait, 20*time.Millisecond, nil)
+		if done || err != nil {
+			t.Fatalf("unresponsive waiter was not bounded: done=%t err=%v elapsed=%s", done, err, time.Since(start))
+		}
+	})
+	t.Run("exit-needs-drain", func(t *testing.T) {
+		wait := make(chan error, 1)
+		fallback := time.AfterFunc(500*time.Millisecond, func() { wait <- errors.New("drain was never serviced") })
+		defer fallback.Stop()
+		drained := false
+		done, exitErr, drainErr := nativeConsoleWaitAndDrain(wait, 100*time.Millisecond, func() error {
+			if !drained {
+				drained = true
+				wait <- nil
+			}
+			return nil
+		})
+		if !done || exitErr != nil || drainErr != nil || !drained {
+			t.Fatalf("wait prevented output drain: done=%t exit=%v drain=%v drained=%t", done, exitErr, drainErr, drained)
+		}
+	})
+	t.Run("drain-error-remains-failure", func(t *testing.T) {
+		wait := make(chan error, 1)
+		fault := errors.New("fixture drain failed")
+		fallback := time.AfterFunc(500*time.Millisecond, func() { wait <- nil })
+		defer fallback.Stop()
+		sent := false
+		done, exitErr, drainErr := nativeConsoleWaitAndDrain(wait, 100*time.Millisecond, func() error {
+			if !sent {
+				sent = true
+				wait <- nil
+			}
+			return fault
+		})
+		if !done || exitErr != nil || !errors.Is(drainErr, fault) {
+			t.Fatalf("drain failure lost on normal exit: done=%t exit=%v drain=%v", done, exitErr, drainErr)
+		}
+	})
 }
 
 type nativeConsoleDriver struct {

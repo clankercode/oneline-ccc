@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -261,29 +262,85 @@ func (p *nativeDarwinPTY) checkModesWhileAlive() error {
 	return p.modeErr
 }
 func (p *nativeDarwinPTY) drained() []byte { return p.tail }
+
+func (p *nativeDarwinPTY) drainOutput() (int, error) {
+	if p.master == nil {
+		return 0, nil
+	}
+	data, err := p.read(0)
+	remaining := max(0, (2<<20)-len(p.tail))
+	p.tail = append(p.tail, data[:min(len(data), remaining)]...)
+	if len(data) > remaining {
+		err = errors.Join(err, errors.New("Darwin final drain exceeded output bound"))
+	}
+	return len(data), err
+}
+
 func (p *nativeDarwinPTY) close() error {
 	if p.closed {
 		return nil
 	}
 	p.closed = true
 	var result error
+	closeFile := func(f **os.File) {
+		if *f != nil {
+			result = errors.Join(result, (*f).Close())
+			*f = nil
+		}
+	}
 	if p.wait != nil && !p.done {
 		// A suspended TUI's synthetic command has its own foreground group.
 		// Kill that owned group first and let runProcess wait/reap it on SIGTERM.
 		result = errors.Join(result, p.killSyntheticGroup())
-		_ = p.cmd.Process.Signal(syscall.SIGTERM)
-		select {
-		case p.exitErr = <-p.wait:
-			p.done = true
-		case <-time.After(5 * time.Second):
-			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-			// Exactly the same waiter, never a second cmd.Wait.
-			p.exitErr = <-p.wait
-			p.done = true
+		if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			result = errors.Join(result, fmt.Errorf("signal owned Darwin fixture: %w", err))
+		}
+		drain := func() error {
+			// Production may have returned and be waiting for the independent
+			// parent termios check. Service that checkpoint during failure cleanup.
+			var modeErr error
+			if !p.modeChecked && p.ready != nil {
+				modeErr = p.checkModesWhileAlive()
+			}
+			_, readErr := p.drainOutput()
+			if errors.Is(readErr, io.EOF) {
+				readErr = nil
+			}
+			return errors.Join(modeErr, readErr)
+		}
+		waitPhase := func(limit time.Duration, read func() error) {
+			var drainErr error
+			p.done, p.exitErr, drainErr = nativeConsoleWaitAndDrain(p.wait, limit, read)
+			result = errors.Join(result, drainErr)
+		}
+		// Darwin can drain a controlling tty during exit. Keep consuming the
+		// master instead of waiting for an exit that may itself require reads.
+		waitPhase(5*time.Second, drain)
+		if !p.done {
 			result = errors.Join(result, errors.New("Darwin fixture required forced termination"))
+			// Target the owned, unreaped root process, not a numeric group that
+			// might no longer contain it. Synthetic groups are checked above.
+			if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				result = errors.Join(result, fmt.Errorf("kill owned Darwin fixture: %w", err))
+			}
+			waitPhase(2*time.Second, drain)
+		}
+		if !p.done {
+			result = errors.Join(result, errors.New("Darwin fixture did not reap after SIGKILL; hanging up private PTY"))
+			// Break any remaining private tty/checkpoint dependency before the
+			// last bounded wait. These descriptors cannot refer to operator IO.
+			closeFile(&p.release)
+			closeFile(&p.master)
+			waitPhase(2*time.Second, nil)
+			if !p.done {
+				result = errors.Join(result, errors.New("Darwin fixture waiter still pending after private PTY hangup"))
+			}
 		}
 	} else if p.done && p.exitErr != nil {
 		result = errors.Join(result, p.killSyntheticGroup())
+	}
+	if p.done {
+		result = errors.Join(result, p.exitErr)
 	}
 	if p.done && p.wait != nil && p.exitErr == nil && !p.modeChecked {
 		result = errors.Join(result, errors.New("fixture exited without independent live mode check"))
@@ -291,16 +348,11 @@ func (p *nativeDarwinPTY) close() error {
 	result = errors.Join(result, p.modeErr)
 	if p.master != nil && p.done {
 		for {
-			data, err := p.read(0)
-			p.tail = append(p.tail, data...)
+			n, err := p.drainOutput()
 			if err != nil && !errors.Is(err, io.EOF) {
 				result = errors.Join(result, err)
 			}
-			if err != nil || len(data) == 0 {
-				break
-			}
-			if len(p.tail) > 2<<20 {
-				result = errors.Join(result, errors.New("Darwin final drain exceeded output bound"))
+			if err != nil || n == 0 {
 				break
 			}
 		}
@@ -309,16 +361,11 @@ func (p *nativeDarwinPTY) close() error {
 		// Session-leader exit revokes the Darwin tty (XNU kern_exit.c,
 		// VNOP_REVOKE). Inspecting/repairing this descriptor now is invalid;
 		// the independent parent inspection already ran before release above.
-		result = errors.Join(result, p.slave.Close())
+		closeFile(&p.slave)
 	}
-	for _, f := range []*os.File{p.ready, p.release} {
-		if f != nil {
-			result = errors.Join(result, f.Close())
-		}
-	}
-	if p.master != nil {
-		result = errors.Join(result, p.master.Close())
-	}
+	closeFile(&p.ready)
+	closeFile(&p.release)
+	closeFile(&p.master)
 	return result
 }
 
@@ -391,5 +438,30 @@ func TestNativeConsoleDarwinPTY(t *testing.T) {
 			host := startNativeDarwinPTY(t, root, tc.scenario, tc.noColor)
 			nativeConsoleJourney(t, nativeConsoleDriverFor(t, host, root), tc.scenario)
 		})
+	}
+}
+
+func TestNativeConsoleDarwinAbortCleanup(t *testing.T) {
+	root := nativeConsoleRoot(t)
+	host := startNativeDarwinPTY(t, root, "abort-cleanup", "1")
+	p := nativeConsoleDriverFor(t, host, root)
+	p.await(t, 0, "Inspected local settings; drafts retained")
+	p.await(t, p.send(t, "?"), "Shortcut help | Page")
+	// Exercise the same close called by an assertion's t.Cleanup, with the
+	// production reader/renderer still active. Do not manufacture a failed test.
+	started := time.Now()
+	err := host.close()
+	if err != nil || !host.done || !host.modeChecked || host.exitErr != nil {
+		t.Fatalf("abort cleanup did not join/restoration-check: elapsed=%s done=%t checked=%t exit=%v cleanup=%v", time.Since(started), host.done, host.modeChecked, host.exitErr, err)
+	}
+	if err := p.consumeDrain(); err != nil {
+		t.Fatal(err)
+	}
+	diag, err := os.ReadFile(filepath.Join(root, "diagnostics"))
+	if err != nil || !strings.Contains(string(diag), "A7_COMPLETE code=130 engines=1 inspect=1 forbidden=0 launches=0 modes=restored input=joined") {
+		t.Fatalf("abort cleanup lost production completion: read=%v diagnostics=%s", err, diag)
+	}
+	if err := host.close(); err != nil {
+		t.Fatal("second close:", err)
 	}
 }
