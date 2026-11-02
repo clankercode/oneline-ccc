@@ -58,4 +58,32 @@ export function registerIMEJourneys(journey) {
       } else await input.press('Escape');
     }
   });
+  for (const action of ['review', 'dashboard', 'manage']) {
+    journey(`IME active composition commits with one pointer activation: ${action}`, async page => {
+      await page.locator('[data-client="codex"]').press('Enter');
+      await page.locator('#model').fill('');
+      await page.locator('#model').focus();
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Input.imeSetComposition', { text: '日本', selectionStart: 2, selectionEnd: 2 });
+      const target = action === 'manage' ? '#editor-enabled' : `#screen [data-command="${action}"]`;
+      await page.locator(target).click();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      if (action === 'review') {
+        assert.equal(await page.locator('#screen h2').innerText(), 'Review changes');
+        assert.match(await page.locator('.review-item').innerText(), /日本/);
+        assert.equal(await page.locator('[data-command="back"]').evaluate(el => el === document.activeElement), true);
+      } else if (action === 'dashboard') {
+        assert.equal(await page.locator('#screen h2').innerText(), 'Your clients');
+        assert.equal(await page.locator('[data-client="codex"]').evaluate(el => el === document.activeElement), true);
+        await page.locator('[data-client="codex"]').press('Enter');
+        assert.equal(await page.locator('#model').inputValue(), '日本');
+      } else {
+        assert.equal(await page.locator('#editor-enabled').isChecked(), false);
+        assert.equal(await page.locator('#editor-enabled').evaluate(el => el === document.activeElement), true);
+        await page.locator('#editor-enabled').press('Space');
+        assert.equal(await page.locator('#model').inputValue(), '日本');
+      }
+      await cdp.detach();
+    });
+  }
 }

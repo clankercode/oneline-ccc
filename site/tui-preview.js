@@ -9,6 +9,7 @@ const consoleView = document.getElementById('console');
 const announcement = document.getElementById('announcement');
 let activeScreen = 'dashboard', filter = '', reviewIds = null, reviewSnapshot;
 let composing = false, compositionInput = null, compositionClient;
+let pointerActive = false, renderPending = false, pendingFocus, pointerSequence = 0;
 const commands = () => commandsFor(state, activeScreen, filter, reviewIds);
 const dialogs = createDialogs(consoleView, commands, execute);
 const focus = selector => (screen.querySelector(selector) || screen.querySelector('h2')).focus();
@@ -17,6 +18,9 @@ function announce(message = state.notice) {
   document.getElementById('console-status').textContent = message || 'Preview only · no live operations';
 }
 function render(focusSelector) {
+  // A blur/change may commit IME text between pointerdown and click. Keep the
+  // pressed node alive through click and checkbox change before replacing it.
+  if (pointerActive) { renderPending = true; pendingFocus = focusSelector || pendingFocus; return; }
   const old = document.activeElement;
   const field = old?.id, start = old?.selectionStart, end = old?.selectionEnd;
   const anchor = ['command', 'client', 'enable', 'screen'].find(key => old?.dataset?.[key]);
@@ -37,7 +41,8 @@ function render(focusSelector) {
 }
 function openScreen(name) {
   activeScreen = name; render(name === 'review' ? '[data-command="back"]' : 'h2');
-  announce(`${screen.querySelector('h2').textContent}. Drafts kept. Preview only.`);
+  const names = { dashboard: 'Your clients', models: `${clientById(state, state.selected).name} / settings`, review: 'Review changes', jobs: 'Jobs & receipts' };
+  announce(`${names[name]}. Drafts kept. Preview only.`);
 }
 function choose(id, detail = false) {
   selectClient(state, id);
@@ -158,4 +163,20 @@ consoleView.addEventListener('keydown', event => {
 });
 document.getElementById('theme').addEventListener('change', event => { document.documentElement.dataset.theme = event.target.value; });
 document.getElementById('layout').addEventListener('change', event => { consoleView.dataset.layout = event.target.value; });
+document.addEventListener('pointerdown', () => { pointerActive = !!compositionInput; pointerSequence += 1; }, true);
+function endPointer() {
+  const sequence = pointerSequence;
+  setTimeout(() => {
+    if (sequence !== pointerSequence) return;
+    pointerActive = false;
+    if (renderPending) {
+      const target = pendingFocus;
+      renderPending = false; pendingFocus = undefined;
+      render(target);
+    }
+  }, 0);
+}
+document.addEventListener('pointerup', endPointer, true);
+document.addEventListener('pointercancel', endPointer, true);
+window.addEventListener('blur', endPointer);
 render();
