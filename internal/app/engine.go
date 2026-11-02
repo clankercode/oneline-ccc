@@ -39,6 +39,10 @@ type serviceManager interface {
 	Action(context.Context, string) (core.ServiceInfo, error)
 	Observe(context.Context, bool) error
 }
+type transactionStore interface {
+	Apply(context.Context, []configtxn.Write) (configtxn.Result, error)
+	Recover(context.Context) ([]configtxn.Result, error)
+}
 type dependencies struct {
 	adapter     adapter
 	program     func() codexrpc.Program
@@ -58,7 +62,7 @@ type Engine struct {
 	pending  map[string]*review
 	epoch    map[string]uint64
 	mutating chan struct{}
-	store    *configtxn.Store
+	store    transactionStore
 }
 
 var _ core.Backend = (*Engine)(nil)
@@ -179,6 +183,9 @@ func (e *Engine) Inspect(ctx context.Context) (core.Snapshot, error) {
 	}
 	for i := range out.Clients {
 		out.Clients[i].Managed = s.Managed[out.Clients[i].ID]
+		if out.Clients[i].ID == "codex" {
+			out.Clients[i].Profile = restoreAttestation(out.Clients[i].Profile, out.Clients[i].Version, out.Clients[i].Managed, s.Attestations["codex"])
+		}
 	}
 	out.Receipts = append([]core.Receipt{}, s.Receipts...)
 	return out, nil
@@ -194,6 +201,8 @@ func (e *Engine) inspectCodex(ctx context.Context) (core.Client, error) {
 	c.ID = "codex"
 	c.Name = "Codex"
 	c.Managed = false
+	c.Profile.CapacityConfirmed = false
+	c.Profile.TiersConfirmed = false
 	if len(c.Version) > 128 || !versionPattern.MatchString(c.Version) {
 		c.Version = ""
 	}

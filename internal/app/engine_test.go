@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -44,7 +45,10 @@ func (a *fixtureAdapter) Prepare(ctx context.Context, p core.Profile, catalog []
 			return nil, err
 		}
 	}
-	w.Data = []byte("fixture-reviewed-model=" + p.Model + "\n")
+	w.Data = []byte("fixture-reviewed-model = " + strconv.Quote(p.Model) + "\n")
+	if p.Catalog != "" {
+		w.Data = append(w.Data, []byte("model_catalog_json = "+strconv.Quote(p.Catalog)+"\n")...)
+	}
 	a.writes = []configtxn.Write{w}
 	return a.writes, nil
 }
@@ -83,15 +87,18 @@ func profile() core.Profile {
 }
 func fixture(t *testing.T, absent bool) (*Engine, *fixtureAdapter, *fixtureCredentials, Options) {
 	t.Helper()
-	root := t.TempDir()
+	root := filepath.Join(t.TempDir(), "private")
+	if err := configtxn.PrivateDir(root); err != nil {
+		t.Fatal(err)
+	}
 	home := filepath.Join(root, "codex")
 	if !absent {
-		if err := os.Mkdir(home, 0700); err != nil {
+		if err := configtxn.PrivateDir(home); err != nil {
 			t.Fatal(err)
 		}
 	}
 	program := filepath.Join(root, "fixture-native")
-	if err := os.WriteFile(program, []byte("fixture executable identity"), 0700); err != nil {
+	if err := configtxn.PrivateFile(program, []byte("fixture executable identity")); err != nil {
 		t.Fatal(err)
 	}
 	o := Options{StateRoot: filepath.Join(root, "state"), CodexHome: home, CodexExecutable: program, Executable: program}
@@ -127,7 +134,7 @@ func TestReviewFreezesBytesAndCommitsStateWithClient(t *testing.T) {
 		t.Fatalf("apply: %#v %v", r, err)
 	}
 	got, _ := os.ReadFile(filepath.Join(o.CodexHome, "config.toml"))
-	if !bytes.Contains(got, []byte("fixture-reviewed-model=fixture-model")) {
+	if !bytes.Contains(got, []byte(`fixture-reviewed-model = "fixture-model"`)) {
 		t.Fatal("reviewed bytes were not frozen")
 	}
 	s, err := e.Inspect(context.Background())
@@ -149,7 +156,7 @@ func TestNewPlansInvalidateOlderAndForeignDriftRefuses(t *testing.T) {
 	if _, err := e.Apply(context.Background(), first.ID, first.Revision); err == nil {
 		t.Fatal("stale review accepted")
 	}
-	if err := os.WriteFile(filepath.Join(o.CodexHome, "config.toml"), []byte("foreign"), 0600); err != nil {
+	if err := configtxn.PrivateFile(filepath.Join(o.CodexHome, "config.toml"), []byte("foreign")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.Apply(context.Background(), second.ID, second.Revision); err == nil {
@@ -176,7 +183,7 @@ func TestAbsentClientRootCreatedOnlyByExplicitApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(o.CodexHome)
-	if err != nil || info.Mode().Perm() != 0700 {
+	if err != nil || !info.IsDir() || configtxn.PrivateDir(o.CodexHome) != nil {
 		t.Fatal("Apply did not create private client root")
 	}
 }
@@ -271,16 +278,23 @@ func TestJSONAndDiagnosticsDoNotExposePrivateInputs(t *testing.T) {
 			t.Fatal("public JSON leaked private input")
 		}
 	}
-	path, err := e.RepairBrief(context.Background())
+	brief, err := e.RepairBrief(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if !json.Valid([]byte(brief)) || !strings.Contains(brief, `"snapshot"`) {
+		t.Fatal("repair brief must return redacted JSON content for preview and export")
+	}
+	paths, err := filepath.Glob(filepath.Join(e.options.StateRoot, "diagnostics", "brief-*.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatal("private diagnostic export missing")
+	}
+	export, err := configtxn.Read(paths[0])
+	if err != nil || !export.Existed || export.Mode.Perm() != 0600 {
 		t.Fatal("diagnostic not private")
 	}
-	data, _ := os.ReadFile(path)
-	if bytes.Contains(data, []byte("fixture.invalid")) || bytes.Contains(data, []byte("fixture-native")) {
+	data, _ := os.ReadFile(paths[0])
+	if string(data) != brief || bytes.Contains(data, []byte("fixture.invalid")) || bytes.Contains(data, []byte("fixture-native")) {
 		t.Fatal("diagnostic leaked")
 	}
 }

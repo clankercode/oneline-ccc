@@ -16,12 +16,14 @@ const stateLimit = 64 << 10
 const receiptLimit = 32
 
 type state struct {
-	Version  int             `json:"version"`
-	Managed  map[string]bool `json:"managed"`
-	Receipts []core.Receipt  `json:"receipts"`
+	Version      int                    `json:"version"`
+	Managed      map[string]bool        `json:"managed"`
+	Receipts     []core.Receipt         `json:"receipts"`
+	Attestations map[string]attestation `json:"attestations,omitempty"`
 }
 
 var receiptID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var attestationDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func (e *Engine) readState() (state, configtxn.Write, error) {
 	bad := errors.New("application settings are invalid or unsafe; preserve them and reconcile before continuing")
@@ -32,16 +34,39 @@ func (e *Engine) readState() (state, configtxn.Write, error) {
 	if err != nil {
 		return state{}, configtxn.Write{}, bad
 	}
-	s := state{Version: 1, Managed: map[string]bool{}, Receipts: []core.Receipt{}}
+	s := state{Version: 1, Managed: map[string]bool{}, Receipts: []core.Receipt{}, Attestations: map[string]attestation{}}
 	if !w.Existed {
 		return s, w, nil
 	}
 	if w.Mode.Perm() != 0600 || len(w.Before) > stateLimit {
 		return state{}, configtxn.Write{}, bad
 	}
-	fields, err := object(w.Before, "version", "managed", "receipts")
-	if err != nil || len(fields) != 3 || json.Unmarshal(fields["version"], &s.Version) != nil || s.Version != 1 {
+	fields, err := object(w.Before, "version", "managed", "receipts", "attestations")
+	if err != nil || json.Unmarshal(fields["version"], &s.Version) != nil || s.Version != 1 {
 		return state{}, configtxn.Write{}, bad
+	}
+	if raw, ok := fields["attestations"]; ok {
+		entries, err := object(raw, "codex")
+		if err != nil {
+			return state{}, configtxn.Write{}, bad
+		}
+		for id, raw := range entries {
+			digests, err := object(raw, "capacity", "tiers")
+			if err != nil || len(digests) == 0 {
+				return state{}, configtxn.Write{}, bad
+			}
+			for _, value := range digests {
+				var digest string
+				if json.Unmarshal(value, &digest) != nil || !attestationDigest.MatchString(digest) {
+					return state{}, configtxn.Write{}, bad
+				}
+			}
+			var a attestation
+			if json.Unmarshal(raw, &a) != nil {
+				return state{}, configtxn.Write{}, bad
+			}
+			s.Attestations[id] = a
+		}
 	}
 	flags, err := object(fields["managed"], "codex", "claude", "pi", "opencode", "grokbuild", "hermes")
 	if err != nil {

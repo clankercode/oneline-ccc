@@ -14,7 +14,7 @@ import (
 func TestLaunchRefusesConfigDriftAcrossInspection(t *testing.T) {
 	e, a, _, o := fixture(t, false)
 	path := filepath.Join(o.CodexHome, "config.toml")
-	if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+	if err := configtxn.PrivateFile(path, []byte("original")); err != nil {
 		t.Fatal(err)
 	}
 	a.inspect = func(context.Context) (core.Client, error) {
@@ -63,10 +63,10 @@ func TestMonitorDelegatesOnlyExplicitActionsAndRedactsDetail(t *testing.T) {
 func TestPlanningRechecksStateAfterStagingWait(t *testing.T) {
 	e, a, _, o := fixture(t, false)
 	a.prepare = func(context.Context, core.Profile, []byte) ([]configtxn.Write, error) {
-		if err := os.WriteFile(filepath.Join(o.StateRoot, "settings.json"), []byte("invalid fixture state"), 0600); err != nil {
+		if err := configtxn.PrivateFile(filepath.Join(o.StateRoot, "settings.json"), []byte("invalid fixture state")); err != nil {
 			t.Fatal(err)
 		}
-		return []configtxn.Write{{Path: filepath.Join(o.CodexHome, "config.toml"), Mode: 0600, Data: []byte("fixture")}}, nil
+		return []configtxn.Write{{Path: filepath.Join(o.CodexHome, "config.toml"), Mode: 0600, Data: []byte("fixture = true\n")}}, nil
 	}
 	if p, err := e.Plan(context.Background(), "codex", core.Desired{Enabled: true, Profile: profile()}); err == nil || p.ID != "" {
 		t.Fatal("plan published after protected state became invalid")

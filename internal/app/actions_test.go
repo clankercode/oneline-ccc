@@ -109,7 +109,7 @@ func TestTierCatalogRequiresExactAttestedEligibleRoute(t *testing.T) {
 		if string(data) != "fixture-complete-catalog" {
 			t.Fatal("catalog not passed to native adapter")
 		}
-		return []configtxn.Write{{Path: filepath.Join(a.home, "config.toml"), Mode: 0600, Data: []byte("fixture")}}, nil
+		return []configtxn.Write{{Path: filepath.Join(a.home, "config.toml"), Mode: 0600, Data: []byte("fixture = true\n")}}, nil
 	}
 	p := profile()
 	p.Model = "gpt-6.1-sol"
@@ -140,7 +140,7 @@ func TestOverlappingPlansCannotResurrectOlderReview(t *testing.T) {
 				return nil, ctx.Err()
 			}
 		}
-		return []configtxn.Write{{Path: filepath.Join(a.home, "config.toml"), Mode: 0600, Data: []byte(p.Model)}}, nil
+		return []configtxn.Write{{Path: filepath.Join(a.home, "config.toml"), Mode: 0600, Data: []byte("fixture = true\n")}}, nil
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -162,7 +162,7 @@ func TestCanceledStagingDoesNotPublishReview(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.prepare = func(context.Context, core.Profile, []byte) ([]configtxn.Write, error) {
 		cancel()
-		return []configtxn.Write{{Path: filepath.Join(o.CodexHome, "config.toml"), Mode: 0600, Data: []byte("fixture")}}, nil
+		return []configtxn.Write{{Path: filepath.Join(o.CodexHome, "config.toml"), Mode: 0600, Data: []byte("fixture = true\n")}}, nil
 	}
 	if p, err := e.Plan(ctx, "codex", core.Desired{Enabled: true, Profile: profile()}); err == nil || p.ID != "" {
 		t.Fatal("canceled stage published")
@@ -172,12 +172,21 @@ func TestCanceledStagingDoesNotPublishReview(t *testing.T) {
 	}
 }
 func TestInvalidStateFailsClosedAndNeverExposesRawContent(t *testing.T) {
-	cases := []string{`{"version":2,"managed":{},"receipts":[]}`, `{"version":1,"version":1,"managed":{},"receipts":[]}`, `{"Version":1,"managed":{},"receipts":[]}`, `{"version":1,"managed":{"codex":null},"receipts":[]}`, `{"version":1,"managed":{},"receipts":[],"endpoint":"fixture-secret"}`, `{"version":1,"managed":{},"receipts":null}`}
+	cases := []string{`{"version":2,"managed":{},"receipts":[]}`, `{"version":1,"version":1,"managed":{},"receipts":[]}`, `{"Version":1,"managed":{},"receipts":[]}`, `{"version":1,"managed":{"codex":null},"receipts":[]}`, `{"version":1,"managed":{},"receipts":[],"endpoint":"fixture-secret"}`, `{"version":1,"managed":{},"receipts":null}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":null}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":{"claude":{"capacity":"fixture-secret"}}}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":{"codex":{}}}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":{"codex":{"capacity":null}}}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":{"codex":{"capacity":"fixture-secret"}}}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":{"codex":{"Capacity":"` + strings.Repeat("a", 64) + `"}}}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":{"codex":{"capacity":"` + strings.Repeat("a", 64) + `","capacity":"` + strings.Repeat("b", 64) + `"}}}`,
+		`{"version":1,"managed":{},"receipts":[],"attestations":{"codex":{"capacity":"` + strings.Repeat("A", 64) + `"}}}`,
+	}
 	for _, data := range cases {
 		t.Run(data, func(t *testing.T) {
 			e, _, _, o := fixture(t, false)
 			path := filepath.Join(o.StateRoot, "settings.json")
-			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			if err := configtxn.PrivateFile(path, []byte(data)); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := e.Inspect(context.Background()); err == nil || strings.Contains(err.Error(), "fixture-secret") {

@@ -76,15 +76,10 @@ func (e *Engine) Plan(ctx context.Context, id string, desired core.Desired) (cor
 	r := &review{Epoch: epoch, State: cloneWrite(stateWrite)}
 	original := desired
 	var before core.Profile
+	var nextEvidence attestation
 	if desired.Enabled {
 		if id != "codex" {
 			return core.Plan{}, errors.New("this client has detection only; a verified native adapter is required")
-		}
-		if err = core.ValidateProfile(desired.Profile); err != nil {
-			return core.Plan{}, err
-		}
-		if e.deps.childEnv(desired.Profile.EnvKey, "fixture-reference-validation") == nil {
-			return core.Plan{}, errors.New("choose a safe credential environment reference")
 		}
 		desired.Profile.Tier = canonicalTier(desired.Profile.Tier)
 		c, inspectErr := e.inspectCodex(ctx)
@@ -95,6 +90,17 @@ func (e *Engine) Plan(ctx context.Context, id string, desired core.Desired) (cor
 			return core.Plan{}, errors.New("configuration changes require verified native Codex 0.166.0")
 		}
 		before = c.Profile
+		proven := restoreAttestation(c.Profile, c.Version, s.Managed[id], s.Attestations[id])
+		if fingerprint(desired.Profile, c.Version, "profile-v1") == fingerprint(c.Profile, c.Version, "profile-v1") {
+			desired.Profile.CapacityConfirmed = desired.Profile.CapacityConfirmed || proven.CapacityConfirmed
+			desired.Profile.TiersConfirmed = desired.Profile.TiersConfirmed || proven.TiersConfirmed
+		}
+		if err = core.ValidateProfile(desired.Profile); err != nil {
+			return core.Plan{}, err
+		}
+		if len(e.deps.childEnv(desired.Profile.EnvKey, "fixture-reference-validation")) == 0 {
+			return core.Plan{}, errors.New("choose a safe credential environment reference")
+		}
 		r.Program = copyProgram(e.deps.program())
 		r.Identity, err = e.deps.identity(r.Program)
 		if err != nil {
@@ -138,6 +144,19 @@ func (e *Engine) Plan(ctx context.Context, id string, desired core.Desired) (cor
 			w.Path = path
 			r.Writes = append(r.Writes, cloneWrite(w))
 		}
+		desired.Profile.Catalog, err = stagedCatalog(e.options.CodexHome, r.Writes)
+		if err != nil {
+			return core.Plan{}, err
+		}
+		// Inherited evidence is valid only for the final native values too: a
+		// newly generated catalog path requires fresh explicit confirmation.
+		proven = restoreAttestation(desired.Profile, c.Version, s.Managed[id], s.Attestations[id])
+		desired.Profile.CapacityConfirmed = original.Profile.CapacityConfirmed || proven.CapacityConfirmed
+		desired.Profile.TiersConfirmed = original.Profile.TiersConfirmed || proven.TiersConfirmed
+		if err = core.ValidateProfile(desired.Profile); err != nil {
+			return core.Plan{}, err
+		}
+		nextEvidence = evidence(desired.Profile, c.Version)
 		identity, identityErr := e.deps.identity(r.Program)
 		if identityErr != nil || identity != r.Identity || !reflect.DeepEqual(copyProgram(e.deps.program()), r.Program) {
 			return core.Plan{}, errors.New("native executable changed while planning; inspect again")
@@ -156,7 +175,7 @@ func (e *Engine) Plan(ctx context.Context, id string, desired core.Desired) (cor
 	if err != nil {
 		return core.Plan{}, err
 	}
-	p := core.Plan{ID: idToken, ClientID: id, Desired: desired, Changes: changes(before, desired, s.Managed[id]), Noop: s.Managed[id] == desired.Enabled}
+	p := core.Plan{ID: idToken, ClientID: id, Desired: desired, Changes: changes(before, desired, s.Managed[id]), Noop: s.Managed[id] == desired.Enabled && s.Attestations[id] == nextEvidence}
 	for _, w := range r.Writes {
 		if changed(w) {
 			p.Noop = false
@@ -170,6 +189,11 @@ func (e *Engine) Plan(ctx context.Context, id string, desired core.Desired) (cor
 	}
 	if !p.Noop {
 		s.Managed[id] = desired.Enabled
+		if nextEvidence == (attestation{}) {
+			delete(s.Attestations, id)
+		} else {
+			s.Attestations[id] = nextEvidence
+		}
 		s.Receipts = append(s.Receipts, r.Receipt)
 		if len(s.Receipts) > receiptLimit {
 			s.Receipts = s.Receipts[len(s.Receipts)-receiptLimit:]
@@ -312,7 +336,11 @@ func (e *Engine) Apply(ctx context.Context, id, revision string) (core.Receipt, 
 	writes := append(append([]configtxn.Write{}, r.Writes...), r.State)
 	result, err := e.store.Apply(ctx, writes)
 	if err != nil {
-		return core.Receipt{ID: r.Plan.ID, ClientID: r.Plan.ClientID, Outcome: safeOutcome(result.Outcome), Summary: "Configuration was not confirmed; inspect recovery before retrying."}, errors.New("configuration transaction did not succeed; preserve files and inspect recovery")
+		receiptID := result.ID
+		if receiptID == "" {
+			receiptID = r.Plan.ID
+		}
+		return core.Receipt{ID: receiptID, ClientID: r.Plan.ClientID, Outcome: safeOutcome(result.Outcome), Summary: "Configuration was not confirmed; inspect recovery before retrying."}, errors.New("configuration transaction did not succeed; preserve files and inspect recovery")
 	}
 	if result.Outcome != "Succeeded" {
 		return core.Receipt{}, errors.New("transaction returned an unexpected outcome; inspect before retrying")

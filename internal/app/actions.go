@@ -258,7 +258,7 @@ func (e *Engine) RepairBrief(ctx context.Context) (string, error) {
 	if err = configtxn.PrivateFile(path, append(data, '\n')); err != nil {
 		return "", errors.New("private diagnostic export failed; no repair was started")
 	}
-	return path, nil
+	return string(data) + "\n", nil
 }
 func unavailableService() core.ServiceInfo {
 	return core.ServiceInfo{Backend: "Unavailable", Status: "Unavailable", Detail: "Optional observer is unavailable; foreground management remains usable."}
