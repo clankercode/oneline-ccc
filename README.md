@@ -1,8 +1,9 @@
 # oneline-ccc
 
 Configure coding clients for a custom model gateway. The first deliverable is a
-standalone **Windows PowerShell installer for Codex + LLMP**. The broader Go/TUI
-and optional maintenance service are design work for a later phase.
+standalone **Windows PowerShell installer for Codex + LLMP**. A native Go terminal
+application is available as a [development build](docs/native-app.md), with real
+Codex review/apply, protected transactions and an optional read-only observer.
 
 ## Windows quick start
 
