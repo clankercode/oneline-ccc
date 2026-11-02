@@ -136,18 +136,17 @@ function Get-ModelIds([string]$Url, [System.Security.SecureString]$Key) {
     }
 }
 
-function Assert-CodexVersion {
-    if (-not (Get-CodexCommand)) {
+function Assert-CodexVersion([string]$Executable) {
+    if (-not $Executable) {
         if ($SkipInstall) { return }
         throw 'Codex installed but was not found on PATH. Reopen PowerShell.'
     }
-    $codexCommand = Get-CodexCommand
     $previousErrorAction = $ErrorActionPreference
     try {
         # Windows PowerShell 5.1 treats native stderr as an error even when
         # redirected. A fresh CODEX_HOME can cause a harmless PATH warning.
         $ErrorActionPreference = 'Continue'
-        $versionOutput = (& $codexCommand.Source --version 2>$null | Out-String)
+        $versionOutput = (& $Executable --version 2>$null | Out-String)
         $versionExitCode = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousErrorAction }
     if ($versionExitCode -ne 0 -or $versionOutput -notmatch '(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)') {
@@ -1025,8 +1024,16 @@ try {
     if ($ModelCatalogPath) {
         try {
             $ModelCatalogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ModelCatalogPath)
-            $SupportedServiceTiers = @(Get-CatalogTiers $ModelCatalogPath $Model)
+            $catalogTiers = @(Get-CatalogTiers $ModelCatalogPath $Model)
         } catch { throw 'Model catalog invalid: verify the path, models array, exact selected slug and tier field shapes.' }
+        if ($PSBoundParameters.ContainsKey('SupportedServiceTiers')) {
+            $confirmedRequests = @($SupportedServiceTiers | ForEach-Object { if ($_ -ceq 'fast') { 'priority' } else { $_ } })
+            $excluded = @($catalogTiers | ForEach-Object { if ($_ -ceq 'fast') { 'priority' } else { $_ } } | Where-Object { $confirmedRequests -cnotcontains $_ })
+            if ($excluded.Count -gt 0) {
+                throw 'Model catalog invalid: supplied catalog advertises tiers excluded by explicit SupportedServiceTiers. Supply a restricted catalog or confirm every advertised tier; no configuration was published.'
+            }
+        }
+        $SupportedServiceTiers = $catalogTiers
         if ($SupportedServiceTiers.Count -gt 0) { Write-Host ('Catalog eligible tiers: ' + ($SupportedServiceTiers -join ', ')) }
     }
     if (-not $NonInteractive -and -not $ServiceTier) {
@@ -1071,14 +1078,21 @@ try {
     if (-not $onWindows -and -not $SkipInstall) { throw 'Native install requires Windows. Use -SkipInstall with isolated CODEX_HOME for testing.' }
     if ($ApiKey.Length -eq 0) { throw 'API key must not be empty.' }
     if (-not $SkipInstall) { Install-NativeCodex }
-    $codexVersion = Assert-CodexVersion
+    # Resolve once: version metadata, staging and the eventual bare command
+    # must all use the selected native binary, including npm-native precedence.
+    $nativeExecutable = Get-NativeCodexExecutable
+    $mergeExecutable = $nativeExecutable
+    if (-not $mergeExecutable) {
+        $command = Get-CodexCommand
+        if ($command) { $mergeExecutable = $command.Source }
+    }
+    $codexVersion = Assert-CodexVersion $mergeExecutable
     if ($generateCatalog) {
         if (-not $codexVersion) { throw 'Model catalog generation requires installed Codex. Install Codex or supply ModelCatalogPath.' }
         $ModelCatalogPath = New-ConfirmedLLMPCodexCatalog $codexVersion $Model $SupportedServiceTiers $configHome
         $block = New-LLMPConfigBlock $BaseUrl $Model $ContextWindow $AutoCompactTokenLimit $ServiceTier $ModelCatalogPath $enableUltrafast
         $updated = Get-UpdatedConfig $existing $block
     }
-    $nativeExecutable = Get-NativeCodexExecutable
     if (Test-CodexManagedDefault $defaultExisting) { Get-UpdatedConfig $defaultExisting $block | Out-Null }
     $settings = @{
         model = $Model; model_provider = 'oneline_llmp'; model_context_window = $ContextWindow
@@ -1090,10 +1104,6 @@ try {
     }
     if ($ModelCatalogPath) { $settings.model_catalog_json = $ModelCatalogPath }
     if ($enableUltrafast) { $settings.features = @{ultrafast_mode = $true} }
-    $command = Get-CodexCommand
-    $mergeExecutable = ''
-    if ($command) { $mergeExecutable = $command.Source }
-    if ($nativeExecutable) { $mergeExecutable = $nativeExecutable }
     $scratchRoot = Join-Path $configHome '.setup-staging'
     $defaultUpdated = Get-CodexDefaultConfig $mergeExecutable $defaultExisting ($block + "`n") $settings $scratchRoot
     $files = @(

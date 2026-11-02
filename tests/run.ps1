@@ -1,6 +1,6 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param([string]$Python = 'python')
+param([string]$Python = 'python', [string]$TestFilter = '*')
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path $PSScriptRoot -Parent
 $installer = Join-Path $repository 'scripts/setup-codex.ps1'
@@ -31,7 +31,7 @@ function New-Case([string]$Name) {
     return $directory
 }
 function Get-Profile([string]$HomeDirectory) { return Join-Path $HomeDirectory 'llmp.config.toml' }
-function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit, [switch]$UseVersionFixture, [string]$OfficialCatalogFixture) {
+function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit, [switch]$UseVersionFixture, [string]$OfficialCatalogFixture, [switch]$UseNativeIdentityFixture, [switch]$AssertUnchangedEnvironment) {
     $arguments = @{
         BaseUrl = 'https://fixture.invalid/v1/'; Model = 'fixture-model'
         ContextWindow = 353000; AutoCompactTokenLimit = 300000
@@ -80,7 +80,7 @@ if (`$resolvers.Count -ne 2 -or @(`$resolvers | Select-Object -ExpandProperty Na
 foreach (`$resolver in @(`$resolvers | Sort-Object { `$_.Body.Extent.StartOffset } -Descending)) {
     `$replacement = '{ return `$null }'
     if (`$resolver.Name -ceq 'Get-CodexCommand') {
-        `$replacement = '{ return [pscustomobject]@{ Source = `$env:CODEX_VERSION_EXECUTABLE; Name = [IO.Path]::GetFileName(`$env:CODEX_VERSION_EXECUTABLE) } }'
+        `$replacement = '{ if (`$env:CODEX_VERSION_EXECUTABLE) { return [pscustomobject]@{ Source = `$env:CODEX_VERSION_EXECUTABLE; Name = [IO.Path]::GetFileName(`$env:CODEX_VERSION_EXECUTABLE) } }; return `$null }'
     }
     `$body = `$resolver.Body.Extent
     `$source = `$source.Remove(`$body.StartOffset, `$body.EndOffset - `$body.StartOffset).Insert(`$body.StartOffset, `$replacement)
@@ -88,7 +88,40 @@ foreach (`$resolver in @(`$resolvers | Sort-Object { `$_.Body.Extent.StartOffset
 & ([ScriptBlock]::Create(`$source)) @options
 "@
     }
+    if ($UseNativeIdentityFixture) {
+        # Model mixed Windows discovery on either test host. Invoke the real
+        # version probes; record catalog/staging/publication identity at their
+        # boundaries without changing this host's PATH or downloading metadata.
+        $invocation = @"
+`$source = [IO.File]::ReadAllText('$escapedInstaller')
+`$tokens = `$null; `$parseErrors = `$null
+`$ast = [Management.Automation.Language.Parser]::ParseInput(`$source, [ref]`$tokens, [ref]`$parseErrors)
+`$replacements = @{
+    'Get-CodexCommand' = '{ return [pscustomobject]@{ Source = `$env:CODEX_OLD_EXECUTABLE } }'
+    'Get-NativeCodexExecutable' = '{ return `$env:CODEX_SELECTED_EXECUTABLE }'
+    'Get-OfficialCodexCatalogText' = '{ [IO.File]::WriteAllText(`$env:CODEX_IDENTITY_VERSION, `$Version); return [IO.File]::ReadAllText(`$env:CODEX_OFFICIAL_CATALOG_FIXTURE) }'
+    'Get-CodexDefaultConfig' = '{ [IO.File]::WriteAllText(`$env:CODEX_IDENTITY_STAGE, `$CodexExecutable); return `$Generated }'
+    'Enable-BareCodex' = '{ [IO.File]::WriteAllText(`$env:CODEX_IDENTITY_BARE, `$Executable) }'
+}
+`$definitions = @(`$ast.FindAll({ param(`$node)
+    `$node -is [Management.Automation.Language.FunctionDefinitionAst] -and `$replacements.ContainsKey(`$node.Name)
+}, `$false))
+if (`$parseErrors.Count -ne 0 -or `$definitions.Count -ne `$replacements.Count) { throw 'Native identity fixture seam changed' }
+foreach (`$definition in @(`$definitions | Sort-Object { `$_.Body.Extent.StartOffset } -Descending)) {
+    `$body = `$definition.Body.Extent
+    `$source = `$source.Remove(`$body.StartOffset, `$body.EndOffset - `$body.StartOffset).Insert(`$body.StartOffset, `$replacements[`$definition.Name])
+}
+& ([ScriptBlock]::Create(`$source)) @options
+"@
+    }
     $rollbackCheck = ''
+    if ($AssertUnchangedEnvironment) {
+        $invocation = "`$oldPath = `$env:Path`n`$options.ApiKey = ConvertTo-SecureString 'fixture-replacement-credential' -AsPlainText -Force`n" + $invocation
+        $rollbackCheck = @"
+if (`$env:LLMP_API_KEY -cne 'fixture-only-not-a-real-credential' -or `$env:Path -cne `$oldPath) { Write-Output 'FAIL refusal changed credential or PATH'; exit 2 }
+Write-Output 'PASS refusal preserved credential and PATH'
+"@
+    }
     if ($FaultAfterFirstCommit) {
         # Fault only the isolated in-memory copy; production transaction code stays intact.
         $invocation = @"
@@ -168,6 +201,7 @@ function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfi
     Assert-True ($LASTEXITCODE -eq 0) 'TOML semantic verification failed'
 }
 function Test-Case([string]$Name, [scriptblock]$Body) {
+    if ($Name -notlike $TestFilter) { return }
     try { & $Body; $script:passed++; Write-Output ('PASS ' + $Name) }
     catch { $script:failures += $Name + ': ' + $_.Exception.Message; Write-Output ('FAIL ' + $script:failures[-1]) }
 }
@@ -513,6 +547,44 @@ function Initialize-CompleteCatalogFixture {
     $script:completeCatalogFixturePath = Join-Path $root 'complete-upstream-catalog.json'
     Write-Utf8 $script:completeCatalogFixturePath $script:completeCatalogFixture
 }
+Test-Case 'final fix: mixed native selection uses exact path and version for catalog and staging' {
+    Initialize-CompleteCatalogFixture
+    $homeDirectory = New-Case 'identity-home'
+    $environment = @{
+        CODEX_IDENTITY_VERSION = (Join-Path $root 'identity-version.txt')
+        CODEX_IDENTITY_STAGE = (Join-Path $root 'identity-stage.txt')
+        CODEX_IDENTITY_BARE = (Join-Path $root 'identity-bare.txt')
+    }
+    foreach ($identity in @(@{Name = 'old'; Version = '0.134.0'}, @{Name = 'selected'; Version = '0.166.0'})) {
+        $directory = New-Case ('identity-' + $identity.Name)
+        $marker = Join-Path $directory 'version-called.txt'
+        if ($env:OS -eq 'Windows_NT') {
+            $executable = Join-Path $directory 'codex.cmd'
+            $text = '@echo off' + "`r`n" + 'echo called>"' + $marker + '"' + "`r`n" +
+                'echo codex-cli ' + $identity.Version + "`r`n" + 'exit /b 0' + "`r`n"
+        } else {
+            $executable = Join-Path $directory 'codex'
+            $text = '#!/bin/sh' + "`n" + 'printf called > "' + $marker + '"' + "`n" +
+                'echo codex-cli ' + $identity.Version + "`n"
+        }
+        Write-Utf8 $executable $text
+        if ($env:OS -ne 'Windows_NT') { & chmod +x $executable; Assert-True ($LASTEXITCODE -eq 0) 'Cannot make identity fixture executable' }
+        $environment[('CODEX_' + $identity.Name.ToUpperInvariant() + '_EXECUTABLE')] = $executable
+    }
+    Invoke-Installer $homeDirectory @{Model = 'gpt-6.1-sol'} -EnvironmentOverrides $environment -OfficialCatalogFixture $script:completeCatalogFixturePath -UseNativeIdentityFixture | Out-Null
+    Assert-True ([IO.File]::ReadAllText($environment.CODEX_IDENTITY_VERSION) -ceq '0.166.0') 'Catalog used standalone 0.134.0 instead of selected native 0.166.0'
+    foreach ($path in @($environment.CODEX_IDENTITY_STAGE, $environment.CODEX_IDENTITY_BARE)) {
+        Assert-True ([IO.File]::ReadAllText($path) -ceq $environment.CODEX_SELECTED_EXECUTABLE) 'Catalog/staging/bare executable identities differ'
+    }
+    Assert-True (Test-Path (Join-Path (Split-Path $environment.CODEX_SELECTED_EXECUTABLE) 'version-called.txt')) 'Selected native executable was not version-probed'
+    Assert-True (-not (Test-Path (Join-Path (Split-Path $environment.CODEX_OLD_EXECUTABLE) 'version-called.txt'))) 'Unselected standalone executable was version-probed'
+}
+Test-Case 'final fix: SkipInstall without any native command still writes isolated config' {
+    $homeDirectory = New-Case 'no-native'
+    Invoke-Installer $homeDirectory -UseVersionFixture -EnvironmentOverrides @{CODEX_VERSION_EXECUTABLE = ''} | Out-Null
+    Verify-Toml (Get-Profile $homeDirectory)
+    Verify-Toml (Join-Path $homeDirectory 'config.toml')
+}
 Test-Case 'complete native catalog retains upstream metadata and exposes Ultrafast name' {
     Initialize-CompleteCatalogFixture
     $homeDirectory = New-Case 'complete-catalog-native'
@@ -590,6 +662,43 @@ Test-Case 'complete catalog restricts advertised tiers to explicit confirmation'
         try { ConvertTo-ConfirmedCodexCatalog $script:completeCatalogFixture $model @('ultrafast') | Out-Null }
         catch { $refused = $true }
         Assert-True $refused 'Builder invented native metadata for an unsupported or mismatched model'
+    }
+}
+foreach ($selection in @('default', 'fast', 'ultrafast', 'empty-restriction')) {
+    Test-Case ('final fix: supplied catalog refuses excluded advertisement with ' + $selection) {
+        Initialize-CompleteCatalogFixture
+        $homeDirectory = New-Case ('catalog-conflict-' + $selection)
+        Invoke-Installer $homeDirectory | Out-Null
+        $catalog = Join-Path $homeDirectory 'supplied.json'
+        Write-Utf8 $catalog (ConvertTo-ConfirmedCodexCatalog $script:completeCatalogFixture 'gpt-6.1-sol' @('fast', 'ultrafast'))
+        $paths = @((Join-Path $homeDirectory 'config.toml'), (Get-Profile $homeDirectory), $catalog)
+        $before = @($paths | ForEach-Object { [Convert]::ToBase64String([IO.File]::ReadAllBytes($_)) })
+        $entries = @(Get-ChildItem $homeDirectory -Force | Select-Object -ExpandProperty Name)
+        $options = @{Model = 'gpt-6.1-sol'; ModelCatalogPath = $catalog; SupportedServiceTiers = @('fast')}
+        if ($selection -eq 'empty-restriction') { $options.SupportedServiceTiers = @() }
+        elseif ($selection -ne 'default') { $options.ServiceTier = $selection }
+        $output = Invoke-Installer $homeDirectory $options -Failure -AssertUnchangedEnvironment
+        Assert-True ($output.Contains('catalog advertises tiers excluded by explicit SupportedServiceTiers')) 'Conflicting catalog/list did not receive the restriction error'
+        Assert-True ($output.Contains('PASS refusal preserved credential and PATH')) 'Refusal did not check credential/PATH state'
+        for ($i = 0; $i -lt $paths.Count; $i++) {
+            Assert-True ($before[$i] -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($paths[$i]))) 'Refusal changed main/named config or supplied catalog bytes'
+        }
+        Assert-True ((@(Get-ChildItem $homeDirectory -Force | Select-Object -ExpandProperty Name) -join '|') -ceq ($entries -join '|')) 'Refusal created backups, staging or catalog files'
+    }
+}
+foreach ($restriction in @('fast', 'priority')) {
+    Test-Case ('final fix: supplied catalog accepts normalized ' + $restriction + ' restriction') {
+        Initialize-CompleteCatalogFixture
+        $homeDirectory = New-Case ('catalog-alias-' + $restriction)
+        $json = ConvertTo-ConfirmedCodexCatalog $script:completeCatalogFixture 'gpt-6.1-sol' @('fast')
+        $catalog = Join-Path $homeDirectory 'supplied.json'
+        Write-Utf8 $catalog $json
+        $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($catalog))
+        Invoke-Installer $homeDirectory @{Model = 'gpt-6.1-sol'; ModelCatalogPath = $catalog; SupportedServiceTiers = @($restriction); ServiceTier = 'fast'} | Out-Null
+        foreach ($path in @((Get-Profile $homeDirectory), (Join-Path $homeDirectory 'config.toml'))) {
+            Verify-Toml $path @{model = 'gpt-6.1-sol'; model_catalog_json = $catalog; service_tier = 'priority'}
+        }
+        Assert-True ($before -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($catalog))) 'Compatible catalog changed source bytes'
     }
 }
 Test-Case 'complete catalog cache is idempotent and refuses tampered contents' {

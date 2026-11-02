@@ -7,6 +7,8 @@ Run from the repository root with Python 3.11+ and either Windows PowerShell
 ./tests/run.ps1
 # Optional Python executable selection:
 ./tests/run.ps1 -Python python3
+# Focused final-fix regressions:
+./tests/run.ps1 -TestFilter 'final fix:*'
 ```
 
 Portable Linux execution used during development:
@@ -24,8 +26,10 @@ persists credentials to the Windows user environment. Each invocation has a
 for inspection; the harness exits nonzero if any case fails.
 
 Python's standard-library `tomllib` validates the actual generated
-`llmp.config.toml` and checks semantic values independently of installer text.
-Codex >=0.134 profiles use root keys in that file. `config.toml` is preserved.
+`config.toml` and `llmp.config.toml` and checks semantic values independently of
+installer text. Setup updates both files in one transaction so bare Codex and the
+named configuration select LLMP. Unrelated main-config semantics and comments are
+preserved; each changed existing file receives an exact backup of its original bytes.
 No package install, inference request, or paid API call is performed. Optional model discovery uses `discovery_server.py`, a loopback-only fixture
 that never forwards requests and records request paths without credentials.
 The separate loopback URL-validation test uses port 9 without contacting it.
@@ -35,9 +39,11 @@ The separate loopback URL-validation test uses port 9 without contacting it.
 - Fresh TOML with root model/provider/context/compaction fields, Responses API,
   environment authentication, and no embedded dummy credential or output leak.
 - Byte-stable reruns without duplicate tables or redundant backups.
-- Existing base config with root settings and nested project/profile tables
-  survives byte-for-byte. Existing unmanaged profile files are refused unchanged.
-- Changed managed profiles receive byte-for-byte backups and updated controls.
+- Main and named configurations receive matching model/provider/context/tier
+  controls together, with rollback if publication of either file fails.
+- Unrelated main-config settings, nested project/profile tables and comments
+  survive the update. Existing unmanaged named files are refused unchanged.
+- Changed existing main and named files receive byte-for-byte original backups.
 - Default compaction, minimum context boundary, explicit service tier capability.
 - Dry run leaves an absent configuration directory absent and works without
   credentials. Missing authentication fails noninteractive setup unchanged.
@@ -51,6 +57,11 @@ The separate loopback URL-validation test uses port 9 without contacting it.
   and skips all requests during dry run.
 - Native catalogue fixtures check root path, unchanged source, exact model slug
   tier binding, legacy speed tiers, and refusal of missing/malformed catalogues.
+- Combined catalog/tier inputs refuse excluded advertisements before config,
+  credential or PATH publication, preserving both config files and supplied bytes.
+  Compatible `fast`/`priority` aliases succeed. A differing-version resolver
+  fixture checks the selected executable's version, catalog and staging identity;
+  version stderr/error fixtures and no-native `SkipInstall` remain covered.
 - Missing, reversed, nested, duplicate, and misplaced managed markers, unmanaged
   provider definitions, and inline credential settings fail closed without
   backups or scratch files.

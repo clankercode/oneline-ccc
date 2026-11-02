@@ -100,16 +100,22 @@ catalog remains in place and must be available when Codex starts. Setup checks
 the selected model and tier metadata; Codex validates the complete catalog.
 An OpenAI-compatible `/models` response is **not** a Codex-native catalog.
 
-For the LLMP `gpt-6.1-sol` preset, setup supplies Fast and Ultrafast metadata,
-including the exact `/ultrafast` command name. It downloads the complete official
-catalog matching the installed Codex release, retains the selected model's native
-metadata, and stores a local content-addressed catalog. This preset reflects the
-operator-confirmed LLMP route; it does not discover subscription entitlement.
-Explicit `-SupportedServiceTiers` restricts the advertised tiers, and an explicit
-`-ModelCatalogPath` takes precedence. GLM capabilities are not inferred from Sol.
+For the exact LLMP presets `gpt-6.1-sol` and `gpt-6-astra`, setup supplies Fast and
+Ultrafast metadata, including the exact `/ultrafast` command name. It downloads
+the complete official catalog matching the native Codex executable selected for
+the bare command, retains the selected model's native metadata, and stores a local
+content-addressed catalog. These presets reflect the operator-confirmed LLMP route;
+setup does not discover subscription entitlement.
+Explicit `-SupportedServiceTiers` restricts the advertised tiers. An explicit
+`-ModelCatalogPath` supplies the metadata instead of automatic generation. When
+both arguments are supplied, setup refuses a catalog advertising any tier excluded
+by the explicit list before publishing configuration, credentials or PATH changes;
+the supplied catalog is never modified. `fast` and `priority` are equivalent for
+this check. GLM capabilities are not inferred from these presets.
 
-For other models without a supplied catalog, tiers are a manual override. Supply
-only the tiers your gateway advertises for the exact selected model, for example:
+For all other exact model IDs without a supplied catalog, tiers are a manual
+override. Supply only the tiers your gateway advertises for the exact selected
+model, for example:
 
 ```powershell
 .\setup-codex.ps1 -BaseUrl 'https://gateway.example.com/v1' -Model 'EXACT-MODEL-ID' -ContextWindow 500000 -ServiceTier fast -SupportedServiceTiers fast
