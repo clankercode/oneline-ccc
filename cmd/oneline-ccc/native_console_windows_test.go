@@ -29,10 +29,29 @@ func init() {
 	nativeConsoleModes = func() (string, error) {
 		var input, output uint32
 		if err := windows.GetConsoleMode(windows.Handle(os.Stdin.Fd()), &input); err != nil {
-			return "", err
+			return "", fmt.Errorf("stdin GetConsoleMode: %w", err)
 		}
 		err := windows.GetConsoleMode(windows.Handle(os.Stdout.Fd()), &output)
+		if err != nil {
+			return "", fmt.Errorf("stdout GetConsoleMode: %w", err)
+		}
 		return fmt.Sprintf("input=%x output=%x", input, output), err
+	}
+	nativeConsoleDiagnostics = func(out io.Writer) {
+		for _, stream := range []struct {
+			name string
+			file *os.File
+			id   uint32
+		}{
+			{"stdin", os.Stdin, windows.STD_INPUT_HANDLE}, {"stdout", os.Stdout, windows.STD_OUTPUT_HANDLE}, {"stderr", os.Stderr, windows.STD_ERROR_HANDLE},
+		} {
+			h := windows.Handle(stream.file.Fd())
+			standard, standardErr := windows.GetStdHandle(stream.id)
+			kind, kindErr := windows.GetFileType(h)
+			var mode uint32
+			modeErr := windows.GetConsoleMode(h, &mode)
+			fmt.Fprintf(out, "EARLY %s file=%#x standard=%#x standardError=%v type=%d typeError=%v mode=%#x modeError=%v\n", stream.name, h, standard, standardErr, kind, kindErr, mode, modeErr)
+		}
 	}
 	nativeConsoleRaw = func() error { _, err := term.MakeRaw(os.Stdin.Fd()); return err }
 	nativeConsoleAssertRaw = func() error {
@@ -120,13 +139,6 @@ func startNativeWindowsConPTY(t *testing.T, root, scenario, noColor string) *nat
 	if err := windows.CreatePseudoConsole(windows.Coord{X: 120, Y: 40}, p.inputRead, p.outputWrite, 0, &p.console); err != nil {
 		t.Fatal("CreatePseudoConsole:", err)
 	}
-	// ConPTY owns its references. Retaining these ends would prevent EOF.
-	if err := nativeWindowsCloseHandle(&p.inputRead); err != nil {
-		t.Fatal(err)
-	}
-	if err := nativeWindowsCloseHandle(&p.outputWrite); err != nil {
-		t.Fatal(err)
-	}
 	var err error
 	p.job, err = windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -186,6 +198,15 @@ func startNativeWindowsConPTY(t *testing.T, root, scenario, noColor string) *nat
 	}
 	runtime.KeepAlive(block)
 	p.process, p.thread = process.Process, process.Thread
+	// Microsoft documents retaining these communication endpoints through
+	// CreateProcess, then freeing the host references (not before child setup):
+	// https://learn.microsoft.com/windows/console/creating-a-pseudoconsole-session
+	if err := nativeWindowsCloseHandle(&p.inputRead); err != nil {
+		t.Fatal(err)
+	}
+	if err := nativeWindowsCloseHandle(&p.outputWrite); err != nil {
+		t.Fatal(err)
+	}
 	// Assign before ResumeThread: descendants cannot escape between spawn and
 	// Job ownership. Close/terminate the Job even after the root process exits.
 	if err := windows.AssignProcessToJobObject(p.job, p.process); err != nil {
