@@ -461,7 +461,7 @@ func TestNoColorTerminalInteractive(t *testing.T) {
 			p.await(t, p.send(t, "\x1b"), "Session-only storage is the default; no key reveal.")
 			p.palette(t, "Configure selected client", "> [ ] Manage client")
 			p.send(t, " ")
-			p.palette(t, "Dashboard", "| Draft")
+			p.palette(t, "Dashboard", "Draft pending / applied values shown above")
 			p.await(t, p.send(t, "\x03"), "Leave with unapplied drafts?")
 			p.await(t, p.send(t, "\x1b"), "CLIENTS")
 			p.palette(t, "Configure selected client", "> [x] Manage client")
