@@ -1,5 +1,8 @@
 # Plans
 
+Current backlog: [Remaining items so far](remaining-items-so-far.md), recorded
+after the verified native foundation at `40d02d4`.
+
 | Plan | Delivers | Exit checks | Status |
 | --- | --- | --- | --- |
 | [Windows Codex MVP](windows-codex-mvp.md) | Default LLMP setup, context/tier controls and optional Windows SSH | Native PS5/PS7 config/catalog tests, real SSH login/rollback, public byte/dry-run checks | Complete; [verification](../verification/windows-mvp.md), [ledger](../ledgers/windows-mvp-finalization-ledger.md) |
