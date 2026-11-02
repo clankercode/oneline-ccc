@@ -30,6 +30,9 @@ for the exact integrated gates and their limits.
 All checkboxes remain open until the complete corresponding acceptance evidence
 exists.
 Discovered work is appended below with stable IDs; it is part of the same goal.
+There are now **21 tracked areas**. The P0 remains open after the first source
+corrections: improved navigation and added color do not establish preview fidelity,
+comfortable compact layouts or complete interaction acceptance.
 The item 19 implementation is integrated at `cbbaf77` with Linux PTY follow-ups
 at `c1440cf`. Actual no-color entry, editor-focus/masking, draft/quit and redirect
 checks pass; remaining platform and full-screen acceptance is still open.
@@ -303,6 +306,36 @@ that the fixes are absent or that the rejected experience is now approved.
   controls extending below the viewport. Compare the corrected grouping,
   list/detail balance, action emphasis and compact behavior with the pinned
   approved references rather than treating existing ANSI color as sufficient.
+- [ ] **Make compact Dashboard actions usable on the initial view.** Provisional
+  native captures at 80×24 show only about three and a half client rows, with
+  selected-client details and Configure/Review/Launch buried in a 56-row stacked
+  body; at 40×12 the body is about 59 rows. Use a deliberate compact client
+  window, concise selected-client summary and visible useful actions. Keep every
+  control reachable, selection and drafts stable, and the focused action in view.
+  Eventual access after repeated scrolling or F6 traversal is insufficient.
+- [ ] **Strengthen section, action and tier hierarchy against the approved
+  reference.** Keep active section, keyboard focus and selected client visually
+  distinct. Give the next useful action a coherent notice and primary/secondary
+  action group appropriate to setup, configured/no-draft, draft and read-only
+  states. Display the selected model with its default tier as **model · Standard**
+  (or Fast/Ultrafast), with intentional monochrome/ASCII alternatives; retain the
+  separate **up to Ultrafast** capability description and exact stored model ID.
+  Footer labels must distinguish the current focus region from what pressing
+  F6 will do. Verify each improvement in actual native captures, not source alone.
+- [ ] **Paginate Help by readable wrapped rows.** At 40×12 the pinned heading can
+  survive while the first binding is clipped into a fragment such as
+  `form / actions`. Count actual wrapped content within the available viewport,
+  retain complete binding descriptions and support first/last/reverse/resize
+  journeys. Changing pages must not silently omit text. A capture named
+  `help-last-page` that visibly says **Page 6 of 7** is failed evidence; prove the
+  final rendered page and its content after real input, including boundary keys.
+- [ ] **Carry the redesign through every page body and layer.** Shared-shell and
+  Dashboard improvements alone leave Models as a flat radio/control dump with
+  exposed Advanced rows and leave secondary bodies, editors and overlays below
+  the approved standard. Use deliberate grouping/disclosure, readable fields,
+  stable focus, clear actions and matching references for every inventory row.
+  Preserve Review's full before/after values, all pages, acknowledgment and
+  stale/no-op/resize safeguards; styling must never clip authority-bearing text.
 
 ## Other remaining items
 
@@ -435,12 +468,22 @@ that the fixes are absent or that the rejected experience is now approved.
     children are restored/joined on every affected exit. Cover supported Windows
     and macOS paths as well as Linux. A nil-model/headless startup-error test and
     successful cross-compilation do not prove these cases.
+    Also close resources allocated during failed reader construction: the pinned
+    cancelreader's Linux EpollCtl error path can leave its private wake-pipe files
+    open after it returns no reader. A process exit or eventual finalization does
+    not prove cleanup before return. Reproduce the constructor failure, verify
+    descriptor closure and retain audited dependency provenance alongside the
+    terminal-mode and input-join evidence.
 
 21. [ ] **Make native visual evidence fail safely and remain reproducible.**
     Discovered 2026-11-03 in independent capture-tool review: valid blank PNGs,
     mismatched scenario/cell evidence and stale renderer metadata can currently
     pass verification; a failed capture leader can also leave descendants alive.
-    Reject blank/header-only/wrong-target and inconsistent cell/text artifacts,
+    Reject blank/header-only/wrong-target, fully transparent and inconsistent
+    cell/text artifacts. Assert each named state and variant from its actual
+    semantic outcome: Unicode content, Help last page and invalid-editor refusal
+    cannot pass by repeating requested labels. Preserve these predicates as
+    inspectable evidence as well as checking the live model. Independently
     verify the intended native screen/editor/overlay was reached, and clean up
     the entire owned process group even after leader exit. Preserve immutable
     renderer provenance when resuming partial batches; record untracked build
