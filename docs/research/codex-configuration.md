@@ -6,6 +6,9 @@ Checked 2026-11-02 against fetched official documentation and installed `codex-c
 
 For native Windows, user configuration lives at `%USERPROFILE%\.codex\config.toml` (or the selected `CODEX_HOME`). For a selectable gateway configuration, write **`$CODEX_HOME/llmp.config.toml`** and launch `codex --profile llmp`. The file is a configuration layer, with ordinary root keys; it is not a `[profiles.llmp]` table. Since **0.134.0**, `--profile` no longer reads the old table and the root `profile = "llmp"` selector is unsupported. Profile-file values override base user settings, but project/CLI layers have higher precedence. [S1, S2]
 
+The MVP must configure the default launch as well: update root values in the main `config.toml`. A named profile alone does not meet the bare `codex` requirement. Preserve unrelated TOML through staged native `config/read` and `config/batchWrite`, then validate a fresh process before replacing the actual files.
+
+
 Example **contents of `llmp.config.toml`**, using illustrative deployment values:
 
 ```toml

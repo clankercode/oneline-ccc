@@ -6,6 +6,15 @@ Reviewer changed this report only, apart from isolated cache artifacts.
 
 ## Status
 
+Current default-main-config targeted review is complete: the NullString fix
+passed same-process rollback tests in all four original-file states. No unresolved
+Important or Critical findings remain from this review. Native CI remains pending.
+
+Scope update: the operator now requires LLMP for bare `codex`, including a
+preserving merge into main `config.toml`. The previous profile-only clearance
+below does not cover that forthcoming implementation. Two-file/credential
+transaction and Windows bare-command resolution require a new review once ready.
+
 **No unresolved Important or Critical findings in the reviewed frozen source.**
 The material preservation, credential, policy, firewall, and transaction findings
 were corrected. Source can proceed to native CI verification; this does not claim
@@ -94,3 +103,71 @@ plus firewall inspection does not itself prove access from a separate LAN client
 GitHub key import is an explicit snapshot/authorization choice, not continuous
 synchronization. No claim of native success or working hosted deployment is made
 before the corresponding CI and public-download checks pass.
+
+## Narrow CI repair review
+
+Reviewed the packaged-application firewall filter exemption and reconstructed
+test-body parser changes only. No new Important or Critical findings.
+
+Rules restricted to a nonempty, non-Any application Package do not apply to the
+unpackaged desktop sshd process and are excluded appropriately. Missing/Any
+Package still receives the existing application/service/port/profile/address
+audit, preserving detection of actual broad SSH allows. The new packaged-app
+fixture passes alongside the genuine Any/sshd conflict fixtures.
+
+The harness now parses and slices the identical full source string, checks every
+replacement's original extent before editing, saves source-only reconstruction
+for diagnostics, and exposes ParseOnly covering both original and reconstructed
+parsing. No fixture secrets are embedded in these diagnostic source excerpts.
+
+Independent portable PowerShell verification: ParseOnly **3/0** and full SSH
+harness **72/0**. Latest artifacts:
+`.cache/ssh-tests-cee30891ae484effa9325e0147b15bf8`.
+These results do not substitute for the upcoming Windows PowerShell 5.1 CI run.
+
+## Default main-config transaction review
+
+Independent actual Codex app-server merge preserved unrelated feature, provider,
+project trust settings, and comments while selecting LLMP at the root and writing
+the optional profile. No inference or real credentials were used. Evidence:
+`.cache/review-default-9dceaa44270e455ab7554b8facd4f09f`.
+
+Parent-reported snapshot race is fixed on inspection: both decoded text and
+comparison bytes come from one pre-merge snapshot per file. Prospective native
+PATH now checks combined Machine/User resolution before persistence and refuses
+fresh-terminal shadowing. Native PATH execution remains Windows CI evidence.
+
+### Resolved: second-file commit failure could not restore the first file
+
+Location: transaction rollback, `File.Replace($file.Backup, $file.Path, $null)`.
+
+Independent runtime fault injection before profile publication, after successful
+main publication, returned rollback failure and left main config changed. Profile,
+old process key, and PATH were preserved. Directly invoking the restore showed
+`The value cannot be an empty string (path)`: PowerShell converts the null string
+argument to an empty string. Direct `[NullString]::Value` instead restored the
+same isolated dummy file successfully. Reported to author and test owner.
+
+Suggested fix: use correct null-string marshalling or another atomic restore
+strategy. Add second-file failure tests for preexisting and initially absent
+originals, asserting both exact bytes/absence and credential/PATH restoration.
+Evidence: `.cache/review-twofile-e7b0593c7ac04255a23c9043df46616d`
+(manually restored only after reproducing and diagnosing the failure).
+
+## Final NullString closure
+
+Current source restores existing files with `[NullString]::Value`. Independent
+same-process injection failed the second file publish after the actual first
+commit. All four states passed: both originals existing, both absent, main only,
+and profile only. In each case both exact original bytes/absence, old process
+credential, and process PATH were restored without a rollback-failure diagnostic.
+
+Evidence: `.cache/review-nullstring-final-71712e83e978419c858d6f8b9f38f447`.
+This closes the last Important default-config transaction finding. Verification
+used portable PowerShell on Linux with dummy credentials; persistent Windows
+registry/PATH behavior still requires native CI. No broader review round was run.
+
+Final frozen-source confirmation: the tested NullString restore remains present.
+Test owner reports 72/0 and native smoke success on Codex 0.166, including the
+four rollback states; coordinator's independent 0.165 run is separate evidence
+still in progress at this note. No major review findings remain pending.

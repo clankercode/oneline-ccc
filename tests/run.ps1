@@ -7,6 +7,12 @@ $installer = Join-Path $repository 'scripts/setup-codex.ps1'
 $root = Join-Path $repository ('.cache/installer-tests-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
 $shellExecutable = (Get-Process -Id $PID).Path
+$nativeName = 'codex'
+if ($env:OS -eq 'Windows_NT') {
+    $nativeName = 'codex.cmd'
+    $env:Path = (Join-Path $env:APPDATA 'npm') + ';' + $env:Path
+}
+$nativeCodex = (Get-Command $nativeName -ErrorAction Stop).Source
 $dummyKey = 'fixture-only-not-a-real-credential'
 $beginMarker = '# BEGIN oneline-ccc LLMP managed configuration'
 $endMarker = '# END oneline-ccc LLMP managed configuration'
@@ -25,7 +31,7 @@ function New-Case([string]$Name) {
     return $directory
 }
 function Get-Profile([string]$HomeDirectory) { return Join-Path $HomeDirectory 'llmp.config.toml' }
-function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}) {
+function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit) {
     $arguments = @{
         BaseUrl = 'https://fixture.invalid/v1/'; Model = 'fixture-model'
         ContextWindow = 353000; AutoCompactTokenLimit = 300000
@@ -43,12 +49,37 @@ function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [
     $escapedArguments = $argumentsPath.Replace("'", "''")
     $invocation = "& '$escapedInstaller' @options"
     if ($Bootstrap) { $invocation = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('$escapedInstaller'))) @options" }
+    $rollbackCheck = ''
+    if ($FaultAfterFirstCommit) {
+        # Fault only the isolated in-memory copy; production transaction code stays intact.
+        $invocation = @"
+`$source = [IO.File]::ReadAllText('$escapedInstaller')
+`$tokens = `$null; `$parseErrors = `$null
+`$ast = [Management.Automation.Language.Parser]::ParseInput(`$source, [ref]`$tokens, [ref]`$parseErrors)
+`$commits = @(`$ast.FindAll({ param(`$node)
+    `$node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    `$node.Name -ceq 'Publish-CodexConfigFile'
+}, `$true))
+if (`$parseErrors.Count -ne 0 -or `$commits.Count -ne 1) { throw 'Rollback fixture commit seam changed' }
+`$fault = ' if ([IO.Path]::GetFileName(`$File.Path) -ceq "llmp.config.toml") { throw "fixture-second-promotion-failure" }; '
+`$source = `$source.Insert(`$commits[0].Body.Extent.StartOffset + 1, `$fault)
+`$options.ApiKey = ConvertTo-SecureString 'fixture-replacement-credential' -AsPlainText -Force
+`$oldPath = `$env:Path
+& ([ScriptBlock]::Create(`$source)) @options
+"@
+        $rollbackCheck = @"
+if (`$env:LLMP_API_KEY -cne 'fixture-only-not-a-real-credential') { Write-Output 'FAIL rollback process credential'; exit 2 }
+if (`$env:Path -cne `$oldPath) { Write-Output 'FAIL rollback process PATH'; exit 2 }
+Write-Output 'PASS rollback process credential and PATH'
+"@
+    }
     Write-Utf8 $runner @"
 `$ErrorActionPreference = 'Stop'
 `$options = @{}
 `$data = Get-Content -Raw -LiteralPath '$escapedArguments' | ConvertFrom-Json
 foreach (`$property in `$data.PSObject.Properties) { `$options[`$property.Name] = `$property.Value }
-try { $invocation; exit 0 } catch { Write-Output `$_.Exception.Message; exit 1 }
+try { $invocation; exit 0 } catch { $rollbackCheck
+Write-Output `$_.Exception.Message; exit 1 }
 "@
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $shellExecutable
@@ -70,12 +101,13 @@ try { $invocation; exit 0 } catch { Write-Output `$_.Exception.Message; exit 1 }
         if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Installer exceeded 30 second deadline' }
         $output = $stdoutTask.GetAwaiter().GetResult() + $stderrTask.GetAwaiter().GetResult()
         Assert-True (-not $output.Contains($dummyKey)) 'Installer exposed dummy credential in output'
+        Assert-True (-not $output.Contains('fixture-replacement-credential')) 'Installer exposed replacement credential in output'
         if ($Failure) { Assert-True ($process.ExitCode -ne 0) 'Invalid input unexpectedly succeeded' }
         else { Assert-True ($process.ExitCode -eq 0) ('Installer failed: ' + $output) }
         return $output
     } finally { $process.Dispose() }
 }
-function Verify-Toml([string]$Path, [hashtable]$Extra = @{}) {
+function Verify-Toml([string]$Path, [hashtable]$Extra = @{}, [switch]$AllowProfiles) {
     $values = @{
         model_provider = 'oneline_llmp'; model = 'fixture-model'; service_tier = 'default'
         model_context_window = 353000; model_auto_compact_token_limit = 300000
@@ -86,7 +118,8 @@ function Verify-Toml([string]$Path, [hashtable]$Extra = @{}) {
     }
     foreach ($name in $Extra.Keys) { $values[$name] = $Extra[$name] }
     $expectation = Join-Path $root ([Guid]::NewGuid().ToString('N') + '.expected.json')
-    $absent = @('profiles')
+    $absent = @()
+    if (-not $AllowProfiles) { $absent += 'profiles' }
     foreach ($setting in @('model_catalog_json')) {
         if (-not $Extra.ContainsKey($setting)) { $absent += $setting }
     }
@@ -111,15 +144,16 @@ Test-Case 'SSH flag in dry run does not install or download anything' {
     Assert-True (-not (Test-Path $homeDirectory)) 'SSH dry run created a configuration directory'
 }
 Test-Case 'fresh profile and environment authentication' {
-    $homeDirectory = New-Case 'fresh'
+    $homeDirectory = Join-Path $root 'fresh'
     Invoke-Installer $homeDirectory | Out-Null
     Verify-Toml (Get-Profile $homeDirectory)
-    Assert-True (-not (Test-Path (Join-Path $homeDirectory 'config.toml'))) 'Installer created base config'
+    Verify-Toml (Join-Path $homeDirectory 'config.toml')
 }
 Test-Case 'downloaded scriptblock bootstrap supports identical interface' {
     $homeDirectory = New-Case 'scriptblock'
     Invoke-Installer $homeDirectory -Bootstrap | Out-Null
     Verify-Toml (Get-Profile $homeDirectory)
+    Verify-Toml (Join-Path $homeDirectory 'config.toml')
 }
 Test-Case 'omitted endpoint fails without selecting a host' {
     $homeDirectory = New-Case 'omitted-endpoint'
@@ -150,13 +184,16 @@ foreach ($versionCase in @(
         if ($env:OS -eq 'Windows_NT') {
             $fakeCommand = Join-Path $fakeDirectory 'codex.cmd'
             $commandText = '@echo off' + "`r`n" +
+                'if not "%~1"=="--version" goto native' + "`r`n" +
                 'echo called>"%CODEX_VERSION_MARKER%"' + "`r`n" +
                 'echo fixture PATH alias warning 1>&2' + "`r`n" +
                 'echo ' + $versionCase.Version + "`r`n" +
-                'exit /b ' + $versionCase.ExitCode + "`r`n"
+                'exit /b ' + $versionCase.ExitCode + "`r`n" +
+                ':native' + "`r`n" + 'call "%CODEX_TEST_NATIVE%" %*' + "`r`n" + 'exit /b %errorlevel%' + "`r`n"
         } else {
             $fakeCommand = Join-Path $fakeDirectory 'codex'
             $commandText = '#!/bin/sh' + "`n" +
+                'if [ "$1" != "--version" ]; then exec "$CODEX_TEST_NATIVE" "$@"; fi' + "`n" +
                 'printf called > "$CODEX_VERSION_MARKER"' + "`n" +
                 'echo fixture PATH alias warning >&2' + "`n" +
                 'echo ' + $versionCase.Version + "`n" +
@@ -167,13 +204,18 @@ foreach ($versionCase in @(
         $environment = @{
             PATH = $fakeDirectory + [IO.Path]::PathSeparator + $env:PATH
             CODEX_VERSION_MARKER = $marker
+            CODEX_TEST_NATIVE = $nativeCodex
         }
         $output = Invoke-Installer $homeDirectory -EnvironmentOverrides $environment -Failure:$versionCase.Fail
         Assert-True (Test-Path -LiteralPath $marker) 'Version fixture was not invoked'
+        Assert-True (-not $output.Contains('fixture PATH alias warning')) 'Version probe exposed native stderr'
         if ($versionCase.Fail) {
             Assert-True ($output.Contains('version could not be verified')) 'Invalid native version did not receive a version error'
             Assert-True (@(Get-ChildItem $homeDirectory -Force).Count -eq 0) 'Invalid native version created config'
-        } else { Verify-Toml (Get-Profile $homeDirectory) }
+        } else {
+            Verify-Toml (Get-Profile $homeDirectory)
+            Verify-Toml (Join-Path $homeDirectory 'config.toml')
+        }
     }
 }
 Test-Case 'idempotent reruns' {
@@ -181,9 +223,12 @@ Test-Case 'idempotent reruns' {
     Invoke-Installer $homeDirectory | Out-Null
     $profile = Get-Profile $homeDirectory
     $original = [Convert]::ToBase64String([IO.File]::ReadAllBytes($profile))
+    $base = Join-Path $homeDirectory 'config.toml'
+    $baseOriginal = [Convert]::ToBase64String([IO.File]::ReadAllBytes($base))
     $before = @(Get-ChildItem $homeDirectory -File).Count
     Invoke-Installer $homeDirectory | Out-Null
     Assert-True ($original -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($profile))) 'Rerun changed bytes'
+    Assert-True ($baseOriginal -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($base))) 'Rerun changed main config bytes'
     Assert-True ($before -eq @(Get-ChildItem $homeDirectory -File).Count) 'Rerun created redundant backup'
     Verify-Toml $profile
 }
@@ -194,8 +239,109 @@ Test-Case 'preserve base config including unrelated tables' {
     Write-Utf8 $base $original
     $baseBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($base))
     Invoke-Installer $homeDirectory | Out-Null
-    Assert-True ($baseBytes -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($base))) 'Base config changed'
+    Verify-Toml $base @{'profiles.existing.model' = 'another-model'} -AllowProfiles
+    $merged = [IO.File]::ReadAllText($base)
+    foreach ($preserved in @('# user settings', "[projects.'C:/example']", "trust_level = 'trusted'", '[profiles.existing]', "model = 'another-model'")) {
+        Assert-True ($merged.Contains($preserved)) 'Merge lost unrelated table or comment'
+    }
+    $backups = @(Get-ChildItem $homeDirectory -File -Filter 'config.toml.backup-*')
+    Assert-True ($backups.Count -eq 1) 'Expected original main config backup'
+    Assert-True ($baseBytes -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($backups[0].FullName))) 'Main backup differs from original bytes'
     Verify-Toml (Get-Profile $homeDirectory)
+}
+Test-Case 'native merge preserves arbitrary TOML values and comments' {
+    $homeDirectory = New-Case 'arbitrary-toml'
+    $base = Join-Path $homeDirectory 'config.toml'
+    $original = @'
+# preserve heading
+model = "old-model" # preserve model comment
+model_provider = "openai"
+custom_inline = { quoted = "keep", numbers = [1, 2] } # preserve inline comment
+custom_date = 1979-05-27T07:32:00Z
+custom_multiline = """line one
+line two with [table] and model = 'decoy'
+"""
+"custom.quoted" = 'literal'
+custom_dotted.child = 'keep dotted value'
+
+[model_providers.oneline_llmp]
+name = "Old provider"
+base_url = "https://fixture.invalid/old"
+wire_api = "responses"
+request_max_retries = 7 # preserve provider comment
+
+[profiles.existing]
+model = "another-model" # preserve profile comment
+
+[mcp_servers.fixture]
+command = "fixture-command"
+args = ["a", "b"] # preserve args comment
+
+[[custom_array]]
+name = 'literal'
+'@
+    Write-Utf8 $base $original
+    $before = Join-Path $root 'arbitrary-before.toml'
+    [IO.File]::Copy($base, $before)
+    Invoke-Installer $homeDirectory | Out-Null
+    Verify-Toml $base @{'profiles.existing.model' = 'another-model'; 'model_providers.oneline_llmp.request_max_retries' = 7} -AllowProfiles
+    $check = @'
+import pathlib, sys, tomllib
+old = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+new = tomllib.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8-sig"))
+for key in ("custom_inline", "custom_date", "custom_multiline", "custom.quoted", "custom_dotted", "custom_array", "profiles", "mcp_servers"):
+    assert old[key] == new[key], "Unrelated TOML value changed"
+'@
+    & $Python -c $check $before $base
+    Assert-True ($LASTEXITCODE -eq 0) 'Arbitrary TOML semantics changed'
+    $merged = [IO.File]::ReadAllText($base)
+    foreach ($comment in @('# preserve heading', '# preserve model comment', '# preserve inline comment', '# preserve provider comment', '# preserve profile comment', '# preserve args comment')) {
+        Assert-True ($merged.Contains($comment)) 'Native merge lost a comment'
+    }
+    $backups = @(Get-ChildItem $homeDirectory -File -Filter 'config.toml.backup-*')
+    Assert-True ($backups.Count -eq 1) 'Arbitrary TOML merge did not back up main config'
+    Assert-True ([Convert]::ToBase64String([IO.File]::ReadAllBytes($before)) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($backups[0].FullName))) 'Arbitrary TOML backup changed bytes'
+    Verify-Toml (Get-Profile $homeDirectory)
+}
+foreach ($invalidBase in @('invalid-toml', 'conflicting-auth')) {
+    Test-Case ('native merge refuses ' + $invalidBase + ' without mutation') {
+        $homeDirectory = New-Case $invalidBase
+        $base = Join-Path $homeDirectory 'config.toml'
+        $original = "model = [`n"
+        if ($invalidBase -eq 'conflicting-auth') {
+            $original = "[model_providers.oneline_llmp]`nname = 'existing'`nbase_url = 'https://fixture.invalid/v1'`nwire_api = 'responses'`nhttp_headers = { Authorization = 'fixture-inline-secret' }`n"
+        }
+        Write-Utf8 $base $original
+        $output = Invoke-Installer $homeDirectory -Failure
+        Assert-True (-not $output.Contains('fixture-inline-secret')) 'Merge refusal leaked dependency payload'
+        Assert-True ([IO.File]::ReadAllText($base) -ceq $original) 'Refused main config changed'
+        Assert-True (-not (Test-Path (Get-Profile $homeDirectory))) 'Refused main config created named profile'
+        Assert-True (@(Get-ChildItem $homeDirectory -File).Count -eq 1) 'Refused main config created backups or temporary files'
+    }
+}
+foreach ($rollbackState in @('both-existing', 'both-absent', 'main-only', 'named-only')) {
+    Test-Case ('second file promotion fault rolls back ' + $rollbackState) {
+        $homeDirectory = New-Case ('rollback-' + $rollbackState)
+        Invoke-Installer $homeDirectory | Out-Null
+        $base = Join-Path $homeDirectory 'config.toml'
+        $profile = Get-Profile $homeDirectory
+        if ($rollbackState -in @('both-absent', 'named-only')) { [IO.File]::Delete($base) }
+        if ($rollbackState -in @('both-absent', 'main-only')) { [IO.File]::Delete($profile) }
+        $snapshots = @{}
+        foreach ($path in @($base, $profile)) {
+            $snapshots[$path] = $null
+            if ([IO.File]::Exists($path)) { $snapshots[$path] = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) }
+        }
+        $beforeFiles = @(Get-ChildItem $homeDirectory -File).Count
+        $output = Invoke-Installer $homeDirectory @{ContextWindow = 500000; AutoCompactTokenLimit = 450000} -Failure -FaultAfterFirstCommit
+        Assert-True ($output.Contains('PASS rollback process credential and PATH')) 'Rollback fixture did not verify old credential and PATH'
+        Assert-True ($output.Contains('Setup failed.')) ('Injected promotion fault was not reached: ' + $output)
+        foreach ($path in @($base, $profile)) {
+            if ($null -eq $snapshots[$path]) { Assert-True (-not [IO.File]::Exists($path)) 'Rollback left a newly created configuration' }
+            else { Assert-True ($snapshots[$path] -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))) 'Rollback did not restore original configuration bytes' }
+        }
+        Assert-True (@(Get-ChildItem $homeDirectory -File).Count -eq $beforeFiles) 'Rollback left backup or temporary files'
+    }
 }
 Test-Case 'unmanaged profile refused without losing existing tables' {
     $homeDirectory = New-Case 'unmanaged'
@@ -210,10 +356,16 @@ Test-Case 'changed context updates managed block and backs up' {
     $homeDirectory = New-Case 'update'
     Invoke-Installer $homeDirectory | Out-Null
     $originalBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Get-Profile $homeDirectory)))
+    $base = Join-Path $homeDirectory 'config.toml'
+    $originalMainBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($base))
     Invoke-Installer $homeDirectory @{ContextWindow = 500000; AutoCompactTokenLimit = 450000} | Out-Null
     $backups = @(Get-ChildItem $homeDirectory -File | Where-Object { $_.Name -like 'llmp.config.toml.backup-*' })
     Assert-True ($backups.Count -eq 1) 'Expected one changed-profile backup'
     Assert-True ($originalBytes -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($backups[0].FullName))) 'Backup differs from original bytes'
+    $mainBackups = @(Get-ChildItem $homeDirectory -File -Filter 'config.toml.backup-*')
+    Assert-True ($mainBackups.Count -eq 1) 'Expected one changed-main backup'
+    Assert-True ($originalMainBytes -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($mainBackups[0].FullName))) 'Main backup differs from original bytes'
+    Verify-Toml $base @{model_context_window = 500000; model_auto_compact_token_limit = 450000}
     Verify-Toml (Get-Profile $homeDirectory) @{model_context_window = 500000; model_auto_compact_token_limit = 450000}
 }
 Test-Case 'manual edits inside owned block are preserved by refusal' {
@@ -224,7 +376,7 @@ Test-Case 'manual edits inside owned block are preserved by refusal' {
     Write-Utf8 $profile $edited
     Invoke-Installer $homeDirectory -Failure | Out-Null
     Assert-True ([IO.File]::ReadAllText($profile) -ceq $edited) 'Owned manual edit was overwritten'
-    Assert-True (@(Get-ChildItem $homeDirectory -File).Count -eq 1) 'Refusal created backup'
+    Assert-True (@(Get-ChildItem $homeDirectory -File).Count -eq 2) 'Refusal created backup'
 }
 foreach ($unsafeUrlKind in @('query', 'userinfo')) {
     Test-Case ('owned profile refuses secret-bearing base URL: ' + $unsafeUrlKind) {
@@ -255,7 +407,7 @@ Test-Case 'default tier overrides unrelated inherited service tier' {
     Write-Utf8 $base $original
     Invoke-Installer $homeDirectory | Out-Null
     Verify-Toml (Get-Profile $homeDirectory) @{service_tier = 'default'}
-    Assert-True ([IO.File]::ReadAllText($base) -ceq $original) 'Tier reset changed base config'
+    Verify-Toml $base @{service_tier = 'default'}
 }
 Test-Case 'default compaction is ninety percent' {
     $homeDirectory = New-Case 'default-compaction'
@@ -295,7 +447,10 @@ Test-Case 'native catalog is preserved and referenced at root with exact model t
     Verify-Toml (Get-Profile $homeDirectory) @{model_catalog_json = $catalog; service_tier = 'fast'}
     Assert-True ([IO.File]::ReadAllText($catalog) -ceq $original) 'Catalog source changed'
     Invoke-Installer $homeDirectory @{ModelCatalogPath = $catalog; ServiceTier = 'fast'} | Out-Null
-    Assert-True (@(Get-ChildItem $homeDirectory -File).Count -eq 1) 'Catalog profile rerun was not idempotent'
+    $before = @(Get-ChildItem $homeDirectory -File).Count
+    Invoke-Installer $homeDirectory @{ModelCatalogPath = $catalog; ServiceTier = 'fast'} | Out-Null
+    Assert-True (@(Get-ChildItem $homeDirectory -File).Count -eq $before) 'Catalog profile rerun was not idempotent'
+    Verify-Toml (Join-Path $homeDirectory 'config.toml') @{model_catalog_json = $catalog; service_tier = 'fast'}
 }
 Test-Case 'legacy catalog speed tiers are supported' {
     $catalog = New-Catalog 'legacy' @(@{slug = 'fixture-model'; additional_speed_tiers = @('fast')})

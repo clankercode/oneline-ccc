@@ -19,74 +19,16 @@ function New-FixtureKey([string]$Path) {
 }
 New-FixtureKey $keyPath
 
-# These are operator actions on this disposable runner, not helper behavior.
-# Existing broad SSH rules are deliberately disabled so the helper can enforce
-# its refusal to start under an independently broad firewall policy.
-Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
+# Operator preparation ONLY on this disposable Windows GitHub runner.
+# Establish a clean inbound policy for integration testing; this is not helper
+# behavior and makes no claim about why any preexisting app rule was broad.
+$baselineAllowRules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow)
+$baselineAllowRules | Disable-NetFirewallRule
 Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block
-
-# Read-only metadata for the packaged-app rule misclassified by the SSH audit.
-# Do not dump environment variables, key material, or unrelated machine state.
-$diagnosticRules = @(Get-NetFirewallRule -PolicyStore ActiveStore -Name 'Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy-In-Allow-ServerCapability' -ErrorAction SilentlyContinue)
-Write-Output 'BEGIN SSH firewall applicability diagnostic'
-if (-not $diagnosticRules.Count) { Write-Output 'AAD BrokerPlugin diagnostic rule is absent on this runner.' }
-foreach ($diagnosticRule in $diagnosticRules) {
-    $diagnosticApplication = $diagnosticRule | Get-NetFirewallApplicationFilter
-    $diagnosticPackageProperty = $diagnosticApplication.PSObject.Properties['Package']
-    $diagnosticPackage = $null
-    if ($null -ne $diagnosticPackageProperty) { $diagnosticPackage = $diagnosticPackageProperty.Value }
-    $diagnosticCimApplication = @{}
-    foreach ($diagnosticField in @('Package', 'AppPath')) {
-        $diagnosticCimProperty = $diagnosticApplication.CimInstanceProperties[$diagnosticField]
-        if ($null -ne $diagnosticCimProperty) { $diagnosticCimApplication[$diagnosticField] = $diagnosticCimProperty.Value }
-    }
-    $diagnosticCimRule = @{}
-    foreach ($diagnosticField in @('Package', 'LocalAppPackageId', 'AppPkgId', 'EnforcementStatus', 'PrimaryStatus', 'Status', 'StatusCode', 'PolicyStoreSource', 'Platform')) {
-        $diagnosticCimProperty = $diagnosticRule.CimInstanceProperties[$diagnosticField]
-        if ($null -ne $diagnosticCimProperty) { $diagnosticCimRule[$diagnosticField] = $diagnosticCimProperty.Value }
-    }
-    $diagnosticAppIso = @{}
-    try {
-        $diagnosticAppIsoPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\RestrictedServices\AppIso\FirewallRules'
-        $diagnosticAppIsoEntry = Get-ItemProperty -LiteralPath $diagnosticAppIsoPath -Name $diagnosticRule.Name -ErrorAction Stop
-        $diagnosticAppIsoValue = [string]$diagnosticAppIsoEntry.PSObject.Properties[$diagnosticRule.Name].Value
-        $diagnosticAppIso.ValueName = $diagnosticRule.Name
-        # Read only this exact rule value; print its applicability fields, not the registry tree.
-        $diagnosticAppIso.Fields = @($diagnosticAppIsoValue -split '\|' | Where-Object { $_ -match '^(AppPkgId|App|Svc|LUOwn|Action|Active|Dir|Profile|Protocol|LPort|RPort|RA4|RA6)=' })
-    } catch { $diagnosticAppIso.Error = $_.Exception.Message }
-    $diagnosticCom = @{}
-    try {
-        $diagnosticPolicy = New-Object -ComObject HNetCfg.FwPolicy2
-        try {
-            $diagnosticComRule = $diagnosticPolicy.Rules.Item($diagnosticRule.Name)
-            $diagnosticCom.Lookup = 'Name'
-        } catch {
-            $diagnosticComRule = $diagnosticPolicy.Rules.Item($diagnosticRule.DisplayName)
-            $diagnosticCom.Lookup = 'DisplayName'
-        }
-        foreach ($diagnosticField in @('Name', 'ApplicationName', 'LocalAppPackageId', 'LocalUserOwner', 'LocalUserAuthorizedList', 'ServiceName', 'Profiles', 'Protocol', 'LocalPorts', 'RemoteAddresses')) {
-            try { $diagnosticCom[$diagnosticField] = $diagnosticComRule.$diagnosticField }
-            catch { $diagnosticCom[$diagnosticField] = 'Unavailable: ' + $_.Exception.Message }
-        }
-    } catch { $diagnosticCom.Error = $_.Exception.Message }
-    [pscustomobject]@{
-        Rule = @($diagnosticRule | Select-Object Name, DisplayName, InstanceID, Enabled, Direction, Action, Profile, Owner, PolicyStoreSourceType, EnforcementStatus, PrimaryStatus, Status, StatusCode, PolicyStoreSource, Platform)
-        CimRule = $diagnosticCimRule
-        AppIsoRegistry = $diagnosticAppIso
-        Application = @($diagnosticApplication | Select-Object Program, Package, AppPath)
-        CimApplication = $diagnosticCimApplication
-        ComRule = $diagnosticCom
-        ApplicationType = @($diagnosticApplication.PSObject.TypeNames)
-        ApplicationPropertyNames = @($diagnosticApplication.PSObject.Properties | Select-Object -ExpandProperty Name)
-        AdaptedPackagePropertyPresent = ($null -ne $diagnosticPackageProperty)
-        AdaptedPackageValue = $diagnosticPackage
-        Service = @($diagnosticRule | Get-NetFirewallServiceFilter | Select-Object Service)
-        Port = @($diagnosticRule | Get-NetFirewallPortFilter | Select-Object Protocol, LocalPort, RemotePort)
-        Address = @($diagnosticRule | Get-NetFirewallAddressFilter | Select-Object LocalAddress, RemoteAddress)
-        Security = @($diagnosticRule | Get-NetFirewallSecurityFilter | Select-Object Authentication, Encryption, LocalUserAuthorizedList, RemoteUserAuthorizedList, RemoteMachineAuthorizedList)
-    } | ConvertTo-Json -Depth 6
+if (@(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow).Count) {
+    throw 'Disposable-runner preparation failed to disable all preexisting inbound Allow rules.'
 }
-Write-Output 'END SSH firewall applicability diagnostic'
+Write-Output ("Disposable-runner preparation disabled {0} preexisting inbound Allow rules; firewall enabled with default inbound Block." -f $baselineAllowRules.Count)
 
 & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
 $sshd = Join-Path $sshRoot 'sshd.exe'

@@ -37,23 +37,23 @@ is required. Windows PowerShell 5.1 or PowerShell 7 is required.
 After setup, start the configured client with:
 
 ```powershell
-codex.cmd --profile llmp
+codex
 ```
 
-The installer prints the appropriate launch command. For a standalone native
-installation, use `codex.exe --profile llmp`; npm installs use `codex.cmd` to
-avoid PowerShell execution-policy restrictions on npm's `.ps1` shim.
+The installer makes LLMP the default. Reopen other terminals after setup so they
+inherit the API key and PATH. No PowerShell execution-policy change is needed
+to launch the native executable.
 
 ## Configuration and context budgets
 
-Setup writes `$HOME\.codex\llmp.config.toml`, or the same file under `CODEX_HOME`
-when set. It leaves the main `config.toml` untouched. It requires Codex **0.134.0
-or later**, whose named profiles are separate files. Existing installer-managed
-profiles are backed up before changes; an unrelated file at that path is refused.
+Setup updates `$HOME\.codex\config.toml` (or `config.toml` under `CODEX_HOME`)
+so bare `codex` uses LLMP. It preserves unrelated settings and creates backups
+before replacing changed files. Existing TOML is merged using Codex's own
+configuration API in an isolated staging directory.
 
-Profiles overlay your base user settings. If that base file contains a catalog or
-other defaults specific to a different gateway, review them or use a separate
-`CODEX_HOME` for LLMP. A separate home also separates Codex's other stored state.
+Setup also maintains `llmp.config.toml` for an explicit `codex --profile llmp`
+launch. Unrelated or manually changed files at that named-profile path are
+refused. Codex **0.134.0 or later** is required.
 
 The configuration points Codex at the LLMP endpoint using `wire_api = 'responses'`
 and `env_key = 'LLMP_API_KEY'`. The key is stored in the Windows **user environment**

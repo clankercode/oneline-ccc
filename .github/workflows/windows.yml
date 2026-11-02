@@ -13,6 +13,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install and load native Codex
+        shell: pwsh
+        env:
+          LLMP_API_KEY: fixture-only-not-a-real-credential
+        run: |
+          & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/native-smoke.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Native Codex smoke test failed' }
       - name: Run installer harness
         shell: pwsh
         run: |

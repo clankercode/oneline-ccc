@@ -44,10 +44,13 @@ modify the operator's Codex configuration during development.
 Use a dedicated `$CODEX_HOME/llmp.config.toml` profile file for Codex 0.134.0 or
 later, with root-level context and compaction fields. Current official docs say
 legacy `[profiles.llmp]` tables and the root `profile` selector are no longer read.
-Leave the base `config.toml` untouched. Print the exact launch command. Store the API
+Update the main `config.toml` so bare `codex` uses LLMP, preserving unrelated
+settings via the native Codex configuration API in staging. Maintain the named
+profile as an optional explicit launch. Back up changed files and roll back both
+configuration files and credentials on a failed update. Store the API
 key in the Windows user environment and process environment; keep it out of TOML.
 Use explicit model/context choices when proxy metadata is insufficient. Test with
-dummy credentials and local fixtures only. No service is installed by the MVP.
+dummy credentials and local fixtures only. The optional SSH server is explicitly offered; no client-maintenance service is installed.
 
 ## Status
 

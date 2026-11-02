@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-Configure native Codex for an LLMP endpoint without changing the default profile.
+Configure native Codex to use LLMP by default and through its named profile.
 .DESCRIPTION
 Run locally with -File or invoke a downloaded scriptblock. Supply LLMP_API_KEY
 through the environment for automation; interactive entry uses a secure prompt.
@@ -59,6 +59,20 @@ function Get-ValidatedEndpoint([string]$Url, [switch]$ExistingProfile) {
     return $endpoint
 }
 
+function Get-ConfigSnapshot([string]$Path) {
+    $exists = [IO.File]::Exists($Path)
+    $bytes = $null
+    $text = ''
+    if ($exists) {
+        $bytes = [IO.File]::ReadAllBytes($Path)
+        $stream = [IO.MemoryStream]::new($bytes, $false)
+        $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8, $true)
+        try { $text = $reader.ReadToEnd() }
+        finally { $reader.Dispose(); $stream.Dispose() }
+    } elseif ([IO.Directory]::Exists($Path)) { throw 'Existing config path is a directory. Choose a writable CODEX_HOME.' }
+    return @{Existed = $exists; Bytes = $bytes; Text = $text}
+}
+
 function Get-UpdatedConfig([string]$Existing, [string]$Block) {
     if (-not [string]::IsNullOrWhiteSpace($Existing)) {
         $lines = @($Existing -split '\r?\n')
@@ -93,8 +107,8 @@ function Get-UpdatedConfig([string]$Existing, [string]$Block) {
 
 function Get-CodexCommand {
     if ($env:OS -eq 'Windows_NT') {
-        $command = Get-Command codex.cmd -ErrorAction SilentlyContinue
-        if (-not $command) { $command = Get-Command codex.exe -ErrorAction SilentlyContinue }
+        $command = Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue
+        if (-not $command) { $command = Get-Command codex.cmd -CommandType Application -ErrorAction SilentlyContinue }
         return $command
     }
     return Get-Command codex -ErrorAction SilentlyContinue
@@ -214,6 +228,291 @@ function Install-NativeCodex {
     if ($LASTEXITCODE -ne 0) { throw 'Codex npm installation failed. Check connectivity and install @openai/codex with npm.' }
     Add-UserPath $npmPrefix
     if (-not (Get-CodexCommand)) { throw 'Codex installed but was not found on PATH. Reopen PowerShell.' }
+}
+
+function Get-NativeCodexExecutable {
+    if ($env:OS -ne 'Windows_NT') { return $null }
+    $shim = Get-Command codex.cmd -CommandType Application -ErrorAction SilentlyContinue
+    if ($shim) {
+        $packageRoot = Join-Path ([IO.Path]::GetDirectoryName($shim.Source)) 'node_modules/@openai/codex'
+        $node = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue
+        if ($node -and [IO.File]::Exists((Join-Path $packageRoot 'package.json'))) {
+            $resolver = @'
+const fs=require('fs'),path=require('path'),{createRequire}=require('module');
+const root=path.resolve(process.argv[1]);
+const target={x64:'x86_64-pc-windows-msvc',arm64:'aarch64-pc-windows-msvc'}[process.arch];
+if(process.platform!=='win32'||!target)process.exit(2);
+const resolve=createRequire(path.join(root,'package.json'));
+const vendors=[];
+try{vendors.push(path.join(path.dirname(resolve.resolve('@openai/codex-win32-'+process.arch+'/package.json')),'vendor'));}catch{}
+vendors.push(path.join(root,'vendor'));
+for(const vendor of vendors)for(const layout of ['bin','codex']){
+ const exe=path.join(vendor,target,layout,'codex.exe');
+ if(fs.existsSync(exe)){process.stdout.write(exe);process.exit(0);}
+}
+process.exit(3);
+'@
+            $previousErrorAction = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                $resolved = (& $node.Source -e $resolver $packageRoot 2>$null | Out-String).Trim()
+                $resolverExit = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $previousErrorAction }
+            if ($resolverExit -eq 0 -and [IO.File]::Exists($resolved)) { return [IO.Path]::GetFullPath($resolved) }
+            throw 'Codex native executable could not be located. Reinstall @openai/codex with npm, then rerun setup.'
+        }
+    }
+    $native = Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue
+    if ($native) { return $native.Source }
+    return $null
+}
+
+function Get-PrependedPath([string]$Directory, [string]$Original) {
+    $remaining = @($Original -split ';' | Where-Object {
+        $_ -and -not [string]::Equals($_.TrimEnd('\'), $Directory.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+    })
+    return (@($Directory) + $remaining) -join ';'
+}
+
+function Enable-BareCodex([string]$Executable, [bool]$Persist) {
+    if (-not $Executable) { return }
+    $directory = [IO.Path]::GetDirectoryName($Executable)
+    $env:Path = Get-PrependedPath $directory $env:Path
+    $resolved = Get-Command codex -ErrorAction SilentlyContinue
+    if (-not $resolved -or $resolved.CommandType -ne 'Application' -or
+        -not [string]::Equals($resolved.Source, $Executable, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Codex bare command is shadowed by another command. Remove the conflicting codex alias/function or PATH entry and rerun setup.'
+    }
+    if ($Persist) {
+        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+        $proposedPath = Get-PrependedPath $directory $userPath
+        $currentPath = $env:Path
+        try {
+            $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+            $env:Path = [Environment]::ExpandEnvironmentVariables($machinePath + ';' + $proposedPath)
+            $freshCommand = Get-Command codex -ErrorAction SilentlyContinue
+            if (-not $freshCommand -or $freshCommand.CommandType -ne 'Application' -or
+                -not [string]::Equals($freshCommand.Source, $Executable, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Codex bare command would be shadowed in new terminals by a machine PATH entry. Remove the conflicting system Codex shim or PATH entry before retrying.'
+            }
+        } finally { $env:Path = $currentPath }
+        [Environment]::SetEnvironmentVariable('Path', $proposedPath, 'User')
+    }
+}
+
+# PowerShell 5.1 compatible. Only staging files are written; callers own commit/backup.
+function Test-CodexManagedDefault([string]$Text) {
+    # Recognize only the legacy installer's complete, exact generated grammar.
+    # This regex is a fast-path recognizer, never a TOML parser or merger.
+    $shape = '\A# BEGIN oneline-ccc LLMP managed configuration\r?\n' +
+        "model_provider = 'oneline_llmp'\r?\nmodel = '[^'\r\n]*'\r?\n" +
+        'model_context_window = [0-9]+\r?\nmodel_auto_compact_token_limit = [0-9]+\r?\n' +
+        "(?:service_tier = '[^'\r\n]*'\r?\n)?(?:model_catalog_json = '[^'\r\n]*'\r?\n)?\r?\n" +
+        "\[model_providers\.oneline_llmp\]\r?\nname = 'LLMP \(oneline-ccc\)'\r?\n" +
+        "base_url = '[^'\r\n]*'\r?\nwire_api = 'responses'\r?\nenv_key = 'LLMP_API_KEY'\r?\n" +
+        'requires_openai_auth = false\r?\n\r?\n# END oneline-ccc LLMP managed configuration\r?\n?\z'
+    return $Text -cmatch $shape
+}
+
+function Start-CodexConfigProcess([string]$Executable, [string]$Stage) {
+    $process = $null
+    try {
+        $info = New-Object System.Diagnostics.ProcessStartInfo
+        $info.FileName = [IO.Path]::GetFullPath($Executable)
+        $info.Arguments = 'app-server --listen stdio://'
+        if ([IO.Path]::GetExtension($Executable) -ieq '.cmd') {
+            $directory = [IO.Path]::GetDirectoryName($info.FileName)
+            $entry = Join-Path $directory 'node_modules/@openai/codex/bin/codex.js'
+            $node = Join-Path $directory 'node.exe'
+            if (-not [IO.File]::Exists($node)) {
+                $command = Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue
+                if ($command) { $node = $command.Source }
+            }
+            if ([IO.File]::Exists($entry) -and [IO.File]::Exists($node)) {
+                $info.FileName = $node
+                $info.Arguments = '"' + $entry + '" app-server --listen stdio://'
+            } else {
+                # cmd expands metacharacters even inside some quoted contexts.
+                if ($info.FileName -match '[%!&|<>^"\r\n]') { throw 'Unsafe shim path.' }
+                $shim = $info.FileName
+                $info.FileName = Join-Path ([Environment]::GetFolderPath('System')) 'cmd.exe'
+                $info.Arguments = '/d /v:off /s /c ""' + $shim + '" app-server --listen stdio://"'
+            }
+        }
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $info.RedirectStandardInput = $true
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        $info.StandardOutputEncoding = $utf8
+        $info.StandardErrorEncoding = $utf8
+        $info.WorkingDirectory = $Stage
+        $info.EnvironmentVariables['CODEX_HOME'] = $Stage
+        # Do not expose inherited credentials to the config-only subprocess.
+        foreach ($key in @($info.EnvironmentVariables.Keys)) {
+            if ([string]$key -match '(?i)(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION|^CODEX_PROFILE$)') {
+                $info.EnvironmentVariables.Remove([string]$key)
+            }
+        }
+        $info.EnvironmentVariables['LLMP_API_KEY'] = 'dummy-fixture-key'
+        $info.EnvironmentVariables['OPENAI_API_KEY'] = 'dummy-fixture-key'
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $info
+        if (-not $process.Start()) { throw 'Start failed.' }
+        $inputWriter = New-Object System.IO.StreamWriter($process.StandardInput.BaseStream, $utf8)
+        $inputWriter.AutoFlush = $true
+        # Drain concurrently; never forward raw stderr or protocol to the console.
+        $drain = $process.StandardError.ReadToEndAsync()
+        return @{ Process = $process; Input = $inputWriter; Stderr = $drain; NextId = 1 }
+    } catch {
+        if ($process) { Stop-CodexConfigProcess @{Process = $process} }
+        throw 'Codex configuration process could not start.'
+    }
+}
+
+function Stop-CodexConfigProcess($Connection) {
+    if (-not $Connection) { return }
+    $process = $Connection.Process
+    try {
+        if (-not $process.HasExited) {
+            if ($Connection.Input) { $Connection.Input.Close() }
+            else { $process.StandardInput.Close() }
+            if (-not $process.WaitForExit(2000)) {
+                $process.Kill()
+                $null = $process.WaitForExit(2000)
+            }
+        }
+    } catch { } finally { $process.Dispose() }
+}
+
+function Invoke-CodexConfigRpc($Connection, [string]$Method, [hashtable]$Parameters) {
+    try {
+        $requestId = $Connection.NextId
+        $Connection.NextId++
+        $message = @{ id = $requestId; method = $Method; params = $Parameters }
+        $Connection.Input.WriteLine(($message | ConvertTo-Json -Depth 40 -Compress))
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        $bytes = 0
+        while ($clock.ElapsedMilliseconds -lt 20000) {
+            $read = $Connection.Process.StandardOutput.ReadLineAsync()
+            $remaining = [Math]::Max(1, 20000 - [int]$clock.ElapsedMilliseconds)
+            if (-not $read.Wait($remaining)) { throw 'Timeout.' }
+            $line = $read.GetAwaiter().GetResult()
+            if ($null -eq $line) { throw 'Closed.' }
+            $bytes += $line.Length
+            if ($bytes -gt 4194304) { throw 'Response limit.' }
+            $reply = $line | ConvertFrom-Json
+            if ($null -ne $reply.id -and $reply.id -eq $requestId) {
+                if ($reply.PSObject.Properties['error']) { throw 'RPC error.' }
+                if (-not $reply.PSObject.Properties['result']) { throw 'Invalid response.' }
+                return $reply.result
+            }
+            if ($null -ne $reply.id -and $reply.method) { throw 'Unexpected server request.' }
+        }
+        throw 'Timeout.'
+    } catch { throw 'Codex configuration request failed or timed out.' }
+}
+
+function Initialize-CodexConfigConnection($Connection) {
+    $null = Invoke-CodexConfigRpc $Connection 'initialize' @{
+        clientInfo = @{name = 'oneline_ccc_setup'; version = '1.0'}
+    }
+    $Connection.Input.WriteLine('{"method":"initialized","params":{}}')
+}
+
+function Get-CodexDefaultConfig(
+    [string]$CodexExecutable, [string]$Existing, [string]$Generated,
+    [hashtable]$Settings, [string]$ScratchRoot
+) {
+    $stage = $null
+    $connection = $null
+    try {
+        if ([string]::IsNullOrWhiteSpace($Existing) -or (Test-CodexManagedDefault $Existing)) {
+            return $Generated
+        }
+        if (-not $Settings -or -not $Settings.ContainsKey('model_providers')) { throw 'Settings missing.' }
+        $provider = $Settings.model_providers.oneline_llmp
+        if ($provider -isnot [System.Collections.IDictionary]) { throw 'Provider missing.' }
+        $edits = @()
+        foreach ($key in @('model', 'model_provider', 'model_context_window', 'model_auto_compact_token_limit')) {
+            if (-not $Settings.ContainsKey($key) -or $null -eq $Settings[$key]) { throw 'Settings missing.' }
+            $edits += @{ keyPath = $key; value = $Settings[$key]; mergeStrategy = 'replace' }
+        }
+        foreach ($key in @('service_tier', 'model_catalog_json')) {
+            $value = $null
+            if ($Settings.ContainsKey($key)) { $value = $Settings[$key] }
+            $edits += @{keyPath = $key; value = $value; mergeStrategy = 'replace'}
+        }
+        foreach ($key in @('name', 'base_url', 'wire_api', 'env_key', 'requires_openai_auth')) {
+            if (-not $provider.Contains($key) -or $null -eq $provider[$key]) { throw 'Provider missing.' }
+            $edits += @{keyPath = ('model_providers.oneline_llmp.' + $key); value = $provider[$key]; mergeStrategy = 'replace'}
+        }
+        # A GUID child is the only directory this helper may remove.
+        $root = [IO.Path]::GetFullPath($ScratchRoot)
+        $stage = Join-Path $root ('codex-default-' + [Guid]::NewGuid().ToString('N'))
+        $null = [IO.Directory]::CreateDirectory($stage)
+        $path = Join-Path $stage 'config.toml'
+        [IO.File]::WriteAllText($path, $Existing, (New-Object Text.UTF8Encoding($false)))
+        $connection = Start-CodexConfigProcess $CodexExecutable $stage
+        Initialize-CodexConfigConnection $connection
+        $read = Invoke-CodexConfigRpc $connection 'config/read' @{includeLayers = $true}
+        $layers = @($read.layers | Where-Object {
+            $_.name.type -eq 'user' -and -not $_.name.profile -and
+            [IO.Path]::GetFullPath($_.name.file) -eq $path
+        })
+        if ($layers.Count -ne 1 -or -not $layers[0].version) { throw 'User layer missing.' }
+        $oldProvider = $layers[0].config.model_providers.oneline_llmp
+        if ($oldProvider) {
+            if ($oldProvider.base_url) { Get-ValidatedEndpoint ([string]$oldProvider.base_url) -ExistingProfile | Out-Null }
+            foreach ($property in $oldProvider.PSObject.Properties) {
+                if ($property.Name -match '(?i)(auth|bearer|token|api_?key|headers)' -and
+                    $property.Name -ne 'requires_openai_auth' -and $null -ne $property.Value) {
+                    throw 'Conflicting provider authentication.'
+                }
+            }
+        }
+        $write = Invoke-CodexConfigRpc $connection 'config/batchWrite' @{
+            filePath = $path; expectedVersion = $layers[0].version
+            edits = $edits; reloadUserConfig = $false
+        }
+        if ($write.status -cne 'ok' -or $write.overriddenMetadata -or
+            [IO.Path]::GetFullPath($write.filePath) -ne $path) { throw 'Overridden write.' }
+        Stop-CodexConfigProcess $connection
+        $connection = $null
+        # Fresh process validates the actual startup config, including catalog content.
+        $connection = Start-CodexConfigProcess $CodexExecutable $stage
+        Initialize-CodexConfigConnection $connection
+        $verified = Invoke-CodexConfigRpc $connection 'config/read' @{includeLayers = $true}
+        foreach ($edit in $edits) {
+            $actual = $verified.config
+            foreach ($part in $edit.keyPath.Split('.')) {
+                if ($null -eq $actual) { break }
+                $actual = $actual.$part
+            }
+            if ($null -eq $edit.value) {
+                if ($null -ne $actual) { throw 'Effective config mismatch.' }
+            } elseif (($actual | ConvertTo-Json -Depth 20 -Compress) -cne
+                      ($edit.value | ConvertTo-Json -Depth 20 -Compress)) {
+                throw 'Effective config mismatch.'
+            }
+        }
+        return [IO.File]::ReadAllText($path)
+    } catch { throw 'Default Codex configuration could not be merged safely. Existing configuration was not changed.' }
+    finally {
+        Stop-CodexConfigProcess $connection
+        if ($stage -and [IO.Directory]::Exists($stage)) {
+            try { [IO.Directory]::Delete($stage, $true) }
+            catch { throw 'Default Codex configuration staging cleanup failed. Existing configuration was not changed.' }
+        }
+    }
+}
+
+function Publish-CodexConfigFile([hashtable]$File) {
+    if ($File.Existed) {
+        $File.Backup = $File.Path + '.backup-' + [Guid]::NewGuid().ToString('N')
+        [IO.File]::Replace($File.Temp, $File.Path, $File.Backup)
+    } else { [IO.File]::Move($File.Temp, $File.Path) }
 }
 
 function Invoke-SshServerSetup {
@@ -340,8 +639,11 @@ requires_openai_auth = false
     if ([string]::IsNullOrWhiteSpace($configHome)) { $configHome = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
     $configHome = [IO.Path]::GetFullPath($configHome)
     $configPath = Join-Path $configHome 'llmp.config.toml'
-    $existing = ''
-    if (Test-Path -LiteralPath $configPath) { $existing = [IO.File]::ReadAllText($configPath) }
+    $defaultPath = Join-Path $configHome 'config.toml'
+    $profileSnapshot = Get-ConfigSnapshot $configPath
+    $defaultSnapshot = Get-ConfigSnapshot $defaultPath
+    $existing = $profileSnapshot.Text
+    $defaultExisting = $defaultSnapshot.Text
     $updated = Get-UpdatedConfig $existing $block
     if ($DryRun) { Write-Output $block; return }
     $onWindows = $env:OS -eq 'Windows_NT'
@@ -349,60 +651,112 @@ requires_openai_auth = false
     if ($ApiKey.Length -eq 0) { throw 'API key must not be empty.' }
     if (-not $SkipInstall) { Install-NativeCodex }
     Assert-CodexVersion
-    $temporaryPath = $null
+    $nativeExecutable = Get-NativeCodexExecutable
+    if (Test-CodexManagedDefault $defaultExisting) { Get-UpdatedConfig $defaultExisting $block | Out-Null }
+    $settings = @{
+        model = $Model; model_provider = 'oneline_llmp'; model_context_window = $ContextWindow
+        model_auto_compact_token_limit = $AutoCompactTokenLimit; service_tier = $ServiceTier
+        model_providers = @{oneline_llmp = @{
+            name = 'LLMP (oneline-ccc)'; base_url = $BaseUrl; wire_api = 'responses'
+            env_key = 'LLMP_API_KEY'; requires_openai_auth = $false
+        }}
+    }
+    if ($ModelCatalogPath) { $settings.model_catalog_json = $ModelCatalogPath }
+    $command = Get-CodexCommand
+    $mergeExecutable = ''
+    if ($command) { $mergeExecutable = $command.Source }
+    if ($nativeExecutable) { $mergeExecutable = $nativeExecutable }
+    $scratchRoot = Join-Path $configHome '.setup-staging'
+    $defaultUpdated = Get-CodexDefaultConfig $mergeExecutable $defaultExisting ($block + "`n") $settings $scratchRoot
+    $files = @(
+        @{Path = $defaultPath; Existed = $defaultSnapshot.Existed; Bytes = $defaultSnapshot.Bytes; Original = $defaultExisting; Updated = $defaultUpdated; Temp = $null; Backup = $null; Committed = $false},
+        @{Path = $configPath; Existed = $profileSnapshot.Existed; Bytes = $profileSnapshot.Bytes; Original = $existing; Updated = $updated; Temp = $null; Backup = $null; Committed = $false}
+    )
     $keyPointer = [IntPtr]::Zero
     $previousProcessKey = [Environment]::GetEnvironmentVariable('LLMP_API_KEY', 'Process')
+    $previousProcessPath = $env:Path
     $persistUserKey = $onWindows -and -not $SkipPersistCredential
     $previousUserKey = $null
+    $previousUserPath = $null
     if ($persistUserKey) { $previousUserKey = [Environment]::GetEnvironmentVariable('LLMP_API_KEY', 'User') }
+    if ($onWindows) { $previousUserPath = [Environment]::GetEnvironmentVariable('Path', 'User') }
     $credentialsAttempted = $false
+    $pathAttempted = $false
     try {
-        if ($updated -cne $existing) {
-            [IO.Directory]::CreateDirectory($configHome) | Out-Null
-            $temporaryPath = Join-Path $configHome ('.llmp-' + [Guid]::NewGuid().ToString('N') + '.tmp')
-            [IO.File]::WriteAllText($temporaryPath, $updated, (New-Object Text.UTF8Encoding($false)))
+        foreach ($file in $files) {
+            if ($file.Updated -cne $file.Original) {
+                [IO.Directory]::CreateDirectory($configHome) | Out-Null
+                $file.Temp = Join-Path $configHome ('.llmp-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+                [IO.File]::WriteAllText($file.Temp, $file.Updated, (New-Object Text.UTF8Encoding($false)))
+            }
         }
-        # Validate filesystem access and recheck immediately before credential mutation.
-        $current = ''
-        if (Test-Path -LiteralPath $configPath) { $current = [IO.File]::ReadAllText($configPath) }
-        if ($current -cne $existing) { throw 'Config changed during setup. Rerun setup to preserve concurrent changes.' }
+        # Both original byte snapshots must still match before changing auth or PATH.
+        foreach ($file in $files) {
+            $existsNow = [IO.File]::Exists($file.Path)
+            if ($existsNow -ne $file.Existed) { throw 'Config changed during setup. Rerun setup to preserve concurrent changes.' }
+            if ($existsNow -and [Convert]::ToBase64String([IO.File]::ReadAllBytes($file.Path)) -cne [Convert]::ToBase64String($file.Bytes)) {
+                throw 'Config changed during setup. Rerun setup to preserve concurrent changes.'
+            }
+        }
         $keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ApiKey)
         $plainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
         if ($plainKey -match '[\x00-\x20\x7f]') { throw 'API key must not contain whitespace or control characters.' }
         $credentialsAttempted = $true
         if ($persistUserKey) { [Environment]::SetEnvironmentVariable('LLMP_API_KEY', $plainKey, 'User') }
         [Environment]::SetEnvironmentVariable('LLMP_API_KEY', $plainKey, 'Process')
-        if ($temporaryPath) {
-            $current = ''
-            if (Test-Path -LiteralPath $configPath) { $current = [IO.File]::ReadAllText($configPath) }
-            if ($current -cne $existing) { throw 'Config changed during setup. Rerun setup to preserve concurrent changes.' }
-            if (Test-Path -LiteralPath $configPath) {
-                $backupPath = $configPath + '.backup-' + [Guid]::NewGuid().ToString('N')
-                [IO.File]::Replace($temporaryPath, $configPath, $backupPath)
-            } else { [IO.File]::Move($temporaryPath, $configPath) }
+        if ($nativeExecutable) {
+            $pathAttempted = $true
+            Enable-BareCodex $nativeExecutable (-not $SkipPersistCredential)
+        } elseif ($onWindows -and -not $SkipInstall) {
+            throw 'Codex native executable could not be located. Reinstall @openai/codex with npm, then rerun setup.'
+        }
+        foreach ($file in $files) {
+            if (-not $file.Temp) { continue }
+            $existsNow = [IO.File]::Exists($file.Path)
+            if ($existsNow -ne $file.Existed -or ($existsNow -and
+                [Convert]::ToBase64String([IO.File]::ReadAllBytes($file.Path)) -cne [Convert]::ToBase64String($file.Bytes))) {
+                throw 'Config changed during setup. Rerun setup to preserve concurrent changes.'
+            }
+            Publish-CodexConfigFile $file
+            $file.Committed = $true
         }
     } catch {
+        $rollbackFailed = $false
+        for ($index = $files.Count - 1; $index -ge 0; $index--) {
+            $file = $files[$index]
+            if (-not $file.Committed) { continue }
+            try {
+                # Never clobber a later third-party edit while rolling back.
+                if ([IO.File]::ReadAllText($file.Path) -cne $file.Updated) { throw 'Concurrent rollback conflict.' }
+                if ($file.Existed) { [IO.File]::Replace($file.Backup, $file.Path, [NullString]::Value) }
+                else { [IO.File]::Delete($file.Path) }
+            } catch { $rollbackFailed = $true }
+        }
         if ($credentialsAttempted) {
             try {
                 [Environment]::SetEnvironmentVariable('LLMP_API_KEY', $previousProcessKey, 'Process')
                 if ($persistUserKey) { [Environment]::SetEnvironmentVariable('LLMP_API_KEY', $previousUserKey, 'User') }
-            } catch { throw 'API key rollback failed. Restore LLMP_API_KEY in your user/process environment before retrying setup.' }
+            } catch { $rollbackFailed = $true }
         }
+        if ($pathAttempted) {
+            try {
+                $env:Path = $previousProcessPath
+                if (-not $SkipPersistCredential) { [Environment]::SetEnvironmentVariable('Path', $previousUserPath, 'User') }
+            } catch { $rollbackFailed = $true }
+        }
+        if ($rollbackFailed) { throw 'Config rollback failed. Restore configuration from its backup and check LLMP_API_KEY and user PATH before retrying.' }
         throw
     } finally {
         $plainKey = $null
         $previousProcessKey = $null
         $previousUserKey = $null
         if ($keyPointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer) }
-        if ($temporaryPath -and (Test-Path -LiteralPath $temporaryPath)) { [IO.File]::Delete($temporaryPath) }
+        foreach ($file in $files) {
+            if ($file.Temp -and [IO.File]::Exists($file.Temp)) { [IO.File]::Delete($file.Temp) }
+        }
     }
-    if ($onWindows) {
-        $launchCommand = 'codex.cmd'
-        $installedCommand = Get-CodexCommand
-        if ($installedCommand) { $launchCommand = $installedCommand.Name }
-        Write-Output ('LLMP profile configured. Start with: ' + $launchCommand + ' --profile llmp')
-    }
-    else { Write-Output 'LLMP profile configured. Start with: codex --profile llmp' }
+    Write-Output 'LLMP is configured as the Codex default. Start with: codex'
+    Write-Output 'The named configuration is also available with: codex --profile llmp'
     Write-Output 'The selected context budget does not increase the actual model capacity.'
     $wantSsh = $EnableSshServer
     if ($onWindows -and -not $NonInteractive -and -not $wantSsh) {
@@ -423,7 +777,7 @@ requires_openai_auth = false
         'Managed block', 'An existing LLMP', 'Existing inline', 'BaseUrl must',
         'ContextWindow must', 'AutoCompactTokenLimit must', 'ServiceTier requires',
         'Native install requires', 'API key', 'Install Node.js', 'Node.js installation',
-        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Config changed', 'Model discovery failed', 'Model catalog invalid', 'SSH server setup requires'
+        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Codex native executable', 'Codex bare command', 'Config rollback failed', 'Default Codex configuration', 'Config changed', 'Model discovery failed', 'Model catalog invalid', 'SSH server setup requires'
     )
     $message = 'Setup failed. Check configuration directory permissions and dependency availability; no diagnostic payload was printed.'
     foreach ($prefix in $safeMessages) {

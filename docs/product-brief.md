@@ -8,7 +8,7 @@ approved architecture for the broader utility.
 One-line Windows setup for native Codex using an LLMP proxy base URL, one API key,
 and exact model IDs. Generate valid configuration, expose supported service tiers,
 and configure practical context budgets rather than accepting an undersized client
-fallback. Make this useful on a new Windows machine immediately.
+fallback. LLMP must be the default when the user runs bare `codex`. Make this useful on a new Windows machine immediately.
 Also offer optional Windows SSH server installation and public-key access, with
 the local-subnet/Private defaults and explicit choices recorded below.
 

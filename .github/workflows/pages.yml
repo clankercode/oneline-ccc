@@ -30,11 +30,6 @@ jobs:
         run: |
           & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/ssh.ps1
           if ($LASTEXITCODE -ne 0) { throw 'SSH harness failed' }
-      - name: Test installer
-        shell: pwsh
-        run: |
-          & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/run.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Installer harness failed' }
       - name: Install and load native Codex with a dummy credential
         shell: pwsh
         env:
@@ -42,6 +37,12 @@ jobs:
         run: |
           & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/native-smoke.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Native Codex smoke test failed' }
+
+      - name: Test installer
+        shell: pwsh
+        run: |
+          & '${{ matrix.shell }}' -NoProfile -ExecutionPolicy Bypass -File tests/run.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Installer harness failed' }
 
   verify-ssh:
     name: Verify real Windows SSH setup

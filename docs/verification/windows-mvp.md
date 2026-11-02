@@ -8,7 +8,8 @@ The standalone PowerShell installer configures native Codex against an
 operator-supplied Responses-compatible gateway. It offers the requested model
 choices, explicit context and compaction budgets, optional model discovery,
 catalog-bound service tiers, and explicit manual tier overrides. It stores no
-credential in TOML and leaves the base configuration unchanged.
+credential in TOML. The updated installer makes LLMP the main configuration default
+while preserving unrelated user settings. A named LLMP profile is retained as well.
 
 The static GitHub Pages guide serves the same installer source. No client-maintenance
 service, Go binary, other-client adapter, or automatic repair was implemented.
@@ -16,12 +17,14 @@ Existing-project research is available before the broader design conversation.
 
 ## Local evidence
 
-- Coordinator's final integrated Codex run: **65 passed, 0 failed**, portable PowerShell
+- Coordinator's final integrated Codex run: **72 passed, 0 failed**, portable PowerShell
   7.6.9 with Python `tomllib`. This followed the last installer changes; a prior
   concurrent run mixed versions and was discarded, then repeated on frozen code.
-- Actual Codex CLI 0.165.0 loaded the generated named profile through
-  `debug prompt-input`; a separate isolated base-file copy passed
-  `app-server --print-startup-config --strict-config`.
+  The final run covers rich TOML/comment preservation, exact backups, and four
+  injected second-file failure states with config, credential and PATH rollback.
+- Actual Codex CLI 0.165.0 loaded LLMP using bare `codex debug prompt-input`,
+  without profile or config overrides. The smoke test also queried the effective
+  native app-server configuration. The test owner independently checked 0.166.0.
 - Independent review found no unresolved major findings after fixes and targeted
   repros. See [the review](../review/windows-mvp-review.md).
 - Chromium screenshots were visually inspected at desktop/light and mobile/dark.
@@ -45,7 +48,10 @@ corrected to `main` and the failed deployment jobs rerun successfully.
 Optional SSH adds a separate Windows integration gate for capability, service,
 firewall, account, effective authentication policy, actual loopback key login,
 and injected late-failure restoration. That feature's final CI result is recorded
-after the expanded workflow completes.
+after the expanded workflow completes. Its disposable runner explicitly disables
+preexisting inbound Allow rules before setup to establish a clean test baseline;
+the production helper never performs that cleanup and refuses broad or ambiguous
+app/firewall rules requiring operator review.
 
 ## Limits
 
