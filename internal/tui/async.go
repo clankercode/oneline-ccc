@@ -30,6 +30,12 @@ func (m *model) complete(r result) tea.Cmd {
 	m.busy = ""
 	if r.err != nil {
 		m.status = "Action refused or failed: " + m.public(r.err.Error())
+		if r.kind == "apply" {
+			if receipt, ok := r.value.(core.Receipt); ok && receipt.ID != "" {
+				m.receipts = append(m.receipts, receipt)
+				m.status = "Receipt: " + m.public(receipt.Outcome) + " - " + m.public(receipt.Summary)
+			}
+		}
 		if r.kind == "key" {
 			m.status = "Credential operation failed; value hidden"
 		}

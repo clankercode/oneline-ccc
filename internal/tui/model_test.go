@@ -254,7 +254,7 @@ func TestTierAvailabilitySeparateFromDefault(t *testing.T) {
 	activate(t, m, "client:codex")
 	activate(t, m, "tier:Ultrafast")
 	v := m.View().Content
-	if !strings.Contains(v, "gpt-6.1-sol") || !strings.Contains(v, "Default tier: Ultrafast") || !strings.Contains(v, "Available tiers: Not verified") {
+	if !strings.Contains(v, "gpt-6.1-sol / Ultrafast") || !strings.Contains(v, "Available tiers: Not verified") {
 		t.Fatal(v)
 	}
 	if m.drafts["codex"].Profile.Model != "gpt-6.1-sol" {

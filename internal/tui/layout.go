@@ -16,7 +16,11 @@ func (m *model) layout() (lines []row, focusLine, start, available int) {
 	case m.modal != "":
 		body = m.modalRows()
 	default:
-		body = m.screenRows()
+		if m.wideDashboard() {
+			body = m.dashboardRows()
+		} else {
+			body = m.screenRows()
+		}
 	}
 	available = max(1, m.height-5)
 	focusLine = -1

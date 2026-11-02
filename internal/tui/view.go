@@ -23,12 +23,16 @@ func (m *model) View() tea.View {
 	if m.editor != nil {
 		title += " / Edit " + m.editor.field
 	}
-	nav := "Dashboard  Models  Review  Jobs"
+	names := []string{"Dashboard", "Models", "Review", "Jobs"}
 	if m.modal == "" && m.editor == nil && m.focus < 4 {
-		names := []string{"Dashboard", "Models", "Review", "Jobs"}
 		names[m.focus] = "> " + names[m.focus]
-		nav = strings.Join(names, "  ")
 	}
+	for i, name := range []string{"Dashboard", "Models", "Review", "Jobs"} {
+		if name == m.screen {
+			names[i] = m.heading(names[i])
+		}
+	}
+	nav := strings.Join(names, "  ")
 	status := m.public(m.status)
 	if m.busy != "" {
 		status = "Working: " + m.busy + " | " + status
@@ -50,16 +54,10 @@ func (m *model) View() tea.View {
 	out := append([]string(nil), header...)
 	for i := start; i < min(len(lines), start+displayCount); i++ {
 		r := lines[i]
-		line := r.text
-		if r.focus {
-			line = m.focusStyle(line, w)
-		} else if r.selected {
-			line = m.selectionStyle(line, w)
-		}
-		out = append(out, line)
+		out = append(out, m.renderRow(r, w))
 	}
 	if pinFocus {
-		out = append(out, m.focusStyle(lines[focusLine].text, w))
+		out = append(out, m.renderRow(lines[focusLine], w))
 	}
 	for len(out) < h-len(footer) {
 		out = append(out, "")
@@ -114,7 +112,7 @@ func (m *model) focusStyle(s string, w int) string {
 		return s
 	}
 	_, accent := m.styles()
-	return accent.Underline(true).Width(w).Render(s)
+	return accent.Underline(true).Width(w).Render(ansi.Strip(s))
 }
 func (m *model) selectionStyle(s string, w int) string {
 	if m.options.NoColor {
@@ -127,7 +125,7 @@ func (m *model) selectionStyle(s string, w int) string {
 	if m.options.Theme == "light" {
 		base = base.Background(lipgloss.Color("#E7EDF3"))
 	}
-	return base.Width(w).Render(s)
+	return base.Width(w).Render(ansi.Strip(s))
 }
 func (m *model) controlRow(c control, index int) row {
 	prefix := "  "
@@ -136,6 +134,14 @@ func (m *model) controlRow(c control, index int) row {
 		prefix = "> "
 	}
 	label := m.public(c.label)
+	if strings.HasPrefix(c.id, "client:") {
+		for _, client := range m.snapshot.Clients {
+			if c.id == "client:"+client.ID && client.Status != "" {
+				label = strings.Replace(label, m.public(client.Status), m.statusText(client.Status), 1)
+				break
+			}
+		}
+	}
 	if c.reason != "" {
 		if m.screen == "Review" {
 			label += " [locked]"
@@ -163,9 +169,8 @@ func (m *model) screenRows() []row {
 			if c.Reason != "" {
 				text(c.Reason)
 			}
-			text("Model: " + d.Profile.Model)
+			text("Model / default: " + d.Profile.Model + " / " + tierLabel(d.Profile.Tier))
 			text(fmt.Sprintf("Context budget: %d | Compact: %d", d.Profile.Budget, d.Profile.Compact))
-			text("Default tier: " + tierLabel(d.Profile.Tier))
 			text("Available tiers: " + tierAvailability(d.Profile.TiersConfirmed))
 			text("Chosen budgets are not verified model capacities.")
 			if why := m.editable(); why != "" {
@@ -226,10 +231,17 @@ func (m *model) screenRows() []row {
 			continue
 		}
 		if m.screen == "Dashboard" && c.id == "configure" && ok {
-			text("Selected: " + m.selected + " | Model: " + m.clientModel())
-			text(fmt.Sprintf("Applied budget: %d | Default tier: %s", m.snapshotProfileBudget(), tierLabel(m.appliedTier())))
+			text("")
+			text("Selected: " + m.selected + " | Model: " + m.clientModel() + " / " + tierLabel(m.appliedTier()))
+			text(fmt.Sprintf("Applied budget: %d", m.snapshotProfileBudget()))
 			text("Available tiers: " + tierAvailability(m.appliedTiers()))
 			text("Space stages management; Enter opens settings.")
+		}
+		if m.screen == "Models" {
+			switch c.id {
+			case "enabled", "model:gpt-6.1-sol", "budget:272000", "tier:Standard", "capacity", "advanced:model", "discover":
+				rs = append(rs, row{text: ""})
+			}
 		}
 		rs = append(rs, m.controlRow(c, i))
 	}
