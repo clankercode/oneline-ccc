@@ -29,7 +29,7 @@ func (m *model) serviceRows() []row {
 	}
 	facts = append(facts, m.detailRows("Backend", backend, factWidth)...)
 	facts = append(facts, m.detailRows("Scope", "This account / user session", factWidth)...)
-	facts = append(facts, m.detailRows("Ownership", "Backend checks before changes", factWidth)...)
+	facts = append(facts, m.detailRows("Ownership", "Not separately reported", factWidth)...)
 	facts = append(facts, row{}, row{text: m.heading("OBSERVATION / RECOVERY")})
 	if m.snapshot.Service.Detail != "" {
 		facts = append(facts, row{text: m.public(m.snapshot.Service.Detail)})
@@ -58,6 +58,14 @@ func (m *model) serviceRows() []row {
 			c.label = "Inspect monitor status"
 		case "service:start":
 			actions = append(actions, row{}, row{text: m.heading("RUNNING SERVICE / REQUEST CHANGE")})
+			availability := "Backend checks ownership and availability per request."
+			switch strings.ToLower(status) {
+			case "not installed":
+				availability = "Requires installation; inspect and review install first."
+			case "unknown", "conflict", "unavailable", "failed":
+				availability = "Reconcile native state before lifecycle requests."
+			}
+			actions = append(actions, row{text: m.note(availability)})
 		case "service:install":
 			actions = append(actions, row{}, row{text: m.heading("REGISTRATION / REVIEW FIRST")})
 			c.label = "Review monitor installation"
@@ -75,14 +83,24 @@ func (m *model) serviceRows() []row {
 // the first useful action near the observation; all evidence stays pageable.
 func (m *model) serviceSSHComposition(header, facts, actions []row) []row {
 	width := m.contentWidth()
+	var summary []row
+	for i, r := range header {
+		lines := m.column([]row{r}, width)
+		if i == 1 {
+			for j := range lines {
+				lines[j].text = m.fill(lines[j].text, width, surfaceRaised)
+			}
+		}
+		summary = append(summary, lines...)
+	}
 	if width < 96 {
-		out := append(header, actions...)
+		out := append(summary, actions...)
 		return append(append(out, row{}), facts...)
 	}
 	leftWidth := (width - 3) / 2
 	left := m.column(facts, leftWidth)
 	right := m.column(actions, width-leftWidth-3)
-	out := append(header, row{})
+	out := append(summary, row{})
 	for i := 0; i < max(len(left), len(right)); i++ {
 		var l, r row
 		if i < len(left) {
