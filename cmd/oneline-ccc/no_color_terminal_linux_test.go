@@ -389,7 +389,13 @@ func (p *noColorPTY) palette(t *testing.T, command, want string) {
 func (p *noColorPTY) assertKeyHidden(t *testing.T, focus string) {
 	t.Helper()
 	frame := noColorTerminalScreen(t, p.transcript)
-	if !strings.Contains(frame, "Editing key | Esc keeps the previous draft") || !strings.Contains(frame, focus) {
+	hasEditorTitle := false
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.TrimSpace(line) == "Editing key" {
+			hasEditorTitle = true
+		}
+	}
+	if !hasEditorTitle || !strings.Contains(frame, "API key: [hidden]") || !strings.Contains(frame, focus) {
 		t.Fatal("credential editor or expected focus missing before cancellation")
 	}
 	for _, text := range []string{frame, string(p.transcript), ansi.Strip(string(p.transcript))} {
