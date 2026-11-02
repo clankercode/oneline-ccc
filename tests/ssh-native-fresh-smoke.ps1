@@ -143,11 +143,22 @@ try {
         Write-Output ('Prior SSH directory retained intact at: ' + (Join-Path $env:ProgramData $retainedName))
     }
     if (Test-Path -LiteralPath $sshRoot) { throw 'Fresh SSH root still exists before helper setup.' }
+    # Hosted images also patch the built-in fallback template. Remove only
+    # their known AllowGroups line from fixture data, as the existing native
+    # smoke does. Keep fresh default directory ACLs and no hostkeys; this also
+    # models retrying a previously failed first run. Never change the OS template.
+    $template = [IO.File]::ReadAllText((Join-Path $sshBin 'sshd_config_default'))
+    $imageRule = '(?im)^[ \t]*AllowGroups[ \t]+administrators[ \t]+"openssh users"[ \t]*\r?$'
+    if ([regex]::Matches($template, $imageRule).Count -eq 1) {
+        New-Item -ItemType Directory -Path $sshRoot | Out-Null
+        [IO.File]::WriteAllText($config, [regex]::Replace($template, $imageRule, ''), (New-Object Text.UTF8Encoding($false)))
+        Write-Output 'Fixture only: omitted the hosted-image AllowGroups entry from a fresh config; directory ACLs remain untouched and hostkeys are absent.'
+    }
     [IO.Directory]::CreateDirectory($fixture) | Out-Null
     $keygen = Invoke-BoundedNative (Join-Path $sshBin 'ssh-keygen.exe') ('-q -t ed25519 -f "' + $keyPath + '" -N "" -C "oneline-fresh-fixture"')
     if ($keygen.ExitCode -ne 0) { throw ('Synthetic client key generation failed: ' + $keygen.Stderr) }
 
-    # No account creation, policy edits, production shims, or real GitHub keys.
+    # No account creation, production shims, or real GitHub keys.
     # SID equality above forces the helper's current-account -T policy branch.
     & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName $userName -PublicKeyFile ($keyPath + '.pub') -NonInteractive
     $serviceRunning = (Get-Service sshd).Status -eq 'Running'
