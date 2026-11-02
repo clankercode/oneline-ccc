@@ -12,4 +12,4 @@ Current iteration: 1. Immediate milestone: race-free terminal shutdown; coherent
 
 ON_GOAL_COMPLETE_NEXT_STEPS: after each milestone, reassess the full remaining-items backlog, integrate verified work, append newly discovered obligations, and continue with the next dependency-ready work. Do not mark the thread goal complete until the entire expanded backlog is satisfied.
 
-Progress: initial current-state assessment complete; implementation dispatch follows. No product completion claims yet.
+Progress: baseline Go suite passes; campaign spine published; A5 NO_COLOR source fix independently approved and integrated at cbbaf77 with merged suite passing, native acceptance pending. A1 shutdown and A3 navigation commits in independent review. A2 has generated a native capture matrix; A4 builds missing references. Actual baseline Dashboard/Models PNGs inspected and concrete visual defects recorded. New backlog item19 added. No full backlog completion claims.

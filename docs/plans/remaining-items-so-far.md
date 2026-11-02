@@ -26,6 +26,8 @@ milestones and task boundaries. Current work: item 1's rendered shutdown race,
 item 18's navigation and native capture tooling. All checkboxes remain open until
 the complete corresponding acceptance evidence exists.
 Discovered work is appended below with stable IDs; it is part of the same goal.
+The item 19 implementation is integrated at `cbbaf77` and its Go/native Codex
+gates pass; real no-color terminal and platform acceptance remains open.
 
 Some areas extend working features; others require new implementation. Automatic
 maintenance and automatic repair retain the policy decisions and explicit opt-in
@@ -180,6 +182,10 @@ a credential reference is distinct from entering a secret. Include first/last
 pages, zero search results, unavailable commands, validation errors, save/cancel
 and focus return for the applicable variants. Review the shared application
 shell, key footer and asynchronous status as well as the page bodies.
+The navigation remediation adds a visible **More** menu for secondary screens;
+include it as an eighth modal surface in the updated capture/reference matrix,
+including first/last/reverse selection and Escape focus return. The original
+seven-variant count describes the baseline, not a limit on review coverage.
 
 The existing browser has four screen counterparts: **Dashboard, Models, Review
 and Jobs**. **Gateway, Service, Repair, SSH, Utilities and Settings** still need
@@ -259,10 +265,40 @@ requirements carry those instructions into the backlog so they survive handoff:
    must match the reviewed captures. Keep this remediation open until that
    evidence exists; functional CI and the old preview approval cannot close it.
 
+### Execution findings to retain in acceptance
+
+Recorded 2026-11-03 during independent reviews and actual baseline-image
+inspection. These are concrete obligations within P0, not visual acceptance.
+
+- [ ] **Repeated visits need visit-specific Back frames.** A Models → Review →
+  Models → Back → Back journey must recover the earlier visit's control and
+  scroll position; a mutable last-location-per-screen cache loses that history.
+  Add the repeated-visit regression alongside the simpler single-Back path.
+- [ ] **Discovered-model focus must follow identity.** Reordering or replacing
+  discovery results while focused or away must retain the same model identity,
+  and Enter must stage that exact model. Positional `discovered:0` identities
+  are insufficient; disappearance needs an explicit safe fallback.
+- [ ] **Help boundary navigation must reverse immediately.** Repeated forward
+  paging at the final page must not accumulate invisible page indices. Verify
+  first/last/reverse movement and resize with short terminal heights.
+- [ ] **Credential hints must match the focused control.** Space is text while
+  entering a key and toggles only the persistence checkbox. Input, persistence,
+  Save and Back each need accurate hints, with the key masked throughout.
+- [ ] **Replace the observed text-dump composition.** Actual 120×40 baseline
+  Dashboard and Models captures show weak active-tab/action hierarchy, sparse
+  single-line client rows, a long pipe separator and ungrouped model/Advanced
+  controls extending below the viewport. Compare the corrected grouping,
+  list/detail balance, action emphasis and compact behavior with the pinned
+  approved references rather than treating existing ANSI color as sufficient.
+
 ## Other remaining items
 
 1. [ ] **Fix the known terminal shutdown race.** Resolve the Bubble Tea/cancelreader
    race and run the rendered terminal shutdown regression under the race detector.
+   Independent review also reproduced an input goroutine surviving the 500 ms
+   graceful-shutdown fallback when events are queued, on both cancellation and
+   normal quit. Prove the actual input/decoder lifetime is joined before return;
+   increasing a timeout or passing quiet-input repetitions does not close this.
 
 2. [ ] **Finish native platform acceptance.** Test interactive input, resizing,
    interruption, client launch/return and terminal restoration on real Windows
@@ -373,3 +409,13 @@ requirements carry those instructions into the backlog so they survive handoff:
     `--plain`, redirected streams and incapable terminals retain plain status.
     Carry the same decision into signal ownership, help and native usage, with
     tests for entry mode, no-color rendering, typing and safe interruption.
+
+20. [ ] **Restore terminal ownership after startup and forced-error failures.**
+    Discovered 2026-11-03 in the shutdown review: upstream initialization/error
+    paths can return after changing terminal modes without the ordinary shutdown
+    path, and forced Kill/panic paths skip graceful reader joining. Add real
+    terminal failure injection after mode changes, including simultaneous
+    cancellation; verify modes, foreground process ownership, readers and owned
+    children are restored/joined on every affected exit. Cover supported Windows
+    and macOS paths as well as Linux. A nil-model/headless startup-error test and
+    successful cross-compilation do not prove these cases.

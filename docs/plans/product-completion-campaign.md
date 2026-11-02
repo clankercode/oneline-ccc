@@ -12,7 +12,7 @@ item using a narrow gate.
 
 | Milestone | Backlog IDs | Deliverable and evidence |
 | --- | --- | --- |
-| A: native usability and visual repair | 18, 1, relevant 10/17 | Predictable focus regions and section switching, polished native screens/overlays, real styled captures against pinned mockups, repeated independent visual/source reviews; rendered shutdown regression runs under race instrumentation |
+| A: native usability and visual repair | 18, 1, 19–20, relevant 10/17 | Predictable focus regions and section switching, polished native screens/overlays, real styled captures against pinned mockups, repeated independent visual/source reviews; interactive no-color mode, race-free joined input and startup/error cleanup |
 | B: remembered choices and model policy | 6–10 | Bounded platform vaults, persistent preferences and inventory, per-model/shared budgets, per-route tier capabilities, first-run discovery/configuration and effective direct client launch |
 | C: distribution and client lifecycle | 3–5 | Authenticated binary releases and bootstraps, safe update/rollback/uninstall, prerequisite/client install and version support, five independently verified client adapters |
 | D: durable work and maintenance | 11–13 | Durable job states/recovery/diagnostics, Windows task backend, actual service lifecycle evidence and explicit opt-in maintenance policy |
