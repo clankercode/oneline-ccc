@@ -4,6 +4,8 @@ package tui
 
 import (
 	"context"
+	"io"
+	"os/exec"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,6 +16,10 @@ type Options struct {
 	Theme                         string
 	ASCII, NoColor, ReducedMotion bool
 	Version                       string
+	// Context supplies the foreground session lifetime; nil uses Background.
+	Context context.Context
+	// Runner owns child cleanup while tea.Exec owns terminal suspension.
+	Runner func(context.Context, *exec.Cmd, io.Reader, io.Writer, io.Writer) error
 }
 
 type model struct {
@@ -32,6 +38,7 @@ type model struct {
 	editor                       *editor
 	busy, status                 string
 	cancel                       context.CancelFunc
+	operation                    context.Context
 	token                        uint64
 	initial                      tea.Cmd
 	plan                         *core.Plan
@@ -179,8 +186,13 @@ func (m *model) begin(kind string, work func(context.Context) (any, error)) tea.
 	if kind == "launch" || kind == "ssh" {
 		timeout = 24 * time.Hour
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	parent := m.options.Context
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	m.cancel = cancel
+	m.operation = ctx
 	m.token++
 	token := m.token
 	m.busy = kind

@@ -41,8 +41,8 @@ func (f *fakeService) run(_ context.Context, name string, args ...string) (comma
 		}
 		data, _ := json.Marshal(struct {
 			Type string `json:"type"`
-			Data []any  `json:"data"`
-		}{Type: kind, Data: []any{value}})
+			Data any    `json:"data"`
+		}{Type: kind, Data: value})
 		return commandResult{Output: string(data)}, nil
 	}
 	joined := strings.Join(args, " ")

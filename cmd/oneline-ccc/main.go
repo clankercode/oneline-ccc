@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 
@@ -32,9 +33,32 @@ func production(ctx context.Context) dependencies {
 			}})
 		},
 		runUI: func(backend core.Backend, options tui.Options) error {
-			_, err := tea.NewProgram(tui.New(rootBoundBackend{Backend: backend, root: ctx}, options), tea.WithContext(ctx), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithoutSignalHandler()).Run()
-			return err
+			return runForeground(ctx, backend, options, func(model tea.Model) error {
+				_, err := tea.NewProgram(model, tea.WithContext(ctx), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithoutSignalHandler()).Run()
+				return err
+			})
 		},
 		runChild: runProcess,
 	}
+}
+
+// runForeground is the production boundary between the terminal program and
+// main's exit. Tests can supply a headless Bubble Tea program at this same seam.
+func runForeground(ctx context.Context, backend core.Backend, options tui.Options, program func(tea.Model) error) error {
+	root, cancel := context.WithCancel(ctx)
+	session := &foregroundSession{cancel: cancel}
+	bound := rootBoundBackend{Backend: backend, root: root, session: session}
+	defer session.shutdown()
+	options.Context = root
+	runner := options.Runner
+	if runner == nil {
+		runner = runProcess
+	}
+	options.Runner = func(caller context.Context, command *exec.Cmd, in io.Reader, out, errout io.Writer) error {
+		_, err := foregroundCall(bound, caller, func(ctx context.Context) (struct{}, error) {
+			return struct{}{}, runner(ctx, command, in, out, errout)
+		})
+		return err
+	}
+	return program(tui.New(bound, options))
 }

@@ -43,10 +43,11 @@ func (unavailableVault) Set(string, string, string) error {
 // Manager holds a foreground-session credential; its zero value is safe and
 // supports session-only use. No vault or network access occurs in New.
 type Manager struct {
-	mu      sync.RWMutex
-	session string
-	vault   vault
-	lookup  func(string) (string, bool)
+	mu            sync.RWMutex
+	session       string
+	storedSession bool
+	vault         vault
+	lookup        func(string) (string, bool)
 }
 
 func New() *Manager {
@@ -80,6 +81,9 @@ func (m *Manager) SetSession(key string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.session != key {
+		m.storedSession = false
+	}
 	m.session = key
 	return nil
 }
@@ -99,6 +103,12 @@ func (m *Manager) Save(ctx context.Context, key string) error {
 	if err := m.vault.Set(service, account, key); err != nil {
 		return errors.New("credential vault could not save the key; unlock the vault or use a session key")
 	}
+	// A successful explicit entry selects this exact key for the foreground
+	// session too. Publish only after the synchronous vault write succeeds.
+	m.mu.Lock()
+	m.session = key
+	m.storedSession = true
+	m.mu.Unlock()
 	return nil
 }
 func (m *Manager) Resolve(ctx context.Context, envName string) (key, status string, err error) {
@@ -110,8 +120,12 @@ func (m *Manager) Resolve(ctx context.Context, envName string) (key, status stri
 	}
 	m.mu.RLock()
 	key = m.session
+	stored := m.storedSession
 	m.mu.RUnlock()
 	if key != "" {
+		if stored {
+			return key, "Stored", nil
+		}
 		return key, "Session only", nil
 	}
 	lookup := m.lookup

@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -25,13 +26,13 @@ func (m *Manager) busProperty(ctx context.Context, path, iface, property, signat
 		return nil, errUnavailable
 	}
 	var response struct {
-		Type string            `json:"type"`
-		Data []json.RawMessage `json:"data"`
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
 	}
-	if json.Unmarshal([]byte(result.Output), &response) != nil || response.Type != signature || len(response.Data) != 1 {
+	if json.Unmarshal([]byte(result.Output), &response) != nil || response.Type != signature || len(response.Data) == 0 || response.Data[0] != '[' {
 		return nil, errUnavailable
 	}
-	return response.Data[0], nil
+	return response.Data, nil
 }
 func (m *Manager) systemdPaths(ctx context.Context, spec serviceSpec) ([]string, error) {
 	raw, err := m.busProperty(ctx, systemdManagerPath, systemdBus+".Manager", "UnitPath", "as")
@@ -77,9 +78,26 @@ func (m *Manager) effectiveCommand(ctx context.Context) error {
 	}
 	var path string
 	var argv []string
-	var ignored bool
-	if json.Unmarshal(entry[0], &path) != nil || json.Unmarshal(entry[1], &argv) != nil || json.Unmarshal(entry[2], &ignored) != nil || ignored || path != m.executable || !slices.Equal(argv, m.argv()) {
+	if json.Unmarshal(entry[0], &path) != nil || json.Unmarshal(entry[1], &argv) != nil || !bytes.Equal(bytes.TrimSpace(entry[2]), []byte("false")) || path != m.executable || !slices.Equal(argv, m.argv()) {
 		return errForeignOverride
+	}
+	// The remaining fields are four timestamps, pid, code and status. Validate
+	// their native types too; a matching argv cannot bless a malformed struct.
+	for _, field := range entry[3:7] {
+		var stamp uint64
+		if bytes.Equal(bytes.TrimSpace(field), []byte("null")) || json.Unmarshal(field, &stamp) != nil {
+			return errForeignOverride
+		}
+	}
+	var pid uint32
+	if bytes.Equal(bytes.TrimSpace(entry[7]), []byte("null")) || json.Unmarshal(entry[7], &pid) != nil {
+		return errForeignOverride
+	}
+	for _, field := range entry[8:] {
+		var status int32
+		if bytes.Equal(bytes.TrimSpace(field), []byte("null")) || json.Unmarshal(field, &status) != nil {
+			return errForeignOverride
+		}
 	}
 	return nil
 }

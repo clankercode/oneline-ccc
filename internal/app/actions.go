@@ -106,6 +106,11 @@ func (e *Engine) SaveKey(ctx context.Context, key string, persistent bool) error
 	var err error
 	if persistent {
 		err = e.deps.credentials.Save(ctx, key)
+		if err == nil {
+			// Explicit persistence also selects the new foreground key. Save
+			// implementations may keep storage and selection separate.
+			err = e.deps.credentials.SetSession(key)
+		}
 	} else {
 		err = e.deps.credentials.SetSession(key)
 	}

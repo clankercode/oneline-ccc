@@ -20,7 +20,7 @@ func (m *model) complete(r result) tea.Cmd {
 			r.err = errUnavailable
 		} else {
 			token := m.token
-			return tea.ExecProcess(command, func(err error) tea.Msg { return result{token: token, kind: "child", err: err} })
+			return tea.Exec(&terminalCommand{ctx: m.operation, command: command, runner: m.options.Runner}, func(err error) tea.Msg { return result{token: token, kind: "child", err: err} })
 		}
 	}
 	if m.cancel != nil {
@@ -37,6 +37,15 @@ func (m *model) complete(r result) tea.Cmd {
 			if receipt, ok := r.value.(core.Receipt); ok && receipt.ID != "" {
 				m.receipts = append(m.receipts, receipt)
 				m.status = "Receipt: " + m.public(receipt.Outcome) + " - " + m.public(receipt.Summary)
+			}
+		}
+		if r.kind == "service" {
+			if service, ok := r.value.(core.ServiceInfo); ok {
+				switch service.Status {
+				case "Unknown", "Conflict", "Unavailable":
+					m.snapshot.Service = service
+					m.status += "; inspect and reconcile before retrying"
+				}
 			}
 		}
 		if r.kind == "key" {
