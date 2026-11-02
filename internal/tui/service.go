@@ -1,6 +1,10 @@
 package tui
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 // serviceRows presents backend observations separately from requested changes.
 // ServiceInfo has no separate ownership attestation; do not invent one here.
@@ -100,6 +104,20 @@ func (m *model) serviceSSHComposition(header, facts, actions []row) []row {
 	leftWidth := (width - 3) / 2
 	left := m.column(facts, leftWidth)
 	right := m.column(actions, width-leftWidth-3)
+	panel := func(r row, panelWidth int) string {
+		role := surfaceBase
+		if r.focus {
+			role = surfaceActive
+		}
+		text := m.fill(r.text, panelWidth, role)
+		if !m.options.NoColor && !r.focus {
+			// The outer focused row supplies bold. Base colors alone do not
+			// clear that intensity; restore normal after nested SGR resets too.
+			normal := ansi.Style{}.Normal().String()
+			text = normal + strings.NewReplacer(ansi.ResetStyle, ansi.ResetStyle+normal, "\x1b[0m", "\x1b[0m"+normal).Replace(text)
+		}
+		return text
+	}
 	out := append(summary, row{})
 	for i := 0; i < max(len(left), len(right)); i++ {
 		var l, r row
@@ -113,7 +131,7 @@ func (m *model) serviceSSHComposition(header, facts, actions []row) []row {
 		if !m.options.ASCII {
 			separator = " │ "
 		}
-		out = append(out, row{text: m.fill(l.text, leftWidth, surfaceBase) + m.note(separator) + m.fill(r.text, width-leftWidth-3, surfaceBase), focus: r.focus})
+		out = append(out, row{text: panel(l, leftWidth) + panel(row{text: m.note(separator)}, 3) + panel(r, width-leftWidth-3), focus: r.focus})
 	}
 	return out
 }
