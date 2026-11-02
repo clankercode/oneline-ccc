@@ -77,7 +77,6 @@ table { width: 100%; border-collapse: collapse; text-align: left; }
 th { color: var(--muted); font-size: 11px; letter-spacing: .06em; }
 th, td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 td:first-child { font-weight: bold; }
-tbody tr:first-child { background: var(--select); }
 .diff { background: var(--raised); border-left: 3px solid var(--accent); padding: 15px 18px; margin: 16px 0; white-space: pre-wrap; font: inherit; }
 .diff .remove { color: var(--bad); }
 .diff .add { color: var(--good); }

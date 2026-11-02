@@ -1,7 +1,7 @@
 'use strict';
 
 const clients = [
-  { name: 'Codex', state: 'CONFIGURED', tone: 'good', model: 'gpt-6.1-sol', budget: '500000', tier: 'Ultrafast · fixture attestation', source: 'Local configuration', note: 'Configuration found. Authentication and inference are unverified.', action: 'Review configuration' },
+  { name: 'Codex', state: 'CONFIGURED', tone: 'good', model: 'gpt-6.1-sol', budget: '500000', tier: 'Ultrafast · fixture attestation', source: 'Local configuration', note: 'Configuration found. Authentication and inference are unverified.', action: 'Explore model choices' },
   { name: 'Claude Code', state: 'NEEDS SETUP', tone: 'muted', model: 'Not selected', budget: 'Not selected', tier: 'Not selected', source: 'No managed profile', note: 'Choose a gateway and model before reviewing configuration.', action: 'Explore model choices' },
   { name: 'OpenCode', state: 'DRIFT', tone: 'warn', model: 'glm-5.3', budget: '353000', tier: 'Default', source: 'Native and saved differ', note: 'The context budget changed outside this manager. Review both values before writing.', action: 'Review changes' },
   { name: 'Pi', state: 'NOT INSTALLED', tone: 'muted', model: 'Not selected', budget: 'Not selected', tier: 'Not selected', source: 'Illustrative detection', note: 'Installation support needs its own verified client adapter.', action: 'Explore model choices' },
