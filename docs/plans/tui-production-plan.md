@@ -7,6 +7,9 @@ Companions: [screen flows](../design/tui-screen-flows.md), [stack evidence and I
 Visual follow-up: [navigation and color pass](../design/tui-visual-system.md).
 Carry its hierarchy, selection and non-color cues into T1/T4; its browser
 specimen is a design aid, not evidence of a running Go TUI.
+Interaction follow-up: [usability contract](../design/tui-usability.md) connects
+management choices, model settings, review, simulated receipts and keyboard
+help/search. Carry these paths into T1/T4; browser tests do not satisfy native gates.
 
 ## Goal, scope and evidence labels
 
@@ -132,6 +135,10 @@ Files: create future `cmd/ccc/main.go`, `internal/tui/{app,navigation,theme}.go`
 Produce proposed commands `ccc`, `ccc status --json`, `ccc plan`, `ccc apply <plan-id>`, `ccc doctor`, `ccc service`, `ccc repair`, `ccc ssh`, `ccc update`; commands besides TUI have explicit help/usage and return nonzero for refused/failed operations. Unsupported commands are not offered as working features.
 Produce global terminal options `--plain`, `--color=auto|always|never`, `--ascii` and `--reduced-motion`; plain/redirected output never requires mouse, Unicode or fullscreen features. These are proposed app options, not library APIs.
 ET1 `TestET1TerminalModes`: all ten screen skeletons and focus paths render at 120x40, 100x30, 80x24, 60x20, 40x12; no escape output to redirected stdout; resize/Ctrl+C restore terminal. PTY trial on Windows Terminal, macOS Terminal and a Linux terminal is required before acceptance.
+ET1 `TestET1HelpAndCommands`: `?` help and `Ctrl+P` search share the action catalog;
+typing/composition guards, arrow/search selection, unavailable reasons, modal
+focus and Escape restore work through native PTY input. Every action remains
+reachable through Tab without intercepted control/function keys.
 
 ### T2 — Build the protected state, credential and transaction core
 
@@ -159,6 +166,11 @@ ET4 `TestET4MissingClientInstall`: start with Codex absent and fixture install s
 Files: future `internal/app/{inspect,plan,apply}.go`, `internal/tui/{setup,dashboard}.go`, `internal/tui/journeys_test.go`; split application wiring and view wiring into separate owned slices if needed.
 Consume T2/T3 snapshots/plans and T3a install capability; produce source-labelled prefill, client choices, missing-client Install/Skip path, staged diff/privilege review, apply receipt and dashboard status. Preserve drafts on back/navigation; service decline and optional SSH failure do not block client success.
 Gate: ET1/ET2/ET4 plus keyboard-only fresh-root/rerun journeys; selected-client absence reaches installation review and configured Launch after success, or a truthful skipped/failed state. No writes while editing or merely navigating; unknown client schema shows a useful refusal.
+ET4 `TestET4ClientDraftJourneys`: selecting never enables; enable/settings/review/
+apply/receipt preserve client identity and reviewed values; disabling retains
+configuration and safe drafts; navigation/filter/refresh retain independent
+drafts; invalid or stale reviews cause no partial apply; discard/cancel affects
+only the named draft. Exercise unsupported/missing clients and zero-result filters.
 
 ### T4a — Deliver authenticated launch and terminal handoff
 

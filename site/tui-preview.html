@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Explore the navigation and color direction for the oneline-ccc terminal interface. Illustrative data; no configuration changes.">
+  <meta name="description" content="Try client management, draft settings, review, keyboard help and command search in the oneline-ccc TUI design preview. In-memory simulation only.">
   <title>oneline-ccc · TUI preview</title>
   <link rel="stylesheet" href="tui-preview.css">
-  <script defer src="tui-preview.js"></script>
+  <script type="module" src="tui-preview.js"></script>
 </head>
 <body>
   <a class="skip" href="#console">Skip to terminal preview</a>
@@ -15,7 +15,7 @@
       <div><a class="wordmark" href="./">oneline-ccc <span>/ interface notes</span></a><h1>A little color. A clearer console.</h1></div>
       <a href="https://github.com/clankercode/oneline-ccc/blob/main/docs/design/tui-visual-system.md">Design notes ↗</a>
     </header>
-    <p class="intro">A small pass on navigation, selection and emphasis. <strong>Interactive design preview</strong> with illustrative data. The Go app is not implemented; this page changes no configuration.</p>
+    <p class="intro"><strong>Try the complete path:</strong> enable a client, choose its settings, review and simulate apply. Illustrative data stays in this page’s memory and resets on reload. The Go app is not implemented; no client configuration changes.</p>
     <div class="preview-controls" aria-label="Preview appearance">
       <label>Appearance <select id="theme"><option value="dark">Dark</option><option value="light">Light</option><option value="mono">Monochrome</option></select></label>
       <label>Layout <select id="layout"><option value="wide">Wide</option><option value="compact">Compact</option><option value="narrow">Narrow</option></select></label>
@@ -30,11 +30,11 @@
         <button type="button" data-screen="jobs"><span>04</span> Jobs</button>
       </nav>
       <div id="screen" class="screen"></div>
-      <footer class="keybar"><span><kbd>Tab</kbd> move <kbd>Enter</kbd> open <span id="arrow-hint"><kbd>↑ ↓</kbd> choose client</span></span><span class="muted">Local design preview · no live operations</span></footer>
+      <footer class="keybar"><div class="key-actions"><button type="button" data-command="help"><kbd>?</kbd> Help</button><button type="button" data-command="palette"><kbd>Ctrl+P</kbd> Commands</button><span><kbd>Tab</kbd> move · <kbd>Enter</kbd> open</span></div><span id="console-status" class="muted">Preview only · no live operations</span></footer>
     </section>
     <p id="announcement" class="sr-only" role="status" aria-live="polite"></p>
     <div class="notes"><p><strong>Find your place.</strong> The blue section band marks where you are. A quieter row fill marks the selected client; the outline marks keyboard focus.</p><p><strong>Read the next action.</strong> Bold headings and labeled status colors separate state, evidence and action. Monochrome keeps the same structure.</p></div>
-    <p class="boundary">Screen switching and client selection work here. Apply is deliberately unavailable in this specimen. Native keyboard behavior, terminal sizes and client management remain implementation work.</p>
+    <p class="boundary">Settings, management choices and receipts are simulated. No credentials, endpoints, files or services are read or changed. Native terminal behavior and actual installation, launch, configuration and updates remain implementation work.</p>
   </main>
   <noscript><p class="intro">Enable JavaScript to switch the illustrative screens. No app or client configuration runs on this page.</p></noscript>
 </body>

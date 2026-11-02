@@ -71,6 +71,10 @@ settings, install anything, contact a gateway or control services. Browser
 controls and size presets are presentation aids, not implemented Go options or
 proof of exact terminal-cell dimensions.
 
+The [usability follow-up](tui-usability.md) adds draft management checkboxes,
+per-client settings, exact review, simulated receipts, `?` help and `Ctrl+P`
+command search. It preserves this visual contract and its native-app boundary.
+
 Carry this pass into T1/T4 of the [production plan](../plans/tui-production-plan.md):
 
 1. Preserve this hierarchy in wide list/detail and compact single-pane layouts.

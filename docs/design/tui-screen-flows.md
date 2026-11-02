@@ -4,6 +4,10 @@ The [navigation and color pass](tui-visual-system.md) adds a styled browser
 specimen and clarifies how headings, selection, status and focus should differ.
 The text wireframes below describe layout and behavior, not the final styling.
 
+The [usability contract](tui-usability.md) adds working help, command search,
+management choices, drafts, review and simulated receipts to the browser
+specimen. Native terminal behavior below remains an implementation contract.
+
 Planning baseline: 2026-11-02. These are annotated wireframes, not screenshots or implemented views. [Production contracts and acceptance](../plans/tui-production-plan.md) govern behavior; [stack evidence](../research/tui-stack.md) governs framework claims.
 
 ## Direction: a calm operator console
@@ -21,8 +25,8 @@ Rerun: inspect known supported settings → source-labelled summary → resolve 
 Dashboard → client detail / models and context / service / jobs / repair / SSH / settings. Utilities are a secondary Settings destination, not another first-run checklist. Each destination returns to the same selected row and scroll position.
 
 - `Tab`/`Shift+Tab`: visible focusable controls in reading order. Arrow keys move lists, never submit. `Enter` opens/activates; `Space` toggles a checkbox. `Esc` closes the top layer or returns one level, preserving safe drafts.
-- `/` filters the current list; `?` opens contextual help with all keys. `Ctrl+K` opens section/action search outside text entry; `F6` cycles shell/content/footer where the terminal supports it. Tab remains sufficient if function/control keys are intercepted.
-- `q` exits only outside text entry and modal review; dirty/running work opens a leave/stay decision. `Ctrl+C` first requests cancellation/safe exit, displays its boundary and leaves rollback visible. Forced termination is handled by journal recovery on next launch.
+- `/` filters the current list; `?` opens contextual help with all keys. `Ctrl+P` opens section/action search outside text entry. In the browser specimen it is scoped to console focus, preserving browser Print elsewhere; visible Help/Commands and Tab remain sufficient. Native `F6` shell/content/footer cycling is proposed where terminals support it.
+- Native-only: `q` exits outside text entry and modal review; dirty/running work opens a leave/stay decision. `Ctrl+C` first requests cancellation/safe exit, displays its boundary and leaves rollback visible. Forced termination is handled by journal recovery on next launch. The browser specimen offers neither terminal quit nor cancellation.
 - Focus appears as `>` plus emphasis/reverse video and an accessible text label; exactly one control has that marker. Persistent selection without focus uses labelled `Selected:` text, never another `>`. Enter activates only the focused control. Do not bind action to row selection alone. Lists use stable IDs so refresh never picks a different client under the cursor.
 - Review/elevation screens initially focus **Back**, not Apply. Apply requires an explicit selected action/Enter; no automatic countdown. Significant authority changes have a local explanation and an action named for that change. Ordinary navigation adds no confirmation.
 - Text fields consume typing literally; shortcuts are inactive there. Secrets are masked without reflecting their length, paste never triggers commands, and no key reveal/copy control exists. Public keys have fingerprints, not secret treatment.

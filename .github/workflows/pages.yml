@@ -13,6 +13,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-preview:
+    name: Verify TUI preview journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test preview state and module syntax
+        run: |
+          node --test tests/tui-preview-state.test.mjs
+          for module in site/tui-*.mjs site/tui-preview.js; do node --check "$module"; done
+      - name: Install pinned browser test tooling
+        run: |
+          npm install --prefix .cache/browser --no-save playwright@1.61.1
+          .cache/browser/node_modules/.bin/playwright install --with-deps chromium
+      - name: Exercise browser journeys
+        env:
+          TUI_PREVIEW_URL: http://127.0.0.1:8765/tui-preview.html
+          PLAYWRIGHT_MODULE: ../.cache/browser/node_modules/playwright/index.mjs
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory site >.cache/browser/server.log 2>&1 &
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8765/tui-preview.html >/dev/null; then break; fi
+            sleep 1
+          done
+          node tests/tui-preview-browser.mjs
+
   verify:
     name: Verify Windows installer
     runs-on: windows-latest
@@ -69,7 +98,7 @@ jobs:
 
   deploy:
     name: Deploy verified site
-    needs: [verify, verify-ssh, verify-ssh-fresh]
+    needs: [verify-preview, verify, verify-ssh, verify-ssh-fresh]
     runs-on: ubuntu-latest
     permissions:
       pages: write
