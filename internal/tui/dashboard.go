@@ -45,7 +45,7 @@ func (m *model) dashboardRows() []row {
 		right = append(right, row{text: m.heading(m.public(c.Name)) + " / " + m.statusText(c.Status)})
 		right = append(right, m.detailRows("Management", map[bool]string{true: "Enabled", false: "Not managed"}[c.Managed], rightWidth)...)
 		right = append(right, m.detailRows("Gateway", "Gateway A / local settings", rightWidth)...)
-		right = append(right, m.detailRows("Model / default", m.public(c.Profile.Model+" / "+tierLabel(c.Profile.Tier)), rightWidth)...)
+		right = append(right, m.detailRows("Model / default", m.modelDefault(c.Profile.Model, c.Profile.Tier), rightWidth)...)
 		right = append(right, m.detailRows("Budget", fmt.Sprintf("%d tokens / compact %d", c.Profile.Budget, c.Profile.Compact), rightWidth)...)
 		right = append(right, m.detailRows("Available tiers:", tierAvailability(m.appliedTiers()), rightWidth)...)
 		right = append(right, m.detailRows("Auth / API", "Unverified / not tested", rightWidth)...)
@@ -58,7 +58,9 @@ func (m *model) dashboardRows() []row {
 	} else {
 		right = append(right, row{text: "No client selected. Inspect or refresh local settings."})
 	}
-	right = append(right, row{}, row{text: m.heading("NEXT ACTIONS")}, row{text: m.note("Configure, then review. Launch uses applied settings.")})
+	right = append(right, row{})
+	right = append(right, m.dashboardNotice(rightWidth)...)
+	right = append(right, row{}, row{text: m.heading("NEXT ACTIONS")})
 	aux := false
 	for i, control := range m.controls() {
 		if i < navCount {
@@ -153,8 +155,8 @@ func (m *model) clientRows(c core.Client, index, width int) []row {
 	if model == "" {
 		model = "Custom configuration"
 	}
-	model = ansi.Truncate(model, max(1, width-9-ansi.StringWidth(tier)), m.ellipsis()) + " / " + tier
-	rows := []row{{text: label, focus: focused, selected: selected}, {text: "      " + m.public(model), selected: selected}, {text: "      " + m.note(management), selected: selected}, {}}
+	model = m.modelDefault(ansi.Truncate(model, max(1, width-9-ansi.StringWidth(tier)), m.ellipsis()), tier)
+	rows := []row{{text: label, focus: focused, selected: selected}, {text: "      " + model, selected: selected}, {text: "      " + m.note(management), selected: selected}, {}}
 	return m.column(rows, width)
 }
 func (m *model) detailRows(label, value string, width int) []row {

@@ -140,12 +140,13 @@ func TestCompositionLongContentEveryControlAndScroll(t *testing.T) {
 
 func TestCompositionPrimaryActionHasSeparateTreatment(t *testing.T) {
 	m := compositionFixture(t)
+	m.width, m.height = 120, 40
 	m.options.NoColor, m.options.ASCII, m.options.Theme = false, false, "dark"
 	m.focusID("nav:Dashboard")
 	lines, _, _, _ := m.layout()
 	var primary, auxiliary string
 	for _, r := range lines {
-		if strings.Contains(ansi.Strip(r.text), "Configure selected client") {
+		if strings.Contains(ansi.Strip(r.text), "Configure Codex") {
 			primary = r.text
 		}
 		if strings.Contains(ansi.Strip(r.text), "Continue without monitor") {
@@ -316,6 +317,66 @@ func TestCompositionSmallDashboardStartsWithClientScope(t *testing.T) {
 	frame := strings.Split(ansi.Strip(m.View().Content), "\n")
 	if !strings.Contains(frame[3], "Your clients") {
 		t.Fatalf("small Dashboard starts with an orphaned summary: %q", frame[3])
+	}
+	assertFrame(t, m)
+}
+
+func TestCompositionActiveTabDiffersFromSelectedAndFocus(t *testing.T) {
+	m := compositionFixture(t)
+	m.options.NoColor, m.options.ASCII, m.options.Theme = false, false, "dark"
+	cells := uv.NewStyledString(m.shellHeader()[1]).Lines(ansi.GraphemeWidth)[0]
+	selected := uv.NewStyledString(m.selectionStyle("Selected", m.width)).Lines(ansi.GraphemeWidth)[0]
+	if cells[3].Style.Bg == nil || selected[3].Style.Bg == nil {
+		t.Fatal("missing active or selected surface")
+	}
+	r, g, b, a := cells[3].Style.Bg.RGBA()
+	r2, g2, b2, a2 := selected[3].Style.Bg.RGBA()
+	if r == r2 && g == g2 && b == b2 && a == a2 {
+		t.Fatal("current section uses the same modest surface as selection/focus")
+	}
+	m.options.NoColor = true
+	if !strings.Contains(m.View().Content, "[Dashboard]") {
+		t.Fatal("no-color current section lacks a structural cue")
+	}
+	assertFrame(t, m)
+}
+
+func TestCompositionNoticeMatchesSelectedClientState(t *testing.T) {
+	m := compositionFixture(t)
+	m.width, m.height = 120, 40
+	for _, state := range []struct{ name, want string }{{"configured", "Configured / no pending draft"}, {"draft", "Draft waiting for review"}, {"setup", "Ready to configure"}, {"readonly", "Inspection only"}} {
+		m.selected = "codex"
+		c := &m.snapshot.Clients[0]
+		c.Managed = true
+		m.drafts[c.ID] = m.baselines[c.ID]
+		switch state.name {
+		case "draft":
+			d := m.draft()
+			d.Profile.Budget++
+			m.drafts[c.ID] = d
+		case "setup":
+			c.Managed = false
+			m.baselines[c.ID] = desiredClient(*c)
+			m.drafts[c.ID] = m.baselines[c.ID]
+		case "readonly":
+			m.selected = "client-3"
+		}
+		frame := ansi.Strip(m.View().Content)
+		if !strings.Contains(frame, state.want) {
+			t.Fatalf("%s state lacks %q", state.name, state.want)
+		}
+	}
+}
+
+func TestCompositionUnicodeModelTierAndClientActionLabels(t *testing.T) {
+	m := compositionFixture(t)
+	m.options.NoColor, m.options.ASCII, m.options.Theme = false, false, "dark"
+	m.width, m.height = 120, 40
+	frame := ansi.Strip(m.View().Content)
+	for _, label := range []string{"gpt-6.1-sol · Standard", "Configure Codex", "Review Codex draft", "Launch Codex", "Available tiers:"} {
+		if !strings.Contains(frame, label) {
+			t.Errorf("missing preferred native label %q", label)
+		}
 	}
 	assertFrame(t, m)
 }

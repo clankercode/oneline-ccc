@@ -117,7 +117,11 @@ func (m *model) shellHeader() []string {
 	names := []string{"Dashboard", "Models", "Review", "Jobs", "More"}
 	var tabs []string
 	for i, name := range names {
+		active := name == m.screen || (i == 4 && m.screen != "Dashboard" && m.screen != "Models" && m.screen != "Review" && m.screen != "Jobs")
 		label := name
+		if active {
+			label = "[" + name + "]"
+		}
 		focused := m.modal == "" && m.editor == nil && m.focus == i
 		if focused {
 			label = "> " + label
@@ -125,11 +129,10 @@ func (m *model) shellHeader() []string {
 		if m.width >= 60 {
 			label = " " + label + " "
 		}
-		active := name == m.screen || (i == 4 && m.screen != "Dashboard" && m.screen != "Models" && m.screen != "Review" && m.screen != "Jobs")
 		if !m.options.NoColor {
 			s := m.surface(surfaceBase)
 			if active {
-				s = m.surface(surfaceActive)
+				s = m.surface(surfacePrimary)
 			}
 			if focused {
 				s = s.Bold(true).Underline(true)
@@ -233,6 +236,19 @@ func (m *model) scrollScope(start, count, total int) string {
 }
 
 func (m *model) actionRows(c control, index, width int, primary bool) []row {
+	if primary {
+		if client, ok := m.client(); ok {
+			name := ansi.Truncate(m.public(client.Name), max(4, width-20), m.ellipsis())
+			switch c.id {
+			case "configure":
+				c.label = "Configure " + name
+			case "plan":
+				c.label = "Review " + name + " draft"
+			case "launch":
+				c.label = "Launch " + name
+			}
+		}
+	}
 	r := m.controlRow(control{id: c.id, label: c.label}, index)
 	if primary {
 		r.text = strings.TrimRight(r.text, " ")
@@ -285,4 +301,45 @@ func (m *model) ellipsis() string {
 		return "..."
 	}
 	return "…"
+}
+
+// Model IDs remain unchanged; the request tier is a separate accented value.
+func (m *model) modelDefault(model, tier string) string {
+	separator := " · "
+	if m.options.ASCII {
+		separator = " / "
+	}
+	return m.public(model) + separator + m.heading(m.public(tierLabel(tier)))
+}
+
+func (m *model) dashboardNotice(width int) []row {
+	title, message := "Select a client", "Choose a client or r refresh local inspection."
+	if c, ok := m.client(); ok {
+		switch {
+		case m.editable() != "":
+			title = "Inspection only"
+			message = m.editable() + ". Configure to inspect; ? Help for supported setup."
+		case m.drafts[c.ID] != m.baselines[c.ID]:
+			title = "Draft waiting for review"
+			message = "Review staged changes. Nothing changes until you apply the exact plan."
+		case c.Managed && strings.EqualFold(c.Status, "CONFIGURED"):
+			title = "Configured / no pending draft"
+			message = "Launch with applied settings. Authentication and inference remain unverified."
+		case c.Managed:
+			title = "Managed / no pending draft"
+			message = "Inspect local configuration before launch. Auth / API remains unverified."
+		default:
+			title = "Ready to configure"
+			message = "Configure this client, enable management and review the draft before applying."
+		}
+	}
+	edge := "│ "
+	if m.options.ASCII {
+		edge = "| "
+	}
+	rs := []row{{text: m.fill(edge+m.heading(title), width, surfaceRaised)}}
+	for _, line := range strings.Split(ansi.Wrap(m.public(message), max(1, width-2), ""), "\n") {
+		rs = append(rs, row{text: m.fill(edge+m.note(line), width, surfaceRaised)})
+	}
+	return rs
 }
