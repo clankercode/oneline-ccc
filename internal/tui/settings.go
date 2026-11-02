@@ -1,9 +1,8 @@
 package tui
 
 func (m *model) settingsRows() []row {
-	width := m.contentWidth()
-	rs := []row{{text: m.heading("Settings & navigation")}, {text: m.note("Display choices apply to this session")}, {}}
-	rs = append(rs, m.gatewaySettingsSection("DISPLAY / CURRENT CHOICES", width))
+	width := m.gatewaySettingsPanelWidth()
+	left := []row{m.gatewaySettingsSection("DISPLAY / CURRENT CHOICES", width)}
 	for i, c := range m.controls() {
 		switch c.id {
 		case "theme":
@@ -17,40 +16,44 @@ func (m *model) settingsRows() []row {
 		default:
 			continue
 		}
-		rs = append(rs, m.gatewaySettingsAction(c, i)...)
+		left = append(left, m.gatewaySettingsAction(c, i)...)
 	}
-	rs = append(rs, row{text: m.note("Enter appearance to cycle dark / light / mono.")})
-	rs = append(rs, row{text: m.note("Display preferences do not change client configuration.")})
-	rs = append(rs, row{}, m.gatewaySettingsSection("CREDENTIALS / STORAGE INTENT", width))
-	rs = append(rs, m.gatewaySettingsFact("Availability", m.gatewaySettingsCredential()))
-	rs = append(rs, m.gatewaySettingsFact("Env reference", m.gatewaySettingsReference()))
-	rs = append(rs, m.gatewaySettingsFact("Save default", "Session only / vault is an explicit choice"))
+	if m.height > 12 {
+		left = append(left, row{text: m.note("This session / Enter cycles appearance.")})
+	}
+	if m.width >= 100 {
+		left = append(left, row{}, row{text: m.note("Display choices keep client configuration unchanged.")})
+	}
+	right := []row{m.gatewaySettingsSection("CREDENTIALS / STORAGE INTENT", width)}
+	right = append(right, m.gatewaySettingsFact("Availability", m.gatewaySettingsCredential()))
+	right = append(right, m.gatewaySettingsFact("Env reference", m.gatewaySettingsReference()))
+	right = append(right, m.gatewaySettingsFact("Save default", "Session only / vault is opt-in"))
 	for i, c := range m.controls() {
 		if c.id == "key" {
-			rs = append(rs, m.gatewaySettingsAction(c, i)...)
+			c.label = "Enter API key (hidden)"
+			right = append(right, m.gatewaySettingsAction(c, i)...)
 		}
 	}
-	rs = append(rs, row{}, m.gatewaySettingsSection("TOOLS / NAVIGATION", width))
+	right = append(right, row{}, m.gatewaySettingsSection("TOOLS / NAVIGATION", width))
 	for i, c := range m.controls() {
 		switch c.id {
 		case "nav:Utilities":
-			c.label = "Utilities / inspect unavailable installer"
+			c.label = "Utilities / unavailable installer"
 		case "nav:Service":
-			c.label = "Background monitor / optional observation"
+			c.label = "Background monitor / optional"
 		default:
 			continue
 		}
-		rs = append(rs, m.gatewaySettingsAction(c, i)...)
+		right = append(right, m.gatewaySettingsAction(c, i)...)
 	}
-	rs = append(rs, row{text: m.note("Native configuration: Codex only")})
+	right = append(right, row{text: m.note("Native configuration: Codex only")})
 	if version := m.gatewaySettingsVersion(); version != "" {
-		rs = append(rs, m.gatewaySettingsFact("Version", version))
+		right = append(right, m.gatewaySettingsFact("Version", version))
 	}
-	rs = append(rs, row{}, m.gatewaySettingsSection("RETURN / HELP", width))
-	for i, c := range m.controls() {
-		if c.id == "back" || c.id == "help" || c.id == "palette" {
-			rs = append(rs, m.gatewaySettingsAction(c, i)...)
-		}
+	rs := []row{{text: m.heading("Settings & navigation / this session")}}
+	if m.width >= 100 {
+		rs = append(rs, row{})
 	}
-	return rs
+	rs = append(rs, m.gatewaySettingsPanels(left, right)...)
+	return append(rs, m.gatewaySettingsReturn()...)
 }
