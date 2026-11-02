@@ -12,13 +12,20 @@ operator rejected the native interface as visually unlike the approved preview,
 awkward transition from tabs to menus by pressing Down. That criticism was
 missing from the original remaining-items list; it is now the explicit P0 below.
 
-This records 18 remaining areas: the P0 remediation and the original 17 areas
+The baseline records 18 remaining areas: the P0 remediation and the original 17 areas
 identified against the full project brief. All remain open at this baseline.
 Update their status as implementation and verification finish, with links to
 the resulting evidence. Earlier functional checks and browser-preview approval
 do not establish that the native interface meets the visual or usability bar.
 Original item numbers 1–17 are retained; item 18 is the highest-priority P0,
 with its detailed requirements placed before them.
+
+Execution started **2026-11-03** under the active full-backlog goal. The
+[product completion campaign](product-completion-campaign.md) records ordered
+milestones and task boundaries. Current work: item 1's rendered shutdown race,
+item 18's navigation and native capture tooling. All checkboxes remain open until
+the complete corresponding acceptance evidence exists.
+Discovered work is appended below with stable IDs; it is part of the same goal.
 
 Some areas extend working features; others require new implementation. Automatic
 maintenance and automatic repair retain the policy decisions and explicit opt-in
@@ -58,6 +65,7 @@ for shipped capabilities; older plans retain their original planning baselines.
 | [Observer contract](../../internal/monitor/README.md) | Current read-only observation and native lifecycle boundaries |
 | [Test documentation](../../tests/README.md) | Existing verification harnesses |
 | [Plan index](README.md) | Entry point for the repository's plans and status |
+| [Product completion campaign](product-completion-campaign.md) | Full-backlog execution order, first milestone boundaries and dynamic-expansion rules |
 
 ## P0: Native TUI visual quality and interaction remediation
 
@@ -356,3 +364,12 @@ requirements carry those instructions into the backlog so they survive handoff:
     [detailed remediation and acceptance gates](#p0-native-tui-visual-quality-and-interaction-remediation)
     above using `visual-review-and-fix`, `ultra-code-workflows`, independent
     subagents and actual native/mockup comparisons. **Highest priority; open.**
+
+19. [ ] **Keep the console interactive when color is disabled.** Discovered
+    2026-11-03: `useTUI` in `cmd/oneline-ccc/signals.go` treats `NO_COLOR` as
+    read-only plain mode, so a user requesting no color loses all configuration
+    controls. Separate presentation capability from entry mode: on a real TTY,
+    `NO_COLOR` should keep keyboard-complete monochrome management; explicit
+    `--plain`, redirected streams and incapable terminals retain plain status.
+    Carry the same decision into signal ownership, help and native usage, with
+    tests for entry mode, no-color rendering, typing and safe interruption.
