@@ -1,9 +1,17 @@
 # Native foundation verification
 
 The first native development build implements the foreground Codex path in
-[native-foundation.md](../plans/native-foundation.md). It retains the approved
-colored dashboard, model/default-tier distinction, shortcut help, command search,
+[native-foundation.md](../plans/native-foundation.md), including a colored
+dashboard, model/default-tier distinction, shortcut help, command search,
 draft guards and explicit review/apply. See [usage](../native-app.md).
+
+**Visual and interaction acceptance reopened, 2026-11-03.** The operator found
+the native TUI visually unlike the approved preview and cumbersome to navigate,
+with inconsistent controls. The evidence below verifies functional development
+behavior, not approved native visual quality or a satisfactory focus model.
+The [P0 remediation backlog](../plans/remaining-items-so-far.md#p0-native-tui-visual-quality-and-interaction-remediation)
+requires per-screen native/mockup comparisons and visual/source review loops
+before this acceptance gate can close.
 
 ## Evidence and acceptance boundaries
 

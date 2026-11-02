@@ -1,6 +1,11 @@
 # TUI navigation and color pass
 
-Status: visual direction and browser specimen; no Go TUI is implemented.
+Status: approved visual direction and browser specimen. A native Go development
+build now exists, but the operator rejected its visual fidelity and interaction
+quality on 2026-11-03. Native acceptance is reopened; the
+[P0 remediation backlog](../plans/remaining-items-so-far.md#p0-native-tui-visual-quality-and-interaction-remediation)
+requires comparisons of actual native renders against this reference across
+every screen and overlay, with visual/source review and fix loops.
 The [screen flows](tui-screen-flows.md) remain the behavior and layout plan.
 The [interactive specimen](../../site/tui-preview.html) uses illustrative data.
 

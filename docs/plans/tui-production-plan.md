@@ -13,6 +13,15 @@ Interaction follow-up: [usability contract](../design/tui-usability.md) connects
 management choices, model settings, review, simulated receipts and keyboard
 help/search. Carry these paths into T1/T4; browser tests do not satisfy native gates.
 
+**Acceptance correction, 2026-11-03:** the operator rejected the native TUI's
+visual fidelity and cumbersome, inconsistent controls, including the awkward
+movement from tabs into menus via Down. Native visual and interaction acceptance is
+reopened. The [P0 remediation backlog](remaining-items-so-far.md#p0-native-tui-visual-quality-and-interaction-remediation)
+requires actual native/mockup comparisons for every screen and overlay,
+consistent navigation, alternating `visual-review-and-fix` passes and
+independent subagent reviews under `ultra-code-workflows`. Functional native
+checks and approval of the browser specimen do not close this gate.
+
 Production follow-up from native acceptance: resolve the pinned Bubble Tea/
 cancelreader reader-close race in rendered SIGTERM shutdown and prove native
 Windows/macOS interactive terminal behavior before wider console acceptance.
@@ -227,9 +236,9 @@ ET10 `TestET10ReleaseInstallAndRollback`: fresh/rerun/upgrade/uninstall at paths
 
 ## Implement → review → fix → release gates
 
-Adaptation of `ultra-code-workflows`: this is a bounded single-worker planning task. No agents, worktrees, extra ledgers, commits, deployment or attention tools are used here. These three documents are the review packet; the named report is written last. Brainstorming/writing-plan guidance is adapted to the supplied brief: provide decisions and a wayfinding agenda, not approval stops or implementation code.
+Historical planning adaptation of `ultra-code-workflows`: the original plan was a bounded single-worker planning task. Its no-agent/no-deployment scope described that planning pass only. For the current native TUI remediation, the operator explicitly requires independent subagents and rendered visual-review-and-fix loops; the linked P0 is the current acceptance requirement.
 
-For later authorized development, use the skill's per-task loop with explicit ownership: spec/ETs → pinned plan/contracts/preflight → implement → review → fix/re-review → integrated release gate. Choose execution seats then; the present no-subagent authorization remains in force for this task. Record rulings, known errors and handoffs in the controller's workflow records, never silently weaken acceptance to pass.
+For development, use the skill's per-task loop with explicit ownership: spec/ETs → pinned plan/contracts/preflight → implement → review → fix/re-review → integrated release gate. Choose independent implementation and review seats for each bounded task. Record rulings, known errors and handoffs in the controller's workflow records, never silently weaken acceptance to pass.
 
 1. **Preflight:** record dependency versions, known unsupported platforms, task interface producer/consumer rows, baseline and scratch roots. Stage-0 probes resolve every consequential UNVERIFIED dependency before its task. Real credentials, production state and elevation stay with an explicitly authorized operator/controller.
 2. **Per task:** name failing behavioral tests, observe RED where code is involved, implement smallest slice, run targeted GREEN and full applicable gate. Proposed Go gate: `go test ./...`, `go test -race ./...`, `go vet ./...`; release builds use `CGO_ENABLED=0`, while race checks use a supported native toolchain. Capture actual results, not worker claims.

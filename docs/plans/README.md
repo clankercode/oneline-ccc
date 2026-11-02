@@ -1,7 +1,11 @@
 # Plans
 
 Current backlog: [Remaining items so far](remaining-items-so-far.md), recorded
-after the verified native foundation at `40d02d4`.
+after the functionally verified native foundation at `40d02d4`. Native TUI
+visual and interaction acceptance is **reopened**: the operator rejected its
+fidelity to the approved preview and its inconsistent, cumbersome navigation.
+The backlog's P0 records the required screen-by-screen remediation and review
+loops.
 
 | Plan | Delivers | Exit checks | Status |
 | --- | --- | --- | --- |
