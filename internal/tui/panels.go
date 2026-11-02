@@ -91,36 +91,50 @@ func (m *model) modalRows() []row {
 			}
 		}
 		rs = m.layerTitle(title)
-		if m.height > 12 {
-			rs = append(rs, row{})
-			if m.modal == "quit" {
-				dirty := 0
-				for id, d := range m.drafts {
-					if d != m.baselines[id] {
-						dirty++
-					}
+		var details []row
+		detail := func(s string) { details = append(details, row{text: m.note(m.public(s))}) }
+		if m.modal == "quit" {
+			dirty := 0
+			for id, d := range m.drafts {
+				if d != m.baselines[id] {
+					dirty++
 				}
-				text(fmt.Sprintf("Unapplied client drafts: %d", dirty))
-				text("Session-only credentials end when the console closes.")
 			}
-			if strings.HasPrefix(m.modal, "service:") {
-				text("Backend: " + m.snapshot.Service.Backend + " | Observed: " + m.snapshot.Service.Status)
-				text("Optional background observation; setup works without it.")
-			}
-			if m.modal == "discard" {
-				text("Prepared review is cleared. Applied configuration stays.")
-			}
-			if m.modal == "ssh" {
-				text("Explicit command handoff; this does not enable a server.")
-				text("Review account and firewall changes in the helper.")
-			}
+			detail(fmt.Sprintf("Unapplied client drafts: %d", dirty))
+			detail("Session-only credentials end when the console closes.")
 		}
-		rs = append(rs, m.layerBand(m.note(m.public(scope)), surfaceRaised)...)
-		if m.height > 12 {
-			rs = append(rs, row{}, row{text: m.heading("Choose explicitly / Esc keeps working")})
+		if strings.HasPrefix(m.modal, "service:") {
+			detail("Backend: " + m.snapshot.Service.Backend + " | Observed: " + m.snapshot.Service.Status)
+			detail("Optional background observation; setup works without it.")
 		}
-		rs = append(rs, m.layerChoice("Back; keep working", m.modalFocus == 0, false)...)
-		rs = append(rs, m.layerChoice("Confirm: "+outcome, m.modalFocus == 1, true)...)
+		if m.modal == "discard" {
+			detail("Prepared review is cleared. Applied configuration stays.")
+		}
+		if m.modal == "ssh" {
+			detail("Explicit command handoff; this does not enable a server.")
+			detail("Review account and firewall changes in the helper.")
+		}
+		scopeRows := m.layerBand(m.note(m.public(scope)), surfaceRaised)
+		choices := m.layerChoice("Back; keep working", m.modalFocus == 0, false)
+		choices = append(choices, m.layerChoice("Confirm: "+outcome, m.modalFocus == 1, true)...)
+		if !m.layerFits(rs, details, scopeRows, choices) {
+			details = nil
+		}
+		actionHint := []row{{text: m.heading("Choose explicitly / Esc keeps working")}}
+		if !m.layerFits(rs, details, scopeRows, actionHint, choices) {
+			actionHint = nil
+		}
+		gap := []row{{}}
+		if m.layerFits(rs, gap, details, scopeRows, actionHint, choices) {
+			rs = append(rs, gap...)
+		}
+		rs = append(rs, details...)
+		rs = append(rs, scopeRows...)
+		if m.layerFits(rs, gap, actionHint, choices) {
+			rs = append(rs, gap...)
+		}
+		rs = append(rs, actionHint...)
+		rs = append(rs, choices...)
 	}
 	return rs
 }
@@ -128,18 +142,47 @@ func (m *model) editorRows() []row {
 	e := m.editor
 	rs := m.layerTitle("Editing " + e.field)
 	if e.field == "key" {
-		if m.height > 12 {
-			rs = append(rs, row{text: m.note("The value stays hidden. Esc drops the unsaved key.")}, row{})
-			rs = append(rs, m.layerBand(m.note("Storage / choose explicitly"), surfaceRaised)...)
-		}
+		var inputs, actions []row
 		labels := []string{"API key: [hidden]", checkbox(m.persistent) + " Persist using backend credential storage", "Save key", "Back; drop unsaved key"}
 		for i, label := range labels {
-			if i == 2 && m.height > 12 {
-				rs = append(rs, row{}, row{text: m.note("Session only unless persistence is selected.")})
-				rs = append(rs, row{text: m.note("Saving uses the backend; a storage request is not a saved key.")}, row{})
+			choice := m.layerChoice(label, i == e.focus, i == 2)
+			if i < 2 {
+				inputs = append(inputs, choice...)
+			} else {
+				actions = append(actions, choice...)
 			}
-			rs = append(rs, m.layerChoice(label, i == e.focus, i == 2)...)
 		}
+		notes := []row{{text: m.note("Session only unless persistence is selected.")}}
+		if !m.layerFits(rs, inputs, notes, actions) {
+			notes = nil
+		}
+		backendNote := []row{{text: m.note("Saving uses the backend; a storage request is not a saved key.")}}
+		if m.layerFits(rs, inputs, notes, backendNote, actions) {
+			notes = append(notes, backendNote...)
+		}
+		intro := []row{{text: m.note("The value stays hidden. Esc drops the unsaved key.")}}
+		if !m.layerFits(rs, intro, inputs, notes, actions) {
+			intro = nil
+		}
+		storageTitle := m.layerBand(m.note("Storage / choose explicitly"), surfaceRaised)
+		if !m.layerFits(rs, intro, storageTitle, inputs, notes, actions) {
+			storageTitle = nil
+		}
+		rs = append(rs, intro...)
+		gap := []row{{}}
+		if len(intro) > 0 && m.layerFits(rs, gap, storageTitle, inputs, notes, actions) {
+			rs = append(rs, gap...)
+		}
+		rs = append(rs, storageTitle...)
+		rs = append(rs, inputs...)
+		if len(notes) > 0 && m.layerFits(rs, gap, notes, actions) {
+			rs = append(rs, gap...)
+		}
+		rs = append(rs, notes...)
+		if m.layerFits(rs, gap, actions) {
+			rs = append(rs, gap...)
+		}
+		rs = append(rs, actions...)
 		return rs
 	}
 	label, boundary, hint := "Value", "Draft only", "Enter keeps this field; review before applying."
@@ -157,18 +200,32 @@ func (m *model) editorRows() []row {
 	case "credential":
 		label, boundary, hint = "Environment variable name", "Variable name, not the key", "The draft is validated at review; the credential stays separate."
 	}
-	if m.height > 12 {
-		rs = append(rs, row{text: m.note("Esc keeps the previous draft")}, row{})
-	}
-	rs = append(rs, row{text: m.heading(label)})
 	value := layerCaret(string(e.value[:e.pos]), string(e.value[e.pos:]), max(0, m.layerWidth()-3))
-	rs = append(rs, row{text: m.fill("> "+value, m.layerWidth(), surfaceRaised), focus: true})
-	rs = append(rs, m.layerBand(m.note(boundary), surfaceRaised)...)
-	if m.height > 12 {
-		rs = append(rs, row{text: m.note(hint)}, row{})
-	}
+	// Field meaning, value/caret and complete guidance are the required form.
+	// Redundant commit/cancel prose and blank separators spend only spare rows.
+	form := []row{{text: m.heading(label)}, {text: m.fill("> "+value, m.layerWidth(), surfaceRaised), focus: true}}
+	form = append(form, m.layerBand(m.note(boundary), surfaceRaised)...)
+	form = append(form, row{text: m.note(hint)})
+	var commitHint []row
 	if e.field != "filter" {
-		rs = append(rs, row{text: m.note("Enter commits this field to the draft only.")})
+		commitHint = []row{{text: m.note("Enter commits this field to the draft only.")}}
+		if !m.layerFits(rs, form, commitHint) {
+			commitHint = nil
+		}
 	}
+	intro := []row{{text: m.note("Esc keeps the previous draft")}}
+	if !m.layerFits(rs, intro, form, commitHint) {
+		intro = nil
+	}
+	gap := []row{{}}
+	rs = append(rs, intro...)
+	if len(intro) > 0 && m.layerFits(rs, gap, form, commitHint) {
+		rs = append(rs, gap...)
+	}
+	rs = append(rs, form...)
+	if len(commitHint) > 0 && m.layerFits(rs, gap, commitHint) {
+		rs = append(rs, gap...)
+	}
+	rs = append(rs, commitHint...)
 	return rs
 }

@@ -222,3 +222,104 @@ func TestLayerCaretEditsExactUnicodeAndCancelKeepsDraft(t *testing.T) {
 		t.Fatal("cancel changed the draft or return focus")
 	}
 }
+
+func TestLayerBoundaryHeightsKeepWholeFocusedKeyChoice(t *testing.T) {
+	for _, width := range []int{40, 60, 80} {
+		for _, height := range []int{12, 13, 14} {
+			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
+				m, backend := loaded(t)
+				m.width, m.height = width, height
+				m.goTo("Gateway")
+				activate(t, m, "key")
+				origin, draft := m.location(), m.draft()
+				before := m.View().Content
+				m.Update(tea.PasteMsg{Content: "synthetic-boundary-key"})
+				if m.View().Content != before {
+					t.Fatal("key input exposed its value or length")
+				}
+				for _, label := range []string{"API key: [hidden]", "[ ] Persist using backend credential storage", "Save key", "Back; drop unsaved key"} {
+					assertFrame(t, m)
+					frame := layerText(m.View().Content)
+					if !strings.Contains(frame, "> "+label) {
+						t.Errorf("focused choice loses complete label %q: %s", label, frame)
+					}
+					press(m, "pgdown")
+					if layerText(m.View().Content) != frame {
+						t.Fatal("presentation changed key-editor paging")
+					}
+					press(m, "tab")
+				}
+				press(m, "shift+tab")
+				if m.editor.focus != 3 {
+					t.Fatal("reverse traversal changed")
+				}
+				press(m, "esc")
+				if m.location() != origin || m.draft() != draft || backend.keyCalls != 0 {
+					t.Fatal("cancel changed the draft, key or invoking location")
+				}
+			})
+		}
+	}
+}
+
+func TestLayerBoundaryHeightsKeepWholeBusyQuitAction(t *testing.T) {
+	for _, width := range []int{40, 60, 80} {
+		for _, height := range []int{12, 13, 14} {
+			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
+				m, _ := loaded(t)
+				m.width, m.height = width, height
+				m.busy = "inspection"
+				m.openModal("quit")
+				if m.modalFocus != 0 {
+					t.Fatal("Back was not the initial choice")
+				}
+				for i := 0; i < 2; i++ {
+					assertFrame(t, m)
+					frame := layerText(m.View().Content)
+					for _, text := range []string{"Running: inspection", "Request cancellation; wait for its final outcome.", "Back; keep working", "Confirm: Request cancel; stay until outcome"} {
+						if !strings.Contains(frame, text) {
+							t.Errorf("choice %d loses %q: %s", i, text, frame)
+						}
+					}
+					press(m, "tab")
+				}
+				press(m, "enter")
+				if m.modal != "" || m.busy != "inspection" {
+					t.Fatal("initial Back changed running work")
+				}
+			})
+		}
+	}
+}
+
+func TestLayerBoundaryHeightsKeepCompleteEditorGuidance(t *testing.T) {
+	for _, width := range []int{40, 60, 80} {
+		for _, height := range []int{12, 13, 14} {
+			for _, tc := range []struct{ field, boundary, guidance string }{
+				{"filter", "Enter applies the filter", "Filtering preserves the selected client and drafts."},
+				{"model", "Draft only", "Preserve the exact ID; availability is verified separately."},
+				{"budget", "Draft only", "Positive whole tokens; recalculates the compact budget."},
+				{"compact", "Draft only", "Positive whole tokens; chosen budget is not verified capacity."},
+				{"endpoint", "Local-only endpoint", "Public views use Gateway A. Use an absolute HTTP or HTTPS URL."},
+				{"credential", "Variable name, not the key", "The draft is validated at review; the credential stays separate."},
+			} {
+				t.Run(fmt.Sprintf("%dx%d/%s", width, height, tc.field), func(t *testing.T) {
+					m, _ := loaded(t)
+					m.width, m.height = width, height
+					m.startEditor(tc.field, "sample-value")
+					assertFrame(t, m)
+					frame := layerText(m.View().Content)
+					for _, text := range []string{"> sample-value|", tc.boundary, tc.guidance} {
+						if !strings.Contains(frame, text) {
+							t.Errorf("unreachable editor text %q: %s", text, frame)
+						}
+					}
+					press(m, "pgdown")
+					if layerText(m.View().Content) != frame {
+						t.Fatal("presentation changed editor paging")
+					}
+				})
+			}
+		}
+	}
+}

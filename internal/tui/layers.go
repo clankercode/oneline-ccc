@@ -27,6 +27,16 @@ func (m *model) layerTitle(title string) []row {
 	return m.layerBand(m.heading(m.public(title)), surfaceRaised)
 }
 
+// Modal/editor input consumes paging keys. Add supporting prose or spacing
+// only if the entire form still fits, including every wrapped choice line.
+func (m *model) layerFits(parts ...[]row) bool {
+	room := max(1, m.height-len(m.shellHeader())-len(m.shellFooter("")))
+	for _, part := range parts {
+		room -= len(m.column(part, m.layerWidth()))
+	}
+	return room >= 0
+}
+
 func (m *model) layerChoice(label string, focused, primary bool) []row {
 	var rows []row
 	for i, line := range strings.Split(ansi.Wrap(m.public(label), max(1, m.layerWidth()-2), ""), "\n") {
