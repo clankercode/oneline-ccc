@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,11 @@ func TestCLIChildFixture(t *testing.T) {
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Printf("stdout:%s|ambient:%s", data, os.Getenv("CCC_AMBIENT"))
 		fmt.Fprint(os.Stderr, "child-stderr")
+	case "interrupt":
+		self, _ := os.FindProcess(os.Getpid())
+		_ = self.Signal(os.Interrupt)
+		time.Sleep(time.Second)
+		os.Exit(99)
 	case "exit7":
 		os.Exit(7)
 	case "ui-signals":
@@ -88,5 +94,17 @@ func TestMonitorExactCommandContract(t *testing.T) {
 	d.newEngine = func(o engineOptions) (engine, error) { opts = o; return f, nil }
 	if run(context.Background(), []string{"--state-dir", state, "--codex-home", home, "observe"}, d) != 0 || f.observe != 1 || f.once || opts.StateRoot != state || opts.CodexHome != home {
 		t.Fatal("monitor launch vector changed")
+	}
+}
+
+func TestDirectChildInterruptPreservesSignalExitStatus(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal exit status; Windows console proof belongs to runner")
+	}
+	d, f, _, _, _ := harness(t)
+	f.cmd = childFixture("interrupt")
+	d.runChild = runProcess
+	if got := run(context.Background(), []string{"launch", "codex"}, d); got != 130 {
+		t.Fatalf("interrupted child returned %d, wanted 130", got)
 	}
 }

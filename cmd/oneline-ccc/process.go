@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
@@ -33,8 +34,13 @@ func launch(ctx context.Context, o flags, e engine, d dependencies) int {
 		return 0
 	}
 	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() > 0 {
-		return exit.ExitCode()
+	if errors.As(err, &exit) {
+		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return 128 + int(status.Signal())
+		}
+		if exit.ExitCode() > 0 {
+			return exit.ExitCode()
+		}
 	}
 	return fail(d, label, err)
 }
