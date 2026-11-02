@@ -10,6 +10,7 @@ import * as childProcess from 'node:child_process';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
+import * as lifecycle from './browser-lifecycle.mjs';
 
 const file = fileURLToPath(new URL('./render.mjs', import.meta.url));
 const manifestPath = resolve(process.env.A2_TEST_MANIFEST || '.cache/tui-visual/fix1-red-fixture/manifest.json');
@@ -37,11 +38,12 @@ function solidPNG(w, h) {
 }
 
 async function adapter({ frame = structuredClone(savedFrame), png = savedPNG, version = original.renderer.chromium,
-                         manifest = structuredClone(original), contextError = false, referenceBody = null } = {}) {
+                         manifest = structuredClone(original), contextError = false, referenceBody = null, lifecycleSource = null } = {}) {
   manifest.captures = manifest.captures.slice(0, 1);
   manifest.captures[0].status = 'captured-ansi';
   manifest.captures[0].fixture.expected_view ??= { content: savedFrame.text.join('\n'), alt_screen: true };
   const writes = new Map();
+  const calls = { contexts: 0, stages: 0 };
   const events = new Map();
   const page = {
     setDefaultTimeout() {}, route: async () => {}, on: (name, fn) => events.set(name,fn),
@@ -52,10 +54,11 @@ async function adapter({ frame = structuredClone(savedFrame), png = savedPNG, ve
         status: () => 200, headers: () => ({'content-type':'text/html'}), request: () => ({resourceType: () => 'document'}),
         body: async () => Buffer.from(referenceBody) });
     },
-    screenshot: async ({path}) => { writes.set(path, png); return png; },
+    screenshot: async ({path}) => { if(path)writes.set(path, png); return png; },
     locator: () => ({ screenshot: async () => png, waitFor: async () => {}, selectOption: async () => {}, click: async () => {} }),
   };
   const browser = { version: () => version, newContext: async () => {
+    calls.contexts++;
     if (contextError) throw new Error('injected context failure');
     return {newPage: async () => page, close: async () => {}};
   }};
@@ -65,19 +68,23 @@ async function adapter({ frame = structuredClone(savedFrame), png = savedPNG, ve
     .replace("await import('node:child_process')",'childProcess');
   const evidenceFile = join(dirname(file), 'evidence.mjs');
   const evidence = existsSync(evidenceFile) ? await import(pathToFileURL(evidenceFile)) : {};
-  const sandbox = { ...evidence, childProcess, execFileSync: childProcess.execFileSync,
+  const sandbox = { ...evidence, ...lifecycle, childProcess, execFileSync: childProcess.execFileSync,
     readFile: async (path,...args) => {
       const key=resolve(path instanceof URL ? fileURLToPath(path) : path);
       if(key===manifestPath)return JSON.stringify(manifest);
+      if(key===join(dirname(file),'browser-lifecycle.mjs') && lifecycleSource!==null)return lifecycleSource;
       if(writes.has(key))return writes.get(key);
       return fs.readFile(path,...args);
     },
     writeFile: async (path,data) => writes.set(resolve(path),data), mkdir: async () => {}, createHash,
+    mkdtemp: async prefix => { calls.stages++; return prefix + 'test-only-stage'; },
+    rename: async (from,to) => { writes.set(resolve(to),writes.get(resolve(from))); writes.delete(resolve(from)); },
+    rm: async path => { for (const key of writes.keys()) if (key.startsWith(path + '/')) writes.delete(key); },
     dirname,resolve,join,fileURLToPath,pathToFileURL,Buffer,URL,setTimeout,clearTimeout,
     process:{env:{...process.env},exitCode:0}, console:{error(){}}, structuredClone };
   vm.createContext(sandbox); vm.runInContext(code+'\nglobalThis.nativeRun=native;globalThis.previewRun=preview;',sandbox);
   return {run: () => sandbox.nativeRun(manifestPath,browser), preview: out => sandbox.previewRun('http://127.0.0.1:38627/tui-preview.html',out,browser),
-    writes, manifest, sandbox, latest: () => JSON.parse(writes.get(manifestPath))};
+    writes, calls, manifest, sandbox, latest: () => JSON.parse(writes.get(manifestPath))};
 }
 
 test('renderer rejects a valid background-only PNG before rendered status',async () => {
@@ -92,6 +99,7 @@ test('real production evidence remains accepted as a positive control',async () 
   const a=await adapter();delete a.manifest.renderer;await a.run();
   assert.equal(a.latest().captures[0].status,'rendered');
   assert.match(a.latest().captures[0].evidence_validation.level,/production-view/);
+  assert.equal(a.latest().renderer.lifecycle_source_sha256,createHash('sha256').update(await fs.readFile(new URL('./browser-lifecycle.mjs',import.meta.url))).digest('hex'));
 });
 test('renderer rejects header-only frame against production output',async () => {
   const frame = structuredClone(savedFrame);
@@ -122,6 +130,19 @@ test('mixed resume refuses changed renderer without rewriting old provenance',as
   assert.equal(a.writes.size,0);
   assert.deepEqual(a.manifest.renderer,oldRenderer);
 });
+test('mixed resume refuses changed lifecycle source before context creation or artifact mutation',async () => {
+  const first=await adapter();delete first.manifest.renderer;await first.run();
+  const manifest=first.latest(),old=structuredClone(manifest.captures[0]);old.id='immutable-old-rendered';
+  const oldRenderer=structuredClone(manifest.renderer);
+  const a=await adapter({manifest,lifecycleSource:Buffer.from('changed lifecycle helper source'),contextError:true});
+  a.manifest.captures.unshift(old);
+  await assert.rejects(a.run(),/renderer.*provenance|environment.*mismatch/i);
+  assert.equal(a.writes.size,0);
+  assert.equal(a.calls.contexts,0);
+  assert.equal(a.calls.stages,0);
+  assert.deepEqual(a.manifest.renderer,oldRenderer);
+  assert.deepEqual(a.manifest.captures[0],old);
+});
 test('reference records served bytes separately from tool revision',async () => {
   const body='<!doctype html><title>served by another checkout</title>';
   const a=await adapter({referenceBody:body});
@@ -131,6 +152,7 @@ test('reference records served bytes separately from tool revision',async () => 
   assert.match(record.capture_tool_source_sha,/^[0-9a-f]{40}$/);
   assert.equal(record.served_reference.revision,null);
   assert.ok(record.served_reference.resources.some(resource=>resource.sha256===createHash('sha256').update(body).digest('hex')));
+  assert.equal(record.capture_tool_lifecycle_sha256,createHash('sha256').update(await fs.readFile(new URL('./browser-lifecycle.mjs',import.meta.url))).digest('hex'));
 });
 
 // Re-encode genuine screenshot RGB with a chosen alpha. Valid PNG chunks/CRCs,
