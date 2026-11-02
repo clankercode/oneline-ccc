@@ -40,6 +40,17 @@ Existing keys and unrelated configuration are retained. Account markers use a lo
 
 Timestamped backups of existing configuration and public authorized-key files are kept beside those files, with restricted ACLs. Host private keys are never read, copied or backed up; `ssh-keygen -A` creates missing host keys. Reparse-point paths are refused. Rerunning retains existing keys, creates backups and a separate narrowly scoped firewall rule; it does not skip all work on repeated runs. On failure during authorization/service changes, the helper restores the previous key/configuration bytes and ACLs, directory ACLs, and service startup/running state, and removes firewall rules created by this invocation. Rollback failures are explicitly reported; the service stays stopped if safe restoration cannot be confirmed. Installed capability, created account/profile, missing host keys and protected public-material backups may remain. Read the error and inspect the state before rerunning. A policy refusal before authorization does not stop an already running service.
 
+Before writing candidates, generating host keys or running a SYSTEM probe, setup
+restricts `%ProgramData%\ssh` to SYSTEM and the built-in Administrators group.
+Fresh directories can otherwise inherit ordinary-user write access from
+ProgramData; modern Windows OpenSSH rejects that at service startup with error
+1067 even when `sshd -t` passes. Setup saves the root ACL metadata in memory and
+restores it on normal failure before restoring the previous service state. If
+temporary SYSTEM probe cleanup cannot be confirmed, it keeps the parent
+restricted, leaves SSH stopped and reports `ROLLBACK INCOMPLETE`, preserving the
+protected probe files for inspection. No host private-key contents are read or
+copied by setup.
+
 ## Connect and verify
 
 After successful setup, `sshd` is running with Automatic startup. The helper prints local non-loopback addresses and connection commands:

@@ -192,6 +192,7 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     Assert-FixturePath $Path
     $state.Events.Add('ACL:' + $Path) | Out-Null
     $state.Acls[$Path] = 'restricted:' + $OwnerSid
+    if ($state.FailRootAcl -and $Path -eq (Join-Path $state.ProgramData 'ssh')) { throw 'Fixture partial root ACL failure' }
 }
 '@}
     $nativeCommands = @($sourceAst.FindAll({ param($node)
@@ -292,7 +293,7 @@ function New-SetupFixture([string]$Name) {
         PublicNetwork = $false; FailNative = $false; BadEffective = $false
         ProbeAsOtherUser = $false; FailProbe = $false; TaskRegistered = $false
         TaskState = 'Ready'; DelayedProbeStop = $false; TaskStopPolls = 0; FailProbeStop = $false
-        FailFirewall = $false; FailService = $false; Acls = @{}
+        FailFirewall = $false; FailService = $false; FailRootAcl = $false; FailRootAclRestore = $false; Acls = @{}
         Service = [pscustomobject]@{Status = 'Stopped'; StartType = 'Manual'}
         FirewallEnabled = 'True'; DefaultInboundAction = 'Block'; EmptyFirewallProfiles = $false
     }
@@ -382,6 +383,7 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
         if (-not $LiteralPath) { $LiteralPath = $Path }
         Assert-FixturePath $LiteralPath
         $state.Events.Add('ACLRestore:' + $LiteralPath)
+        if ($state.FailRootAclRestore -and $LiteralPath -eq (Join-Path $state.ProgramData 'ssh')) { throw 'Fixture root ACL restore failure' }
         $state.Acls[$LiteralPath] = $AclObject.Sddl
     }
     function Get-NetIPAddress { }
@@ -605,6 +607,10 @@ Test-Case 'repeat apply preserves existing key content without duplicating suppl
 }
 function Get-LiveFixtureState([hashtable]$State) {
     $result = @()
+    $rootPath = Join-Path $State.ProgramData 'ssh'
+    $rootAcl = 'fixture-original-acl'
+    if ($State.Acls.ContainsKey($rootPath)) { $rootAcl = $State.Acls[$rootPath] }
+    $result += [pscustomobject]@{RootAcl = $rootAcl}
     foreach ($path in @((Join-Path $State.ProgramData 'ssh/sshd_config'), (Join-Path $State.Profile '.ssh/authorized_keys'))) {
         $acl = 'fixture-original-acl'
         if ($State.Acls.ContainsKey($path)) { $acl = $State.Acls[$path] }
@@ -762,7 +768,51 @@ Test-Case 'unconfirmed SYSTEM task stop preserves protected files and refuses au
     Assert-True ($result.Error -match 'Unable to clean up temporary SYSTEM probe') ('Wrong cleanup refusal: ' + $result.Error)
     Assert-True ($state.TaskRegistered) 'Running task was unregistered before confirmed stop'
     Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $state.ProgramData 'ssh') -Filter 'Oneline-CCC-SSH-Probe-*').Count -eq 1) 'Protected files deleted while task could still run'
+    Assert-True ($result.Error -match 'ROLLBACK INCOMPLETE') 'Unconfirmed privileged task must report retained root permissions'
+    $rootPath = Join-Path $state.ProgramData 'ssh'
+    Assert-True ($state.Acls[$rootPath] -eq 'restricted:S-1-5-32-544') 'Unconfirmed task lost protected parent directory'
+    $retainedRootAcl = $state.Acls[$rootPath]
+    $state.Acls.Remove($rootPath)
     Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Unconfirmed stop installed authorization or changed service/firewall'
+    $state.Acls[$rootPath] = $retainedRootAcl
+}
+Test-Case 'SSH root is restricted before hostkey generation and service startup' {
+    $state = New-SetupFixture 'root-security-order'
+    Invoke-MockedSetup $state | Out-Null
+    $rootPath = Join-Path $state.ProgramData 'ssh'
+    Assert-True ($state.Acls[$rootPath] -eq 'restricted:S-1-5-32-544') 'SSH root retained ordinary-user write access'
+    $rootEvent = $state.Events.IndexOf('ACL:' + $rootPath)
+    $keygenEvent = @($state.Events | Where-Object { $_ -match '^Native:ssh-keygen\.exe:-A$' })
+    Assert-True ($rootEvent -ge 0 -and $keygenEvent.Count -eq 1 -and $rootEvent -lt $state.Events.IndexOf($keygenEvent[0])) 'Root was not protected before native key generation'
+    Assert-True ($rootEvent -lt $state.Events.IndexOf('ServiceRestart')) 'Root was not protected before service start'
+}
+Test-Case 'partial root ACL failure restores metadata without disturbing running service' {
+    $state = New-SetupFixture 'root-partial-failure'
+    $state.Service.Status = 'Running'; $state.Service.StartType = 'Automatic'
+    $state.FailRootAcl = $true
+    $before = Get-LiveFixtureState $state
+    $result = Invoke-MockedSetup $state -Failure
+    Assert-True ($result.Error -match 'partial root ACL failure') 'Partial root ACL failure was not exercised'
+    Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Partial ACL update did not restore original state'
+    Assert-True (-not ($state.Events -contains 'ServiceStop') -and -not ($state.Events -contains 'ServiceRestart')) 'Root-only refusal disturbed running service'
+}
+Test-Case 'candidate refusal restores root ACL without restarting existing service' {
+    $state = New-SetupFixture 'root-syntax-refusal'
+    $state.Service.Status = 'Running'; $state.Service.StartType = 'Automatic'
+    $state.FailNative = $true
+    $before = Get-LiveFixtureState $state
+    Invoke-MockedSetup $state -Failure | Out-Null
+    Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Candidate refusal did not restore original root/service state'
+    Assert-True (-not ($state.Events -contains 'ServiceStop') -and -not ($state.Events -contains 'ServiceRestart')) 'Candidate refusal disturbed running service'
+}
+Test-Case 'root ACL restoration failure reports incomplete rollback and stops SSH' {
+    $state = New-SetupFixture 'root-restore-failure'
+    $state.Service.Status = 'Running'; $state.Service.StartType = 'Automatic'
+    $state.FailNative = $true; $state.FailRootAclRestore = $true
+    $result = Invoke-MockedSetup $state -Failure
+    Assert-True ($result.Error -match 'ROLLBACK INCOMPLETE' -and $result.Error -match 'restore SSH root ACL') 'Root restore failure was hidden'
+    Assert-True ($state.Service.Status -eq 'Stopped' -and -not ($state.Events -contains 'ServiceStart')) 'Uncertain root permissions left SSH running'
+    Assert-True ($state.Acls[(Join-Path $state.ProgramData 'ssh')] -eq 'restricted:S-1-5-32-544') 'Failed restoration weakened root'
 }
 foreach ($accessDirective in @('AllowUsers', 'DenyUsers', 'AllowGroups', 'DenyGroups')) {
     Test-Case ('existing account access list refuses unchanged: ' + $accessDirective) {

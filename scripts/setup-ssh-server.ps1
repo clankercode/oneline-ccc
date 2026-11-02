@@ -427,10 +427,17 @@ if (-not $isAdminUser) {
 $serviceBefore = Get-Service sshd
 $wasRunning = $serviceBefore.Status -eq 'Running'
 $serviceMode = (Get-CimInstance Win32_Service -Filter "Name='sshd'").StartMode
+$rootAclBefore = Get-Acl -LiteralPath $sshRoot
+$rootPermissionsTouched = $false
 $ruleName = $null
 $authTouched = $false
 $serviceTouched = $false
 try {
+    # New directories otherwise inherit ordinary-user write permissions from
+    # ProgramData. Modern Windows sshd refuses those at service startup even
+    # when sshd -t succeeds. Protect the parent before keys and SYSTEM probes.
+    $rootPermissionsTouched = $true
+    Set-RestrictedAcl $sshRoot 'S-1-5-32-544' $true
     [IO.File]::WriteAllText($candidate, $baseConfig.TrimEnd() + "`r`n`r`n" + $block + "`r`n", $utf8)
     Set-RestrictedAcl $candidate 'S-1-5-32-544' $false
     # Host keys must exist for sshd -t, but no private keys are ever read or backed up.
@@ -525,6 +532,22 @@ if ($actualAddress.Count -ne 1 -or $actualAddress[0] -ne 'LocalSubnet' -or [stri
     if ($freshRuleCreated) {
         try { Remove-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' }
         catch { $rollbackErrors += "remove invocation-created OpenSSH rule: $($_.Exception.Message)" }
+    }
+    if ($rootPermissionsTouched) {
+        if ($failure.Exception.Message.StartsWith('Unable to clean up temporary SYSTEM probe', [StringComparison]::Ordinal)) {
+            # A privileged task may still use its protected child directory.
+            # Restoring a writable parent could expose that task to replacement.
+            $rollbackErrors += 'SSH root permissions retained because SYSTEM probe cleanup is unconfirmed'
+            try { Stop-Service sshd -Force }
+            catch { $rollbackErrors += "stop sshd after probe uncertainty: $($_.Exception.Message)" }
+        } else {
+            try { Set-Acl -LiteralPath $sshRoot -AclObject $rootAclBefore }
+            catch {
+                $rollbackErrors += "restore SSH root ACL: $($_.Exception.Message)"
+                try { Stop-Service sshd -Force }
+                catch { $rollbackErrors += "stop sshd after root ACL failure: $($_.Exception.Message)" }
+            }
+        }
     }
     if ($authTouched -or $serviceTouched) {
         try {
