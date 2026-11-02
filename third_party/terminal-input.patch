@@ -76,9 +76,196 @@
 +		})
 +	}
 +}
+--- /dev/null
++++ b/bubbletea/startup_lifetime_test.go
+@@ -0,0 +1,166 @@
++package tea
++
++import (
++	"context"
++	"errors"
++	"io"
++	"runtime"
++	"strings"
++	"testing"
++	"testing/synctest"
++	"time"
++)
++
++type startupLifecycleModel struct {
++	init  func() Cmd
++	views int
++}
++
++func (m *startupLifecycleModel) Init() Cmd               { return m.init() }
++func (m *startupLifecycleModel) Update(Msg) (Model, Cmd) { return m, nil }
++func (m *startupLifecycleModel) View() View              { m.views++; return NewView("startup fixture") }
++
++type startupLifecycleRenderer struct {
++	nilRenderer
++	starts, closes int
++	resizePanic    bool
++	resizeGate     func()
++}
++
++func (r *startupLifecycleRenderer) start()       { r.starts++ }
++func (r *startupLifecycleRenderer) close() error { r.closes++; return nil }
++func (r *startupLifecycleRenderer) resize(int, int) {
++	if r.resizeGate != nil {
++		r.resizeGate()
++	}
++	if r.resizePanic {
++		panic("A6 setup resize")
++	}
++}
++
++func TestStartupKillWaitsForInitialization(t *testing.T) {
++	entered, resume := make(chan struct{}), make(chan struct{})
++	m := &startupLifecycleModel{init: func() Cmd { t.Error("initialized model after Kill in terminal setup"); return nil }}
++	p := NewProgram(m, WithInput(strings.NewReader("")), WithOutput(io.Discard), WithoutSignalHandler())
++	r := &startupLifecycleRenderer{resizeGate: func() { close(entered); <-resume }}
++	p.renderer = r
++	done := make(chan error, 1)
++	go func() { _, err := p.Run(); done <- err }()
++	<-entered
++	killed := make(chan struct{})
++	go func() { p.Kill(); close(killed) }()
++	<-p.ctx.Done() // cancellation must precede waiting for initialization
++	// Mutex waits are not durable blocks in synctest. Wait for the
++	// concrete teardown lock stack or premature Kill completion instead.
++	deadline := time.After(3 * time.Second)
++waitForKill:
++	for {
++		select {
++		case <-killed:
++			t.Error("Kill returned while initialization still owned the terminal")
++			break waitForKill
++		case <-deadline:
++			t.Error("Kill never reached the terminal acquisition barrier")
++			break waitForKill
++		default:
++		}
++		buf := make([]byte, 64<<10)
++		stacks := string(buf[:runtime.Stack(buf, true)])
++		for _, stack := range strings.Split(stacks, "\n\n") {
++			if strings.Contains(stack, "(*Program).shutdown.func1(") && strings.Contains(stack, "sync.Mutex.Lock") {
++				break waitForKill
++			}
++		}
++		runtime.Gosched()
++	}
++	close(resume)
++	if err := <-done; !errors.Is(err, ErrProgramKilled) || errors.Is(err, context.Canceled) {
++		t.Errorf("wrong internal Kill identity: %v", err)
++	}
++	<-killed
++	if r.starts != 0 || r.closes != 0 {
++		t.Errorf("renderer lifetime: starts=%d closes=%d", r.starts, r.closes)
++	}
++	if m.views != 0 {
++		t.Errorf("rendered after Kill during initialization: %d", m.views)
++	}
++}
++
++func TestStartupKillFromModelInit(t *testing.T) {
++	var p *Program
++	m := &startupLifecycleModel{init: func() Cmd { p.Kill(); return nil }}
++	p = NewProgram(m, WithInput(strings.NewReader("")), WithOutput(io.Discard), WithoutSignalHandler())
++	r := &startupLifecycleRenderer{}
++	p.renderer = r
++	_, err := p.Run()
++	if !errors.Is(err, ErrProgramKilled) || m.views != 0 || r.starts != 1 || r.closes != 1 {
++		t.Errorf("Init Kill lifetime: err=%v views=%d starts=%d closes=%d", err, m.views, r.starts, r.closes)
++	}
++}
++
++func TestStartupDoesNotStopUnstartedRenderer(t *testing.T) {
++	m := &startupLifecycleModel{init: func() Cmd { t.Error("model initialized after setup failure"); return nil }}
++	p := NewProgram(m, WithInput(strings.NewReader("")), WithOutput(io.Discard), WithoutSignalHandler())
++	r := &startupLifecycleRenderer{resizePanic: true}
++	p.renderer = r
++	_, err := p.Run()
++	if !errors.Is(err, ErrProgramPanic) {
++		t.Errorf("wrong setup panic identity: %v", err)
++	}
++	if r.starts != 0 || r.closes != 0 || m.views != 0 {
++		t.Errorf("unstarted renderer used: %+v, views=%d", r, m.views)
++	}
++	p.Kill() // repeated forced cleanup is a no-op
++	p.Wait()
++}
++
++func TestStartupCanceledBeforeAcquisition(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	m := &startupLifecycleModel{init: func() Cmd { t.Error("initialized canceled program"); return nil }}
++	p := NewProgram(m, WithContext(ctx), WithInput(strings.NewReader("")), WithOutput(io.Discard), WithoutSignalHandler())
++	r := &startupLifecycleRenderer{}
++	p.renderer = r
++	_, err := p.Run()
++	if !errors.Is(err, ErrProgramKilled) || !errors.Is(err, context.Canceled) {
++		t.Errorf("root cancellation identity lost: %v", err)
++	}
++	if r.starts != 0 || r.closes != 0 || m.views != 0 {
++		t.Errorf("acquired canceled program: %+v, views=%d", r, m.views)
++	}
++}
++
++func TestStartupPanicJoinsInputBeforeClose(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		r := lifetimeCancelReader{make(chan struct{}), make(chan struct{})}
++		var p *Program
++		m := &startupLifecycleModel{init: func() Cmd {
++			// Retire the real EOF reader before installing a deterministic
++			// completion barrier. This assertion complements the real PTY test.
++			p.closeInputReader()
++			p.cancelReader = r
++			p.readLoopDone = make(chan struct{})
++			panic("A6 initialized-input panic")
++		}}
++		p = NewProgram(m, WithInput(strings.NewReader("")), WithOutput(io.Discard), WithoutSignalHandler())
++		done := make(chan error, 1)
++		go func() { _, err := p.Run(); done <- err }()
++		<-r.canceled
++		synctest.Wait()
++		select {
++		case <-r.closed:
++			t.Error("panic closed input before completion")
++		default:
++		}
++		select {
++		case <-done:
++			t.Error("panic returned before input completion")
++		default:
++		}
++		close(p.readLoopDone)
++		if err := <-done; !errors.Is(err, ErrProgramPanic) {
++			t.Errorf("panic lost: %v", err)
++		}
++		<-r.closed
++	})
++}
 --- a/bubbletea/tea.go
 +++ b/bubbletea/tea.go
-@@ -549,6 +549,7 @@
+@@ -524,6 +524,9 @@
+ 	errs         chan error
+ 	finished     chan struct{}
+ 	shutdownOnce sync.Once
++	// terminalMu serializes acquisition/release with external Kill. Cancellation
++	// happens before taking this lock so input and startup can observe it.
++	terminalMu sync.Mutex
+ 
+ 	profile *colorprofile.Profile // the terminal color profile
+ 
+@@ -535,6 +538,7 @@
+ 	ttyOutput           term.File
+ 	previousOutputState *term.State
+ 	renderer            renderer
++	rendererRunning     bool // protected by terminalMu
+ 
+ 	// the environment variables for the program, defaults to os.Environ().
+ 	environ uv.Environ
+@@ -549,6 +553,7 @@
  	cancelReader          cancelreader.CancelReader
  	inputScanner          *uv.TerminalReader
  	readLoopDone          chan struct{}
@@ -86,7 +273,170 @@
  
  	// modes keeps track of terminal modes that have been enabled or disabled.
  	ignoreSignals uint32
-@@ -1293,16 +1294,8 @@
+@@ -560,7 +565,8 @@
+ 	once sync.Once
+ 
+ 	// rendererDone is used to stop the renderer.
+-	rendererDone chan struct{}
++	rendererDone    chan struct{}
++	rendererStopped chan struct{}
+ 
+ 	// Initial window size. Mainly used for testing.
+ 	width, height int
+@@ -1025,7 +1031,6 @@
+ 	}
+ 
+ 	// Initialize context and teardown channel.
+-	p.handlers = channelHandlers{}
+ 	cmds := make(chan Cmd)
+ 
+ 	p.finished = make(chan struct{})
+@@ -1034,33 +1039,64 @@
+ 	}()
+ 
+ 	defer p.cancel()
++
++	// Recover from panics after the ownership defer below has unlocked and
++	// cleaned up even a partially initialized terminal.
++	if !p.disableCatchPanics {
++		defer func() {
++			if r := recover(); r != nil {
++				returnErr = fmt.Errorf("%w: %w", ErrProgramKilled, ErrProgramPanic)
++				if err := p.externalCtx.Err(); err != nil {
++					returnErr = errors.Join(returnErr, err)
++				}
++				p.recoverFromPanic(r)
++			}
++		}()
++	}
++
++	p.terminalMu.Lock()
++	starting := true
++	var ownedInput, ownedOutput *os.File
++	defer func() {
++		if starting {
++			p.terminalMu.Unlock()
++		}
++		// This also covers partial terminal initialization and input/size
++		// errors. shutdownOnce keeps normal shutdown and external Kill single.
++		p.shutdown(true)
++		// Only close TTY handles opened by Run, after decoder/raw-reader join
++		// and terminal restoration. Caller-supplied files remain caller-owned.
++		if ownedInput != nil {
++			_ = ownedInput.Close()
++		}
++		if ownedOutput != nil && ownedOutput != ownedInput {
++			_ = ownedOutput.Close()
++		}
++		if err := p.externalCtx.Err(); err != nil && !errors.Is(returnErr, err) {
++			returnErr = errors.Join(returnErr, err)
++		}
++	}()
++	if p.ctx.Err() != nil {
++		return p.initialModel, ErrProgramKilled
++	}
+ 
+ 	if p.disableInput {
+ 		p.input = nil
+ 	} else if p.input == nil {
+ 		p.input = os.Stdin
+ 		if !term.IsTerminal(os.Stdin.Fd()) {
+-			ttyIn, _, err := OpenTTY()
++			ttyIn, ttyOut, err := OpenTTY()
+ 			if err != nil {
+ 				return p.initialModel, fmt.Errorf("bubbletea: error opening TTY: %w", err)
+ 			}
+ 			p.input = ttyIn
++			ownedInput, ownedOutput = ttyIn, ttyOut
+ 		}
+ 	}
+ 
+ 	// Handle signals.
+ 	if !p.disableSignalHandler {
+ 		p.handlers.add(p.handleSignals())
+-	}
+-
+-	// Recover from panics.
+-	if !p.disableCatchPanics {
+-		defer func() {
+-			if r := recover(); r != nil {
+-				returnErr = fmt.Errorf("%w: %w", ErrProgramKilled, ErrProgramPanic)
+-				p.recoverFromPanic(r)
+-			}
+-		}()
+ 	}
+ 
+ 	// Check if output is a TTY before entering raw mode, hiding the cursor and
+@@ -1134,6 +1170,9 @@
+ 			return model, err
+ 		}
+ 	}
++	if p.ctx.Err() != nil {
++		return model, ErrProgramKilled
++	}
+ 
+ 	// Start the renderer.
+ 	p.startRenderer()
+@@ -1146,30 +1185,30 @@
+ 			ansi.RequestModeUnicodeCore)
+ 	}
+ 
++	// Register every owned handler before Kill can complete. User callbacks
++	// run outside the acquisition lock so Init can itself call Kill/release.
++	p.handlers.add(p.handleResize())
++	p.handlers.add(p.handleCommands(cmds))
++	starting = false
++	p.terminalMu.Unlock()
++
+ 	// Initialize the program.
+ 	initCmd := model.Init()
+-	if initCmd != nil {
+-		ch := make(chan struct{})
+-		p.handlers.add(ch)
+-
+-		go func() {
+-			defer close(ch)
+-
+-			select {
+-			case cmds <- initCmd:
+-			case <-p.ctx.Done():
+-			}
+-		}()
+-	}
+-
++	if p.ctx.Err() != nil {
++		return model, ErrProgramKilled
++	}
+ 	// Render the initial view.
+ 	p.render(model)
+ 
+-	// Handle resize events.
+-	p.handlers.add(p.handleResize())
+-
+-	// Process commands.
+-	p.handlers.add(p.handleCommands(cmds))
++	// Preserve command execution after the initial render without starting
++	// an untracked sender after a concurrent Kill has joined the handlers.
++	if initCmd != nil {
++		select {
++		case cmds <- initCmd:
++		case <-p.ctx.Done():
++			return model, ErrProgramKilled
++		}
++	}
+ 
+ 	// Run event loop, handle updates and draw.
+ 	var err error
+@@ -1287,24 +1326,18 @@
+ // shutdown performs operations to free up resources and restore the terminal
+ // to its original state.
+ func (p *Program) shutdown(kill bool) {
++	p.cancel()
+ 	p.shutdownOnce.Do(func() {
+-		p.cancel()
++		p.terminalMu.Lock()
++		defer p.terminalMu.Unlock()
+ 
  		// Wait for all handlers to finish.
  		p.handlers.shutdown()
  
@@ -100,24 +450,91 @@
 -			}
 -			_ = p.cancelReader.Close()
 -		}
+-
+-		if p.renderer != nil {
 +		// Input must be joined before its resources close, including on Kill.
 +		p.closeInputReader()
- 
- 		if p.renderer != nil {
++
++		if p.rendererRunning {
  			p.stopRenderer(kill)
-@@ -1370,11 +1363,7 @@
+ 		}
+ 
+@@ -1369,14 +1402,12 @@
+ }
  
  func (p *Program) releaseTerminal(reset bool) error {
++	p.terminalMu.Lock()
++	defer p.terminalMu.Unlock()
  	atomic.StoreUint32(&p.ignoreSignals, 1)
 -	if p.cancelReader != nil {
 -		p.cancelReader.Cancel()
 -	}
 -
 -	p.waitForReadLoop()
+-
+-	if p.renderer != nil {
 +	p.closeInputReader()
- 
- 	if p.renderer != nil {
++
++	if p.rendererRunning {
  		p.stopRenderer(false)
+ 		if reset {
+ 			p.renderer.reset()
+@@ -1389,7 +1420,21 @@
+ // RestoreTerminal reinitializes the Program's input reader, restores the
+ // terminal to the former state when the program was running, and repaints.
+ // Use it to reinitialize a Program after running ReleaseTerminal.
+-func (p *Program) RestoreTerminal() error {
++func (p *Program) RestoreTerminal() (err error) {
++	p.terminalMu.Lock()
++	defer p.terminalMu.Unlock()
++	if p.ctx.Err() != nil {
++		return ErrProgramKilled
++	}
++	defer func() {
++		if err != nil {
++			p.closeInputReader()
++			if p.rendererRunning {
++				p.stopRenderer(true)
++			}
++			_ = p.restoreTerminalState()
++		}
++	}()
+ 	atomic.StoreUint32(&p.ignoreSignals, 0)
+ 
+ 	if err := p.initTerminal(); err != nil {
+@@ -1454,7 +1499,10 @@
+ 
+ 	// Start the renderer.
+ 	p.renderer.start()
++	p.rendererRunning = true
++	p.rendererStopped = make(chan struct{})
+ 	go func() {
++		defer close(p.rendererStopped)
+ 		for {
+ 			select {
+ 			case <-p.rendererDone:
+@@ -1473,10 +1521,14 @@
+ // If kill is true, the renderer will be stopped immediately without flushing
+ // the last frame.
+ func (p *Program) stopRenderer(kill bool) {
++	if !p.rendererRunning {
++		return
++	}
+ 	// Stop the renderer before acquiring the mutex to avoid a deadlock.
+ 	p.once.Do(func() {
+ 		p.rendererDone <- struct{}{}
+ 	})
++	<-p.rendererStopped
+ 
+ 	if !kill {
+ 		// flush locks the mutex
+@@ -1484,4 +1536,5 @@
+ 	}
+ 
+ 	_ = p.renderer.close()
+-}
++	p.rendererRunning = false
++}
 --- a/bubbletea/tty.go
 +++ b/bubbletea/tty.go
 @@ -1,10 +1,10 @@
@@ -132,7 +549,21 @@
  
  	uv "github.com/charmbracelet/ultraviolet"
  	"github.com/charmbracelet/x/term"
-@@ -56,8 +56,7 @@
+@@ -44,11 +44,13 @@
+ 		if err := term.Restore(p.ttyInput.Fd(), p.previousTtyInputState); err != nil {
+ 			return fmt.Errorf("bubbletea: error restoring console: %w", err)
+ 		}
++		p.previousTtyInputState = nil
+ 	}
+ 	if p.ttyOutput != nil && p.previousOutputState != nil {
+ 		if err := term.Restore(p.ttyOutput.Fd(), p.previousOutputState); err != nil {
+ 			return fmt.Errorf("bubbletea: error restoring console: %w", err)
+ 		}
++		p.previousOutputState = nil
+ 	}
+ 	return nil
+ }
+@@ -56,8 +58,7 @@
  // initInputReader (re)commences reading inputs.
  func (p *Program) initInputReader(cancel bool) error {
  	if cancel && p.cancelReader != nil {
@@ -142,7 +573,7 @@
  	}
  
  	term := p.environ.Getenv("TERM")
-@@ -76,32 +75,46 @@
+@@ -76,32 +77,46 @@
  	drv.SetLogger(p.logger)
  	p.inputScanner = drv
  	p.readLoopDone = make(chan struct{})

@@ -524,6 +524,9 @@ type Program struct {
 	errs         chan error
 	finished     chan struct{}
 	shutdownOnce sync.Once
+	// terminalMu serializes acquisition/release with external Kill. Cancellation
+	// happens before taking this lock so input and startup can observe it.
+	terminalMu sync.Mutex
 
 	profile *colorprofile.Profile // the terminal color profile
 
@@ -535,6 +538,7 @@ type Program struct {
 	ttyOutput           term.File
 	previousOutputState *term.State
 	renderer            renderer
+	rendererRunning     bool // protected by terminalMu
 
 	// the environment variables for the program, defaults to os.Environ().
 	environ uv.Environ
@@ -561,7 +565,8 @@ type Program struct {
 	once sync.Once
 
 	// rendererDone is used to stop the renderer.
-	rendererDone chan struct{}
+	rendererDone    chan struct{}
+	rendererStopped chan struct{}
 
 	// Initial window size. Mainly used for testing.
 	width, height int
@@ -1026,7 +1031,6 @@ func (p *Program) Run() (returnModel Model, returnErr error) {
 	}
 
 	// Initialize context and teardown channel.
-	p.handlers = channelHandlers{}
 	cmds := make(chan Cmd)
 
 	p.finished = make(chan struct{})
@@ -1036,32 +1040,63 @@ func (p *Program) Run() (returnModel Model, returnErr error) {
 
 	defer p.cancel()
 
+	// Recover from panics after the ownership defer below has unlocked and
+	// cleaned up even a partially initialized terminal.
+	if !p.disableCatchPanics {
+		defer func() {
+			if r := recover(); r != nil {
+				returnErr = fmt.Errorf("%w: %w", ErrProgramKilled, ErrProgramPanic)
+				if err := p.externalCtx.Err(); err != nil {
+					returnErr = errors.Join(returnErr, err)
+				}
+				p.recoverFromPanic(r)
+			}
+		}()
+	}
+
+	p.terminalMu.Lock()
+	starting := true
+	var ownedInput, ownedOutput *os.File
+	defer func() {
+		if starting {
+			p.terminalMu.Unlock()
+		}
+		// This also covers partial terminal initialization and input/size
+		// errors. shutdownOnce keeps normal shutdown and external Kill single.
+		p.shutdown(true)
+		// Only close TTY handles opened by Run, after decoder/raw-reader join
+		// and terminal restoration. Caller-supplied files remain caller-owned.
+		if ownedInput != nil {
+			_ = ownedInput.Close()
+		}
+		if ownedOutput != nil && ownedOutput != ownedInput {
+			_ = ownedOutput.Close()
+		}
+		if err := p.externalCtx.Err(); err != nil && !errors.Is(returnErr, err) {
+			returnErr = errors.Join(returnErr, err)
+		}
+	}()
+	if p.ctx.Err() != nil {
+		return p.initialModel, ErrProgramKilled
+	}
+
 	if p.disableInput {
 		p.input = nil
 	} else if p.input == nil {
 		p.input = os.Stdin
 		if !term.IsTerminal(os.Stdin.Fd()) {
-			ttyIn, _, err := OpenTTY()
+			ttyIn, ttyOut, err := OpenTTY()
 			if err != nil {
 				return p.initialModel, fmt.Errorf("bubbletea: error opening TTY: %w", err)
 			}
 			p.input = ttyIn
+			ownedInput, ownedOutput = ttyIn, ttyOut
 		}
 	}
 
 	// Handle signals.
 	if !p.disableSignalHandler {
 		p.handlers.add(p.handleSignals())
-	}
-
-	// Recover from panics.
-	if !p.disableCatchPanics {
-		defer func() {
-			if r := recover(); r != nil {
-				returnErr = fmt.Errorf("%w: %w", ErrProgramKilled, ErrProgramPanic)
-				p.recoverFromPanic(r)
-			}
-		}()
 	}
 
 	// Check if output is a TTY before entering raw mode, hiding the cursor and
@@ -1135,6 +1170,9 @@ func (p *Program) Run() (returnModel Model, returnErr error) {
 			return model, err
 		}
 	}
+	if p.ctx.Err() != nil {
+		return model, ErrProgramKilled
+	}
 
 	// Start the renderer.
 	p.startRenderer()
@@ -1147,30 +1185,30 @@ func (p *Program) Run() (returnModel Model, returnErr error) {
 			ansi.RequestModeUnicodeCore)
 	}
 
+	// Register every owned handler before Kill can complete. User callbacks
+	// run outside the acquisition lock so Init can itself call Kill/release.
+	p.handlers.add(p.handleResize())
+	p.handlers.add(p.handleCommands(cmds))
+	starting = false
+	p.terminalMu.Unlock()
+
 	// Initialize the program.
 	initCmd := model.Init()
-	if initCmd != nil {
-		ch := make(chan struct{})
-		p.handlers.add(ch)
-
-		go func() {
-			defer close(ch)
-
-			select {
-			case cmds <- initCmd:
-			case <-p.ctx.Done():
-			}
-		}()
+	if p.ctx.Err() != nil {
+		return model, ErrProgramKilled
 	}
-
 	// Render the initial view.
 	p.render(model)
 
-	// Handle resize events.
-	p.handlers.add(p.handleResize())
-
-	// Process commands.
-	p.handlers.add(p.handleCommands(cmds))
+	// Preserve command execution after the initial render without starting
+	// an untracked sender after a concurrent Kill has joined the handlers.
+	if initCmd != nil {
+		select {
+		case cmds <- initCmd:
+		case <-p.ctx.Done():
+			return model, ErrProgramKilled
+		}
+	}
 
 	// Run event loop, handle updates and draw.
 	var err error
@@ -1288,8 +1326,10 @@ func (p *Program) flush() error {
 // shutdown performs operations to free up resources and restore the terminal
 // to its original state.
 func (p *Program) shutdown(kill bool) {
+	p.cancel()
 	p.shutdownOnce.Do(func() {
-		p.cancel()
+		p.terminalMu.Lock()
+		defer p.terminalMu.Unlock()
 
 		// Wait for all handlers to finish.
 		p.handlers.shutdown()
@@ -1297,7 +1337,7 @@ func (p *Program) shutdown(kill bool) {
 		// Input must be joined before its resources close, including on Kill.
 		p.closeInputReader()
 
-		if p.renderer != nil {
+		if p.rendererRunning {
 			p.stopRenderer(kill)
 		}
 
@@ -1362,10 +1402,12 @@ func (p *Program) ReleaseTerminal() error {
 }
 
 func (p *Program) releaseTerminal(reset bool) error {
+	p.terminalMu.Lock()
+	defer p.terminalMu.Unlock()
 	atomic.StoreUint32(&p.ignoreSignals, 1)
 	p.closeInputReader()
 
-	if p.renderer != nil {
+	if p.rendererRunning {
 		p.stopRenderer(false)
 		if reset {
 			p.renderer.reset()
@@ -1378,7 +1420,21 @@ func (p *Program) releaseTerminal(reset bool) error {
 // RestoreTerminal reinitializes the Program's input reader, restores the
 // terminal to the former state when the program was running, and repaints.
 // Use it to reinitialize a Program after running ReleaseTerminal.
-func (p *Program) RestoreTerminal() error {
+func (p *Program) RestoreTerminal() (err error) {
+	p.terminalMu.Lock()
+	defer p.terminalMu.Unlock()
+	if p.ctx.Err() != nil {
+		return ErrProgramKilled
+	}
+	defer func() {
+		if err != nil {
+			p.closeInputReader()
+			if p.rendererRunning {
+				p.stopRenderer(true)
+			}
+			_ = p.restoreTerminalState()
+		}
+	}()
 	atomic.StoreUint32(&p.ignoreSignals, 0)
 
 	if err := p.initTerminal(); err != nil {
@@ -1443,7 +1499,10 @@ func (p *Program) startRenderer() {
 
 	// Start the renderer.
 	p.renderer.start()
+	p.rendererRunning = true
+	p.rendererStopped = make(chan struct{})
 	go func() {
+		defer close(p.rendererStopped)
 		for {
 			select {
 			case <-p.rendererDone:
@@ -1462,10 +1521,14 @@ func (p *Program) startRenderer() {
 // If kill is true, the renderer will be stopped immediately without flushing
 // the last frame.
 func (p *Program) stopRenderer(kill bool) {
+	if !p.rendererRunning {
+		return
+	}
 	// Stop the renderer before acquiring the mutex to avoid a deadlock.
 	p.once.Do(func() {
 		p.rendererDone <- struct{}{}
 	})
+	<-p.rendererStopped
 
 	if !kill {
 		// flush locks the mutex
@@ -1473,4 +1536,5 @@ func (p *Program) stopRenderer(kill bool) {
 	}
 
 	_ = p.renderer.close()
+	p.rendererRunning = false
 }

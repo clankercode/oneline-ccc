@@ -44,11 +44,13 @@ func (p *Program) restoreInput() error {
 		if err := term.Restore(p.ttyInput.Fd(), p.previousTtyInputState); err != nil {
 			return fmt.Errorf("bubbletea: error restoring console: %w", err)
 		}
+		p.previousTtyInputState = nil
 	}
 	if p.ttyOutput != nil && p.previousOutputState != nil {
 		if err := term.Restore(p.ttyOutput.Fd(), p.previousOutputState); err != nil {
 			return fmt.Errorf("bubbletea: error restoring console: %w", err)
 		}
+		p.previousOutputState = nil
 	}
 	return nil
 }
