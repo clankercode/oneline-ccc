@@ -263,7 +263,9 @@ function semanticOutcomes(entry,frame) {
       const e=o.editor,v=o.validation,fields={'edit-budget':'budget','edit-compaction':'compact','edit-endpoint':'endpoint'};
       if(!fields[entry.scenario] || e?.field!==fields[entry.scenario] || e.value!=='invalid-input' || v?.value!==e.value || v.field!==e.field
         || entry.fixture.editor!==e.field || v.editor_retained!==true || !text.includes('invalid-input'))throw new Error('Invalid editor value/retention outcome missing');
-      if(!v.status || o.status!==v.status || !frame.text.some(line=>line===v.status.slice(0,entry.cols)))throw new Error('Validation refusal status does not match production View');
+      // The shell places status on row three, with presentation-only insets.
+      // Require the complete refusal there; body text is not status evidence.
+      if(!v.status || o.status!==v.status || frame.text[2]?.trim()!==v.status)throw new Error('Validation refusal status does not match production View');
       if(!/^[0-9a-f]{64}$/.test(v.before_draft_sha256) || v.before_draft_sha256!==v.after_draft_sha256)throw new Error('Validation refusal changed draft');
       break;
     }

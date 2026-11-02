@@ -32,6 +32,15 @@ focused('Help metadata must agree with actual production page marker',async()=>{
   await assert.rejects(check(d),/page.*(marker|View|frame)|page.*mismatch/i);
 });
 for(const name of ['budget-invalid','compact-invalid','endpoint-invalid']) {
+  focused(`${name} body text cannot impersonate status`,async()=>{
+    const d=clone(data[name]);
+    const borrowed=d.frame.text.find((line,index)=>index>2 && line.trim());
+    assert.ok(borrowed,'genuine scene must contain a body row');
+    d.entry.fixture.semantic_outcomes.status=borrowed.trim();
+    d.entry.fixture.semantic_outcomes.validation.status=borrowed.trim();
+    d.entry.fixture.semantic_before=structuredClone(d.entry.fixture.semantic_outcomes);
+    await assert.rejects(check(d),/refusal|status/i);
+  });
   focused(`${name} refusal must match View, not just metadata`,async()=>{
     const d=clone(data[name]);d.entry.fixture.semantic_outcomes.status='Some other refusal';
     d.entry.fixture.semantic_outcomes.validation.status='Some other refusal';
