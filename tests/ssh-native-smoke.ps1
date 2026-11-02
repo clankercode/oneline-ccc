@@ -26,6 +26,37 @@ $baselineSshRule = Get-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenS
 if ($baselineSshRule) { Disable-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenSSH-Server-In-TCP' }
 Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block
 
+# Read-only evidence for this exact system rule; no registry enumeration or keys.
+$diagnosticRuleName = 'Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy-In-Allow-ServerCapability'
+$diagnosticRule = Get-NetFirewallRule -PolicyStore ActiveStore -TracePolicyStore -Name $diagnosticRuleName -ErrorAction SilentlyContinue
+if ($diagnosticRule) {
+$diagnosticRuleProperties = @{}
+foreach ($diagnosticProperty in $diagnosticRule.CimInstanceProperties) {
+    $diagnosticRuleProperties[$diagnosticProperty.Name] = $diagnosticProperty.Value
+}
+$diagnosticApplication = Get-NetFirewallApplicationFilter -PolicyStore ActiveStore -AssociatedNetFirewallRule $diagnosticRule
+$diagnosticApplicationProperties = @{}
+foreach ($diagnosticProperty in $diagnosticApplication.CimInstanceProperties) {
+    $diagnosticApplicationProperties[$diagnosticProperty.Name] = $diagnosticProperty.Value
+}
+$diagnosticRegistry = @{}
+try {
+    $diagnosticRegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules'
+    $diagnosticEntry = Get-ItemProperty -LiteralPath $diagnosticRegistryPath -Name $diagnosticRuleName -ErrorAction Stop
+    $diagnosticValue = [string]$diagnosticEntry.PSObject.Properties[$diagnosticRuleName].Value
+    $diagnosticRegistry.ValueName = $diagnosticRuleName
+    $diagnosticRegistry.Fields = @($diagnosticValue -split '\|' | Where-Object { $_ -match '^(AppPkgId|App|Svc|LUOwn|Action|Active|Dir|Profile|Protocol|LPort|RPort|RA4|RA6)=' })
+} catch { $diagnosticRegistry.Error = $_.Exception.Message }
+Write-Output 'BEGIN SSH exact system-rule metadata'
+[pscustomobject]@{
+    RuleName = $diagnosticRuleName
+    TracedRuleProperties = $diagnosticRuleProperties
+    ActiveApplicationProperties = $diagnosticApplicationProperties
+    PersistentRegistry = $diagnosticRegistry
+} | ConvertTo-Json -Depth 6
+Write-Output 'END SSH exact system-rule metadata'
+} else { Write-Output 'Exact system-rule diagnostic skipped: target rule is absent on this runner.' }
+
 & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
 $sshd = Join-Path $sshRoot 'sshd.exe'
 & $sshd -t

@@ -39,50 +39,27 @@ try {
     if ([string]::IsNullOrWhiteSpace($prompt)) { throw 'Bare native Codex did not produce an offline prompt' }
     if ($prompt.Contains($env:LLMP_API_KEY)) { throw 'Bare native Codex exposed fixture credential' }
     [IO.File]::WriteAllText((Join-Path $env:CODEX_HOME 'native-prompt.json'), $prompt, (New-Object Text.UTF8Encoding($false)))
-    # Inspect effective settings through the native offline configuration API.
-    $start = New-Object Diagnostics.ProcessStartInfo
-    $start.FileName = $command.Source
-    $start.Arguments = 'app-server --listen stdio://'
-    $start.WorkingDirectory = $env:CODEX_HOME
-    $start.UseShellExecute = $false
-    $start.RedirectStandardInput = $true
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    foreach ($name in @($start.EnvironmentVariables.Keys)) {
-        if ([string]$name -match '(?i)(API_?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)') {
-            $start.EnvironmentVariables.Remove([string]$name)
-        }
+    # Reuse the production transport: PS5.1's default StandardInput writer can
+    # emit a BOM; JSON-lines requires the explicit BOM-free UTF-8 writer.
+    # Extract only definitions, without executing the installer's entry point.
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $repository 'scripts/setup-codex.ps1'), [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) { throw 'Native smoke could not parse installer helpers' }
+    foreach ($helperName in @('Start-CodexConfigProcess', 'Stop-CodexConfigProcess', 'Invoke-CodexConfigRpc', 'Initialize-CodexConfigConnection')) {
+        $definitions = @($ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $helperName
+        }, $false))
+        if ($definitions.Count -ne 1) { throw 'Native smoke installer helper missing or ambiguous' }
+        . ([ScriptBlock]::Create($definitions[0].Extent.Text))
     }
-    $start.EnvironmentVariables['LLMP_API_KEY'] = 'fixture-only-not-a-real-credential'
-    $process = New-Object Diagnostics.Process
-    $process.StartInfo = $start
-    $started = $false
+    $connection = $null
     try {
-        $process.Start() | Out-Null
-        $started = $true
-        $stderr = $process.StandardError.ReadToEndAsync()
-        foreach ($request in @(
-            @{id = 1; method = 'initialize'; params = @{clientInfo = @{name = 'native_smoke'; version = '1.0'}}},
-            @{id = 2; method = 'config/read'; params = @{includeLayers = $true}}
-        )) {
-            $process.StandardInput.WriteLine(($request | ConvertTo-Json -Depth 8 -Compress))
-            $process.StandardInput.Flush()
-            $deadline = [DateTime]::UtcNow.AddSeconds(20)
-            do {
-                $remaining = [int][Math]::Max(1, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
-                $read = $process.StandardOutput.ReadLineAsync()
-                if (-not $read.Wait($remaining)) { throw 'Native config smoke timed out' }
-                $line = $read.GetAwaiter().GetResult()
-                if ($null -eq $line -or [DateTime]::UtcNow -gt $deadline) { throw 'Native config smoke response missing' }
-                $reply = $line | ConvertFrom-Json
-            } while ($reply.id -ne $request.id)
-            if ($reply.PSObject.Properties['error']) { throw 'Native config smoke request failed' }
-            if ($request.id -eq 1) {
-                $process.StandardInput.WriteLine('{"method":"initialized","params":{}}')
-                $process.StandardInput.Flush()
-            }
-        }
-        $config = $reply.result.config
+        $connection = Start-CodexConfigProcess $command.Source $env:CODEX_HOME
+        Initialize-CodexConfigConnection $connection
+        $effective = Invoke-CodexConfigRpc $connection 'config/read' @{includeLayers = $true}
+        $config = $effective.config
         if ($config.model -cne 'fixture-model' -or $config.model_provider -cne 'oneline_llmp' -or
             $config.model_context_window -ne 500000 -or
             $config.model_providers.oneline_llmp.base_url -cne 'https://fixture.invalid/v1' -or
@@ -90,11 +67,7 @@ try {
             throw 'Native effective configuration did not select LLMP defaults'
         }
     } finally {
-        if ($started -and -not $process.HasExited) {
-            $process.StandardInput.Close()
-            if (-not $process.WaitForExit(2000)) { $process.Kill(); $process.WaitForExit() }
-        }
-        $process.Dispose()
+        Stop-CodexConfigProcess $connection
     }
     Write-Output 'PASS bare codex loads the LLMP default without --profile'
 } finally {

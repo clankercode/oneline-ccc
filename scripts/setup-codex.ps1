@@ -359,7 +359,14 @@ function Start-CodexConfigProcess([string]$Executable, [string]$Stage) {
         $info.EnvironmentVariables['OPENAI_API_KEY'] = 'dummy-fixture-key'
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $info
-        if (-not $process.Start()) { throw 'Start failed.' }
+        # .NET Framework creates its stdin writer during Start and may flush a
+        # BOM before our explicit writer exists. Bound the console encoding change
+        # to process creation and restore the caller's encoding immediately.
+        $previousInputEncoding = [Console]::InputEncoding
+        try {
+            [Console]::InputEncoding = $utf8
+            if (-not $process.Start()) { throw 'Start failed.' }
+        } finally { [Console]::InputEncoding = $previousInputEncoding }
         $inputWriter = New-Object System.IO.StreamWriter($process.StandardInput.BaseStream, $utf8)
         $inputWriter.AutoFlush = $true
         # Drain concurrently; never forward raw stderr or protocol to the console.
@@ -419,6 +426,69 @@ function Initialize-CodexConfigConnection($Connection) {
         clientInfo = @{name = 'oneline_ccc_setup'; version = '1.0'}
     }
     $Connection.Input.WriteLine('{"method":"initialized","params":{}}')
+}
+
+function Remove-CodexConfigStageTree([string]$Path) {
+    $attributes = [IO.File]::GetAttributes($Path)
+    $isDirectory = ($attributes -band [IO.FileAttributes]::Directory) -ne 0
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        if ($isDirectory) { [IO.Directory]::Delete($Path, $false) }
+        else { [IO.File]::Delete($Path) }
+        return
+    }
+    if (($attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+        [IO.File]::SetAttributes($Path, ($attributes -band (-bnot [IO.FileAttributes]::ReadOnly)))
+    }
+    if ($isDirectory) {
+        foreach ($entry in [IO.Directory]::GetFileSystemEntries($Path)) {
+            Remove-CodexConfigStageTree $entry
+        }
+        [IO.Directory]::Delete($Path, $false)
+    } else { [IO.File]::Delete($Path) }
+}
+
+function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot) {
+    try {
+        $full = [IO.Path]::GetFullPath($Stage)
+        $root = [IO.Path]::GetFullPath($ScratchRoot)
+        $parent = [IO.Path]::GetDirectoryName($full)
+        $comparison = [StringComparison]::Ordinal
+        if ($env:OS -eq 'Windows_NT') { $comparison = [StringComparison]::OrdinalIgnoreCase }
+        if (-not [string]::Equals($parent, $root.TrimEnd([IO.Path]::DirectorySeparatorChar), $comparison) -or
+            [IO.Path]::GetFileName($full) -cnotmatch '^codex-default-[0-9a-f]{32}$') {
+            throw 'Invalid staging directory.'
+        }
+        for ($attempt = 0; $attempt -lt 5; $attempt++) {
+            try {
+                try { $attributes = [IO.File]::GetAttributes($full) }
+                catch [IO.FileNotFoundException] { return }
+                catch [IO.DirectoryNotFoundException] { return }
+                # The stage root itself must remain the real directory we created.
+                if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    throw 'Staging directory was replaced.'
+                }
+                Remove-CodexConfigStageTree $full
+                return
+            } catch {
+                if ($attempt -eq 4) { throw }
+                Start-Sleep -Milliseconds (100 * [Math]::Pow(2, $attempt))
+            }
+        }
+    } catch {
+        # Fixed diagnostic classes only: no native exception text or paths.
+        $cause = $_.Exception.GetBaseException()
+        $category = 'other'
+        if ($cause -is [UnauthorizedAccessException]) { $category = 'access-denied' }
+        elseif ($cause -is [IO.IOException]) {
+            $category = 'io'
+            switch ($cause.HResult -band 65535) {
+                32 { $category = 'sharing-violation' }
+                33 { $category = 'lock-violation' }
+                145 { $category = 'directory-not-empty' }
+            }
+        }
+        throw ('Default Codex configuration staging cleanup failed (' + $category + '). Existing configuration was not changed.')
+    }
 }
 
 function Get-CodexDefaultConfig(
@@ -501,10 +571,7 @@ function Get-CodexDefaultConfig(
     } catch { throw 'Default Codex configuration could not be merged safely. Existing configuration was not changed.' }
     finally {
         Stop-CodexConfigProcess $connection
-        if ($stage -and [IO.Directory]::Exists($stage)) {
-            try { [IO.Directory]::Delete($stage, $true) }
-            catch { throw 'Default Codex configuration staging cleanup failed. Existing configuration was not changed.' }
-        }
+        if ($stage) { Remove-CodexConfigStage $stage $root }
     }
 }
 

@@ -201,8 +201,16 @@ foreach ($versionCase in @(
         }
         Write-Utf8 $fakeCommand $commandText
         if ($env:OS -ne 'Windows_NT') { & chmod +x $fakeCommand; Assert-True ($LASTEXITCODE -eq 0) 'Cannot make fixture executable' }
+        $fixturePath = $env:PATH
+        if ($env:OS -eq 'Windows_NT') {
+            # The installer deliberately prefers any native codex.exe over npm
+            # shims. Isolate this cmd fixture from installed native directories.
+            $fixturePath = (@($env:PATH -split ';' | Where-Object {
+                $_ -and -not [IO.File]::Exists((Join-Path ([Environment]::ExpandEnvironmentVariables($_.Trim('"'))) 'codex.exe'))
+            })) -join ';'
+        }
         $environment = @{
-            PATH = $fakeDirectory + [IO.Path]::PathSeparator + $env:PATH
+            PATH = $fakeDirectory + [IO.Path]::PathSeparator + $fixturePath
             CODEX_VERSION_MARKER = $marker
             CODEX_TEST_NATIVE = $nativeCodex
         }
