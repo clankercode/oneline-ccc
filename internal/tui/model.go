@@ -33,6 +33,10 @@ type model struct {
 	focus, width, height, scroll int
 	modal                        string
 	savedFocus, modalFocus       int
+	savedScroll                  int
+	locations                    map[string]location
+	history                      []string
+	regionFocus                  map[string]string
 	savedControlID               string
 	query, filter                string
 	editor                       *editor
@@ -69,7 +73,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.width = max(1, v.Width)
 		m.height = max(1, v.Height)
-		m.scroll = -1
 	case result:
 		return m, m.complete(v)
 	case exportResult:
@@ -136,9 +139,9 @@ func (m *model) changeProfile(p core.Profile) {
 	m.drafts[m.selected] = d
 	m.plan = nil
 }
-func (m *model) goTo(screen string) { m.screen = screen; m.focus = 4; m.scroll = -1; m.editor = nil }
 func (m *model) openModal(name string) {
 	m.savedFocus = m.focus
+	m.savedScroll = m.scroll
 	m.savedControlID = m.focused().id
 	m.modal = name
 	m.modalFocus = 0
@@ -148,6 +151,7 @@ func (m *model) closeModal() {
 	m.modal = ""
 	m.focus = max(0, min(m.savedFocus, len(m.controls())-1))
 	m.focusID(m.savedControlID)
+	m.scroll = m.savedScroll
 	m.modalFocus = 0
 	m.query = ""
 }

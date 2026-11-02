@@ -35,6 +35,15 @@ func (m *model) modalRows() []row {
 	var rs []row
 	text := func(s string) { rs = append(rs, row{text: m.public(s)}) }
 	switch m.modal {
+	case "more":
+		text("More destinations | Enter opens section")
+		for i, name := range sections[4:] {
+			prefix := "  "
+			if i == m.modalFocus {
+				prefix = "> "
+			}
+			rs = append(rs, row{text: prefix + name, focus: i == m.modalFocus})
+		}
 	case "help":
 		cs := m.catalog()
 		count := max(1, m.height-8)

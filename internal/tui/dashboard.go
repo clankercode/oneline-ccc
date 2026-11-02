@@ -31,7 +31,7 @@ func (m *model) dashboardRows() []row {
 	}
 	right = append(right, row{}, row{text: m.heading("ACTIONS")})
 	for i, control := range m.controls() {
-		if i < 4 {
+		if i < navCount {
 			continue
 		}
 		r := m.controlRow(control, i)

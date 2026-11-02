@@ -23,12 +23,12 @@ func (m *model) View() tea.View {
 	if m.editor != nil {
 		title += " / Edit " + m.editor.field
 	}
-	names := []string{"Dashboard", "Models", "Review", "Jobs"}
-	if m.modal == "" && m.editor == nil && m.focus < 4 {
+	names := []string{"Dashboard", "Models", "Review", "Jobs", "More"}
+	if m.modal == "" && m.editor == nil && m.focus < navCount {
 		names[m.focus] = "> " + names[m.focus]
 	}
-	for i, name := range []string{"Dashboard", "Models", "Review", "Jobs"} {
-		if name == m.screen {
+	for i, name := range []string{"Dashboard", "Models", "Review", "Jobs", "More"} {
+		if name == m.screen || (name == "More" && m.screen != "Dashboard" && m.screen != "Models" && m.screen != "Review" && m.screen != "Jobs") {
 			names[i] = m.heading(names[i])
 		}
 	}
@@ -38,9 +38,30 @@ func (m *model) View() tea.View {
 		status = "Working: " + m.busy + " | " + status
 	}
 	header := []string{m.band(ansi.Truncate(title, w, ""), w, true), m.band(ansi.Truncate(nav, w, ""), w, false), ansi.Truncate(status, w, "")}
-	footer := []string{"Tab move  Enter act  Esc back", "? Help  Ctrl+P Commands  q Quit"}
+	footer := []string{"F6 " + m.region(m.focus, m.focused()) + "  [ ] section  Tab/Shift+Tab", "Up/Down local  Enter act  Esc back"}
+	if m.focus < navCount {
+		footer[1] = "Left/Right tabs  Enter open  Esc back"
+	}
+	if m.modal == "more" {
+		footer = []string{"Tab/Shift+Tab menu", "Up/Down menu  Enter open  Esc back"}
+	}
+	if m.modal == "help" {
+		footer = []string{"Tab/Shift+Tab pages", "Up/Down pages  Enter/Esc close"}
+	}
+	if m.modal != "" && m.modal != "help" && m.modal != "more" && m.modal != "palette" {
+		footer = []string{"Tab/Shift+Tab choice", "Arrows choose  Enter act  Esc back"}
+	}
+	if m.modal == "" && m.editor == nil && m.focus >= navCount {
+		c := m.focused()
+		if strings.HasPrefix(c.id, "client:") || c.id == "enabled" || c.id == "capacity" || c.id == "tiers" || c.id == "ascii" || c.id == "color" || c.id == "motion" {
+			footer[1] = "Space toggle  Enter act  Esc back"
+		}
+	}
 	if m.editor != nil {
-		footer = []string{"Type / paste  Enter save  Esc cancel", "Key: Tab options; raw value stays hidden"}
+		footer = []string{"Type / paste  Enter save  Esc cancel", "Left/Right caret; text keys stay here"}
+		if m.editor.field == "key" {
+			footer = []string{"Type / paste  Tab/Shift+Tab options", "Space toggle  Enter act  Esc cancel"}
+		}
 	}
 	if m.modal == "palette" {
 		footer = []string{"Type search  Up/Down  Enter select", "Esc close; disabled actions explain why"}
@@ -227,7 +248,7 @@ func (m *model) screenRows() []row {
 	}
 	cs := m.controls()
 	for i, c := range cs {
-		if i < 4 {
+		if i < navCount {
 			continue
 		}
 		if m.screen == "Dashboard" && c.id == "configure" && ok {

@@ -14,6 +14,7 @@ type editor struct {
 	field      string
 	value      []rune
 	pos, focus int
+	origin     location
 }
 
 func (e *editor) insert(s string) {
@@ -33,13 +34,14 @@ func (e *editor) insert(s string) {
 	e.pos += len(rs)
 }
 func (m *model) startEditor(field, value string) {
-	m.editor = &editor{field: field, value: []rune(value), pos: len([]rune(value))}
+	m.editor = &editor{field: field, value: []rune(value), pos: len([]rune(value)), origin: m.location()}
 }
 func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 	e := m.editor
 	key := k.String()
 	switch key {
 	case "esc":
+		m.restore(e.origin)
 		m.editor = nil
 		return nil
 	case "tab", "shift+tab":
@@ -61,6 +63,7 @@ func (m *model) editKey(k tea.KeyPressMsg) tea.Cmd {
 			case 2:
 				return m.saveEditor()
 			case 3:
+				m.restore(e.origin)
 				m.editor = nil
 			}
 			return nil
@@ -106,8 +109,8 @@ func (m *model) saveEditor() tea.Cmd {
 	value := string(e.value)
 	if e.field == "filter" {
 		m.filter = value
+		m.restore(e.origin)
 		m.editor = nil
-		m.focus = 4
 		return nil
 	}
 	if e.field == "key" {
@@ -116,6 +119,7 @@ func (m *model) saveEditor() tea.Cmd {
 			return nil
 		}
 		persistent := m.persistent
+		m.restore(e.origin)
 		m.editor = nil
 		return m.begin("key", func(ctx context.Context) (any, error) {
 			err := m.backend.SaveKey(ctx, value, persistent)
@@ -149,6 +153,7 @@ func (m *model) saveEditor() tea.Cmd {
 		p.EnvKey = value
 	}
 	m.changeProfile(p)
+	m.restore(e.origin)
 	m.editor = nil
 	m.status = "Draft updated; review before applying"
 	return nil

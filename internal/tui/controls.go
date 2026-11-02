@@ -11,7 +11,7 @@ var errUnavailable = errors.New("backend did not provide a command")
 type control struct{ id, label, reason string }
 
 func (m *model) controls() []control {
-	cs := []control{{"nav:Dashboard", "Dashboard", ""}, {"nav:Models", "Models", ""}, {"nav:Review", "Review", ""}, {"nav:Jobs", "Jobs", ""}}
+	cs := []control{{"nav:Dashboard", "Dashboard", ""}, {"nav:Models", "Models", ""}, {"nav:Review", "Review", ""}, {"nav:Jobs", "Jobs", ""}, {"nav:More", "More", ""}}
 	add := func(id, label, reason string) { cs = append(cs, control{id, label, reason}) }
 	why := m.editable()
 	d := m.draft()
@@ -36,7 +36,7 @@ func (m *model) controls() []control {
 				add("client:"+c.ID, label, "")
 			}
 		}
-		if len(cs) == 4 {
+		if len(cs) == navCount {
 			add("filter:clear", "Clear filter", "")
 		}
 		add("configure", "Configure selected client", noClient(m))
@@ -84,7 +84,7 @@ func (m *model) controls() []control {
 		}
 	case "Jobs":
 		add("cancel", "Request cancellation", idleReason(m))
-		add("back", "Back to dashboard", "")
+		add("back", "Back; keep draft", "")
 	case "Gateway":
 		add("advanced:endpoint", "Edit local endpoint", why)
 		add("key", "Enter API key (hidden)", "")

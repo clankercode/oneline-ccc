@@ -35,14 +35,19 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 	case "q":
 		return m.quitRequest()
 	case "esc":
-		if m.screen == "Dashboard" {
-			return nil
-		}
-		if m.screen == "Review" && m.previous != "" {
-			m.goTo(m.previous)
-		} else {
-			m.goTo("Dashboard")
-		}
+		m.back()
+	case "f6":
+		m.moveRegion(1)
+	case "shift+f6":
+		m.moveRegion(-1)
+	case "[":
+		m.switchSection(-1)
+	case "]":
+		m.switchSection(1)
+	case "left":
+		m.moveLocal(-1, true)
+	case "right":
+		m.moveLocal(1, true)
 	case "tab", "shift+tab":
 		n := len(m.controls())
 		step := 1
@@ -56,9 +61,7 @@ func (m *model) key(k tea.KeyPressMsg) tea.Cmd {
 		if key == "up" {
 			step = -1
 		}
-		m.focus = max(0, min(m.focus+step, len(m.controls())-1))
-		m.scroll = -1
-		m.selectFocused()
+		m.moveLocal(step, false)
 	case "pgdown":
 		_, _, start, available := m.layout()
 		m.scroll = start + max(1, available-1)
@@ -90,8 +93,16 @@ func (m *model) activate(c control) tea.Cmd {
 		return nil
 	}
 	id := c.id
+	if id == "nav:More" {
+		m.openModal("more")
+		return nil
+	}
 	if strings.HasPrefix(id, "nav:") {
 		m.goTo(strings.TrimPrefix(id, "nav:"))
+		if m.focus < navCount {
+			m.focus = navCount
+			m.scroll = -1
+		}
 		return nil
 	}
 	if strings.HasPrefix(id, "client:") {
@@ -186,12 +197,9 @@ func (m *model) activate(c control) tea.Cmd {
 				m.status = "Complete review acknowledged; Apply is now available"
 			}
 		case "review:back":
-			if m.previous == "" {
-				m.previous = "Models"
-			}
-			m.goTo(m.previous)
+			m.back()
 		case "back":
-			m.goTo("Dashboard")
+			m.back()
 		case "filter:clear":
 			m.filter = ""
 		case "help":
