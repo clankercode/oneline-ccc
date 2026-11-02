@@ -2,12 +2,15 @@
 """Bound cooperative verification jobs without changing their evidence or inputs."""
 import argparse
 import contextlib
+import contextvars
 import fcntl
 import os
 import pathlib
 import re
 import subprocess
 import sys
+
+_SLOT_FD = contextvars.ContextVar("verification_slot_fd", default=None)
 
 
 class BudgetError(ValueError):
@@ -33,8 +36,9 @@ def verification_slot(root):
     """All worktrees share one persistent inode; flock sleeps in the kernel.
 
     Never unlink the lock: replacing its inode would let queued jobs overlap.
-    The descriptor is not inherited by subprocesses; the owning wrapper waits
-    for its command and closes it on normal exit, exceptions or process death.
+    Supervised commands inherit a reference in a separate Linux subreaper.
+    Closing the wrapper's reference must not unlock the shared description:
+    the supervisor retains it until the complete command subtree has exited.
     """
     try:
         common = subprocess.check_output(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=root, stderr=subprocess.DEVNULL).decode().strip()
@@ -48,10 +52,64 @@ def verification_slot(root):
             print("verification: waiting for repository CPU slot", file=sys.stderr, flush=True)
             fcntl.flock(handle, fcntl.LOCK_EX)
         print("verification: acquired repository CPU slot", file=sys.stderr, flush=True)
+        token = _SLOT_FD.set(handle.fileno())
         try:
             yield
         finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            _SLOT_FD.reset(token)
+
+
+def _supervised(command, options):
+    fd = _SLOT_FD.get()
+    if fd is None:
+        return command, options
+    if not sys.platform.startswith("linux"):
+        raise BudgetError("command-lifetime verification slots require Linux child-subreaper support")
+    options = dict(options)
+    options["pass_fds"] = (*options.get("pass_fds", ()), fd)
+    options.setdefault("start_new_session", True)
+    return [sys.executable, str(pathlib.Path(__file__).resolve()), "--supervise", str(fd), *command], options
+
+
+def popen_supervised(command, **options):
+    command, options = _supervised(command, options)
+    return subprocess.Popen(command, **options)
+
+
+def run_supervised(command, *, check=False, **options):
+    if _SLOT_FD.get() is None:
+        return subprocess.run(command, check=check, **options)
+    command, options = _supervised(command, options)
+    # subprocess.run kills its child on KeyboardInterrupt. That child is our
+    # supervisor: killing it would abandon the actual job and release the slot.
+    # Wait without a context manager so wrapper interruption leaves it alive.
+    child = subprocess.Popen(command, **options)
+    stdout, stderr = child.communicate()
+    result = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+    if check:
+        result.check_returncode()
+    return result
+
+
+def _supervise(fd, command):
+    # This process outlives a killed wrapper. A detached descendant that closes
+    # inherited FDs is still adopted here when its command parent exits.
+    import ctypes
+    os.fstat(fd)
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    prctl.restype = ctypes.c_int
+    if prctl(36, 1, 0, 0, 0):  # PR_SET_CHILD_SUBREAPER
+        raise BudgetError("cannot enable verification command child-subreaper; command refused")
+    child = subprocess.Popen(command)
+    status = child.wait()
+    while True:
+        try:
+            os.waitpid(-1, 0)  # blocking reap, including adopted descendants
+        except ChildProcessError:
+            break
+    return status if status >= 0 else 128 - status
 
 
 def main():
@@ -69,11 +127,13 @@ def main():
     # in GOFLAGS; an explicit command-line -p still takes precedence.
     env["GOFLAGS"] = env.get("GOFLAGS", "") + " -p=" + env["GOMAXPROCS"]
     with verification_slot(root):
-        return subprocess.run(command, cwd=root, env=env).returncode
+        return run_supervised(command, cwd=root, env=env).returncode
 
 
 if __name__ == "__main__":
     try:
+        if sys.argv[1:2] == ["--supervise"]:
+            sys.exit(_supervise(int(sys.argv[2]), sys.argv[3:]))
         sys.exit(main())
     except BudgetError as error:
         print(f"verification: {error}", file=sys.stderr)

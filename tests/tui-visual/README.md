@@ -7,7 +7,7 @@ production CLI, reads operator configuration, calls a gateway, or touches a real
 service. HTML contains an xterm terminal, with no reconstruction of the app UI.
 Generated output is evidence of rendering, **not visual acceptance**.
 
-Run from the repository/worktree root (Go 1.26.1, Python 3.10+ on POSIX,
+Run from the repository/worktree root (Go 1.26.1, Python 3.10+ on Linux,
 Node 18+, npm and Playwright's Linux libraries are required):
 
 ```sh
@@ -41,6 +41,18 @@ kernel, then announces acquisition; failures release the slot. `list` and
 `--plan` need no slot. The fault controller uses the same slot for its captures
 and its final Python/Node checks. Node test-file concurrency also follows the
 selected budget, preserving all five fault-test files.
+
+Heavy subprocesses run under a separate Linux child-subreaper supervisor that
+inherits the held lock descriptor. If the outer wrapper is killed, the
+supervisor retains the slot until the command and its descendants exit, even
+when a descendant detaches and closes inherited descriptors. Both waiting for
+the lock and reaping descendants block in the kernel. Normal command failures
+release the slot after the owned job ends. The supervisor must remain alive:
+killing it separately, or killing an entire supervisor process group while a
+descendant has escaped that group, is outside this guarantee. A stuck surviving
+child retains the slot; wrapper cancellation does not forcibly terminate it.
+Command supervision fails closed outside Linux or if child-subreaper setup is
+unavailable. This is not a portable POSIX descendant-ownership claim.
 
 The build tag `visualcapture` and `ONELINE_VISUAL_CAPTURE=1` guard the helper.
 Regular Go tests do not activate it. To run the surrounding TUI suite:

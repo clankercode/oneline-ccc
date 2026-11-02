@@ -6,6 +6,7 @@ import pathlib
 import runpy
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -25,7 +26,7 @@ class BuildBudgetTests(unittest.TestCase):
         for requested, expected in [(None, "1"), ("1", "1"), ("2", "2")]:
             with self.subTest(requested=requested), tempfile.TemporaryDirectory(dir=capture.ROOT / ".cache/tui-visual/tmp") as scratch:
                 env = {} if requested is None else {"GOMAXPROCS": requested}
-                with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(capture, "CACHE", pathlib.Path(scratch)), mock.patch.object(capture, "run") as run:
+                with mock.patch.dict(os.environ, env, clear=True), mock.patch("resource_budget.os.cpu_count", return_value=2), mock.patch.object(capture, "CACHE", pathlib.Path(scratch)), mock.patch.object(capture, "run") as run:
                     capture.build()
                 command = run.call_args.args[0]
                 self.assertEqual(command[command.index("-p") + 1], expected)
@@ -37,6 +38,18 @@ class BuildBudgetTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     capture.build()
                 run.assert_not_called()
+
+    def test_budget_tests_also_pass_on_simulated_single_cpu_host(self):
+        with mock.patch("resource_budget.os.cpu_count", return_value=1):
+            self.test_build_respects_explicit_and_default_budget()
+
+    def test_single_cpu_accepts_one_and_rejects_two(self):
+        with mock.patch("resource_budget.os.cpu_count", return_value=1), mock.patch.dict(os.environ, {"GOMAXPROCS": "1"}), mock.patch.object(capture, "run") as run:
+            capture.build()
+            self.assertEqual(run.call_args.kwargs["env"]["GOMAXPROCS"], "1")
+            with mock.patch.dict(os.environ, {"GOMAXPROCS": "2"}):
+                with self.assertRaisesRegex(ValueError, "1 to 1"):
+                    capture.build()
 
 
 class ControllerBudgetTests(unittest.TestCase):
@@ -159,6 +172,85 @@ except RuntimeError:
         self.assertEqual(actual["GOTMPDIR"], actual["TMPDIR"])
         follower = self.start(self.repo)
         self.assertEqual(self.line(follower.stdout), "entered")
+
+    def test_supervised_protocol_pty_preserves_cleanup(self):
+        from resource_budget import verification_slot
+        # Protocol peer only: no native binary, renderer, browser or Go build.
+        with verification_slot(self.repo):
+            result = capture.capture_pty([sys.executable, str(HERE / "protocol_peer.py")], {}, 80, 24, 2)
+        self.assertIn("模型".encode(), result["ansi"])
+        self.assertIn(b"\x1b[?1049l", result["cleanup"])
+        self.assertTrue(result["termios_restored"])
+
+    def test_capture_command_failure_releases_supervised_slot(self):
+        from resource_budget import verification_slot
+        with self.assertRaisesRegex(capture.CaptureError, r"tool failed \(7\)"):
+            with verification_slot(self.repo):
+                capture.run([sys.executable, "-c", "raise SystemExit(7)"])
+        follower = self.start(self.worktree)
+        self.assertEqual(self.line(follower.stdout), "entered")
+
+    def test_unsupported_platform_refuses_heavy_command(self):
+        import resource_budget
+        with resource_budget.verification_slot(self.repo):
+            with mock.patch.object(sys, "platform", "darwin"), mock.patch.object(subprocess, "Popen") as spawn:
+                with self.assertRaisesRegex(ValueError, "require Linux"):
+                    resource_budget.run_supervised([sys.executable, "-c", "pass"])
+                spawn.assert_not_called()
+
+    def test_subreaper_setup_failure_refuses_heavy_command(self):
+        import resource_budget
+        with tempfile.TemporaryFile(dir=self.root) as lock, mock.patch("ctypes.CDLL") as libc, mock.patch.object(subprocess, "Popen") as spawn:
+            libc.return_value.prctl.return_value = -1
+            with self.assertRaisesRegex(ValueError, "command refused"):
+                resource_budget._supervise(lock.fileno(), [sys.executable, "-c", "pass"])
+            spawn.assert_not_called()
+
+    def test_wrapper_death_keeps_live_command_inside_slot(self):
+        self.check_live_command_after_owner_exit(kill_owner=True, descendant=False)
+
+    def test_wrapper_interrupt_keeps_live_command_inside_slot(self):
+        self.check_live_command_after_owner_exit(kill_owner=True, descendant=False, interrupt_owner=True)
+
+    def test_wrapper_death_keeps_detached_descendant_inside_slot(self):
+        self.check_live_command_after_owner_exit(kill_owner=True, descendant=True)
+
+    def test_command_exit_keeps_detached_descendant_inside_slot(self):
+        self.check_live_command_after_owner_exit(kill_owner=False, descendant=True)
+
+    def check_live_command_after_owner_exit(self, *, kill_owner, descendant, interrupt_owner=False):
+        helper = self.repo / "tests/tui-visual/resource_budget.py"
+        helper.parent.mkdir(parents=True)
+        shutil.copyfile(HERE / "resource_budget.py", helper)
+        child = "import os,sys; print(os.getpid(), flush=True); sys.stdin.readline(); print('child-finished', flush=True)"
+        if descendant:
+            # The command leader exits; the detached grandchild closes inherited
+            # non-stdio descriptors. Passing the flock FD alone cannot fix this.
+            child = "import subprocess,sys; subprocess.Popen([sys.executable, '-c', " + repr(child) + "], start_new_session=True, close_fds=True)"
+        owner = subprocess.Popen([sys.executable, str(helper), "--", sys.executable, "-c", child], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        def cleanup():
+            try:
+                owner.stdin.write("release\n"); owner.stdin.flush()
+            except BrokenPipeError:
+                pass
+            owner.communicate(timeout=5)
+        self.addCleanup(cleanup)
+        child_pid = int(self.line(owner.stdout))
+        waiter = self.start(self.worktree)
+        self.assertIn("waiting", self.line(waiter.stderr))
+        if kill_owner:
+            if interrupt_owner:
+                owner.send_signal(signal.SIGINT)
+            else:
+                owner.kill()
+            self.assertNotEqual(owner.wait(timeout=5), 0)
+        os.kill(child_pid, 0)
+        self.assertFalse(select.select([waiter.stdout], [], [], .15)[0], "slot escaped while the owned command or descendant was alive")
+        owner.stdin.write("release\n"); owner.stdin.flush()
+        self.assertEqual(self.line(owner.stdout), "child-finished")
+        self.assertEqual(self.line(waiter.stdout), "entered")
+        if not kill_owner:
+            self.assertEqual(owner.wait(timeout=5), 0)
 
 
 if __name__ == "__main__":

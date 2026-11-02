@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 from capture import CACHE, HERE, ROOT
-from resource_budget import budget_environment, verification_slot
+from resource_budget import budget_environment, run_supervised, verification_slot
 
 scratch = CACHE / 'tmp'
 scratch.mkdir(parents=True, exist_ok=True)
@@ -40,5 +40,5 @@ with tempfile.TemporaryDirectory(prefix='evidence-faults-', dir=scratch) as temp
                A2_SCENE_MANIFESTS=json.dumps(scenes), A2B_BASELINE_MANIFEST=str(output/'manifest.json'),
                A2B_UNICODE_BASELINE_MANIFEST=scenes['unicode'], A2B_SCENE_MANIFESTS=json.dumps({key:scenes[key] for key in ['more-first','more-last','pending','filter-match','filter-unicode']}), PYTHONDONTWRITEBYTECODE='1')
     with verification_slot(ROOT):
-        subprocess.run([sys.executable,'-m','unittest','discover','-s',str(HERE),'-p','test_*.py','-v'], cwd=ROOT,env=env,check=True)
-        subprocess.run(['node','--test','--test-concurrency='+env['GOMAXPROCS'],str(HERE/'render.test.mjs'),str(HERE/'semantic.test.mjs'),str(HERE/'legacy.test.mjs'),str(HERE/'a2b.test.mjs'),str(HERE/'prepared.test.mjs')], cwd=ROOT,env=env,check=True)
+        run_supervised([sys.executable,'-m','unittest','discover','-s',str(HERE),'-p','test_*.py','-v'], cwd=ROOT,env=env,check=True)
+        run_supervised(['node','--test','--test-concurrency='+env['GOMAXPROCS'],str(HERE/'render.test.mjs'),str(HERE/'semantic.test.mjs'),str(HERE/'legacy.test.mjs'),str(HERE/'a2b.test.mjs'),str(HERE/'prepared.test.mjs')], cwd=ROOT,env=env,check=True)

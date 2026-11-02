@@ -19,7 +19,8 @@ import sys
 import termios
 import time
 
-from resource_budget import BudgetError, budget_environment, cpu_budget, verification_slot
+from resource_budget import (BudgetError, budget_environment, cpu_budget,
+                             popen_supervised, run_supervised, verification_slot)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HERE = pathlib.Path(__file__).resolve().parent
@@ -74,7 +75,7 @@ def capture_pty(command, env, cols, rows, timeout=10):
     proc = None
     try:
         try:
-            proc = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave,
+            proc = popen_supervised(command, stdin=slave, stdout=slave, stderr=slave,
                                     env=env, cwd=ROOT, start_new_session=True)
         except FileNotFoundError as error:
             raise CaptureError("missing capture executable; run bootstrap and build") from error
@@ -169,7 +170,7 @@ def capture_pty(command, env, cols, rows, timeout=10):
 
 def run(command, **kwargs):
     try:
-        subprocess.run(command, cwd=ROOT, check=True, **kwargs)
+        run_supervised(command, cwd=ROOT, check=True, **kwargs)
     except FileNotFoundError as error:
         raise CaptureError(f"missing tool: {command[0]}") from error
     except subprocess.CalledProcessError as error:
