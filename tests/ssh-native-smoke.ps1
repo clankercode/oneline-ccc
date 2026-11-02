@@ -55,13 +55,24 @@ if ((Get-Service sshd).Status -ne 'Running') { throw 'SSH service is not running
 
 # BatchMode prevents fallback to password prompts. Known-host state stays in cache.
 $knownHosts = Join-Path $root 'known_hosts'
+$clientError = Join-Path $root 'ssh-client.err'
 $previousErrorAction = $ErrorActionPreference
 try {
     $ErrorActionPreference = 'Continue'
-    $identity = @(& (Join-Path $sshRoot 'ssh.exe') -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$knownHosts" -i $keyPath -l onelinefixture 127.0.0.1 whoami 2>$null)
+    $identity = @(& (Join-Path $sshRoot 'ssh.exe') -vv -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$knownHosts" -i $keyPath -l onelinefixture 127.0.0.1 whoami 2>$clientError)
     $sshExit = $LASTEXITCODE
 } finally { $ErrorActionPreference = $previousErrorAction }
-if ($sshExit -ne 0 -or ($identity -join '').Trim() -notmatch '\\onelinefixture$') { throw 'Real SSH public-key login failed' }
+if ($sshExit -ne 0 -or ($identity -join '').Trim() -notmatch '\\onelinefixture$') {
+    Write-Output ("SSH login diagnostic: exit={0}, whoami={1}" -f $sshExit, (($identity -join '').Trim()))
+    Write-Output ('SSH service identity: {0}' -f (Get-CimInstance Win32_Service -Filter "Name='sshd'").StartName)
+    if (Test-Path -LiteralPath $clientError) {
+        Get-Content -LiteralPath $clientError | Where-Object { $_ -match 'connect|authenticat|permission|offering public key|server accepts key|load key|bad permissions|host key verification|sign_and_send_pubkey|no mutual|warning|error' } | Write-Output
+    }
+    Get-WinEvent -LogName 'OpenSSH/Operational' -MaxEvents 10 -ErrorAction SilentlyContinue |
+        Where-Object { $_.Message -match 'onelinefixture' -and $_.Message -match 'authentication|ownership|permission|publickey|invalid user|not allowed|unable|error' } |
+        ForEach-Object { Write-Output ('OpenSSH event {0}: {1}' -f $_.Id, $_.Message) }
+    throw 'Real SSH public-key login failed'
+}
 Write-Output 'Real SSH public-key login, user policy, running service, and local-subnet firewall verified.'
 
 # Inject a late service failure into the real helper. New authorization must be
