@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // These composers only arrange public facts and the existing control catalog.
@@ -22,16 +24,20 @@ func (m *model) gatewayRows() []row {
 			left = append(left, m.gatewaySettingsAction(c, i)...)
 		}
 	}
-	left = append(left, row{}, m.gatewaySettingsSection("VERIFICATION / UNVERIFIED", width))
-	left = append(left, m.gatewaySettingsFact("Route", m.statusText("Not checked")))
-	left = append(left, m.gatewaySettingsFact("Auth / API", m.statusText("Not tested")))
-	left = append(left, m.gatewaySettingsFact("Inference", "Not tested"))
-	left = append(left, row{text: m.note("An endpoint and key do not verify models or tiers.")})
+	verification := []row{m.gatewaySettingsSection("VERIFICATION / UNVERIFIED", width),
+		m.gatewaySettingsFact("Route", m.statusText("Not checked")),
+		m.gatewaySettingsFact("Auth / API", m.statusText("Not tested")),
+		m.gatewaySettingsFact("Inference", "Not tested"),
+		{text: m.note("An endpoint and key do not verify models or tiers.")},
+	}
+	if m.width >= 100 {
+		left = append(append(left, row{}), verification...)
+	}
 	right := []row{m.gatewaySettingsSection("CREDENTIAL / VALUE NEVER SHOWN", width)}
 	right = append(right, m.gatewaySettingsFact("Availability", m.gatewaySettingsCredential()))
 	right = append(right, m.gatewaySettingsFact("Env reference", m.gatewaySettingsReference()))
 	right = append(right, m.gatewaySettingsFact("Save default", "Session only"))
-	right = append(right, row{text: m.note("Vault storage is a separate choice in key entry.")})
+	right = append(right, row{text: m.note("Vault storage is explicit in key entry.")})
 	for i, c := range m.controls() {
 		if c.id == "key" {
 			right = append(right, m.gatewaySettingsAction(c, i)...)
@@ -46,6 +52,9 @@ func (m *model) gatewayRows() []row {
 		rs = append(rs, row{})
 	}
 	rs = append(rs, m.gatewaySettingsPanels(left, right)...)
+	if m.width < 100 {
+		rs = append(append(rs, row{}), verification...)
+	}
 	return append(rs, m.gatewaySettingsReturn()...)
 }
 
@@ -110,7 +119,8 @@ func (m *model) gatewaySettingsPanels(left, right []row) []row {
 		return append(append(left, row{}), right...)
 	}
 	width := m.gatewaySettingsPanelWidth()
-	left, right = m.column(left, width), m.column(right, width)
+	rightWidth := m.contentWidth() - width - 3
+	left, right = m.column(left, width), m.column(right, rightWidth)
 	var rs []row
 	for i := 0; i < max(len(left), len(right)); i++ {
 		l, r := row{}, row{}
@@ -120,18 +130,24 @@ func (m *model) gatewaySettingsPanels(left, right []row) []row {
 		if i < len(right) {
 			r = right[i]
 		}
-		cell := func(r row) string {
+		cell := func(r row, cellWidth int) string {
 			role := surfaceBase
 			if r.focus {
 				role = surfaceActive
 			}
-			return m.fill(r.text, width, role)
+			text := m.fill(r.text, cellWidth, role)
+			if !m.options.NoColor && !r.focus {
+				// A base style sets colors but inherits an enclosing bold SGR.
+				normal := ansi.Style{}.Normal().String()
+				text = normal + strings.NewReplacer(ansi.ResetStyle, ansi.ResetStyle+normal, "\x1b[0m", "\x1b[0m"+normal).Replace(text)
+			}
+			return text
 		}
 		divider := "│"
 		if m.options.ASCII {
 			divider = "|"
 		}
-		rs = append(rs, row{text: cell(l) + m.fill(" "+divider+" ", 3, surfaceBase) + cell(r), focus: l.focus || r.focus})
+		rs = append(rs, row{text: cell(l, width) + m.fill(" "+divider+" ", 3, surfaceBase) + cell(r, rightWidth), focus: l.focus || r.focus})
 	}
 	return rs
 }
