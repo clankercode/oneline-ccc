@@ -55,6 +55,7 @@ func newNativeConsoleScreen(w, h int) *nativeConsoleScreen {
 			}
 		}
 		s.cells[s.y][s.x], s.last = r, r
+		s.latchKeyExposure(s.y)
 		s.x++
 	}
 	p := ansi.NewParser()
@@ -149,6 +150,7 @@ func newNativeConsoleScreen(w, h int) *nativeConsoleScreen {
 					copy(s.cells[s.y][s.x+n:], s.cells[s.y][s.x:s.w-n])
 					clear(s.cells[s.y][s.x : s.x+n])
 				}
+				s.latchKeyExposure(s.y)
 			case 'b':
 				for range n {
 					print(s.last)
@@ -167,11 +169,38 @@ func newNativeConsoleScreen(w, h int) *nativeConsoleScreen {
 				}
 			case 'm', 'c', 'n', 'p', 'q', 't', 'W', 'g': // Styling, queries and tab-stop setup do not move cells.
 			default:
-				s.err = fmt.Errorf("unsupported terminal cursor operation %q", cmd.Final())
+				if s.err == nil {
+					s.err = fmt.Errorf("unsupported terminal cursor operation %q", cmd.Final())
+				}
 			}
 		},
 	})
 	return s
+}
+
+// Inspect each changed row while the parser applies updates, not after a whole
+// transport read. Cursor-addressed text can expose a key and erase it in that
+// same read. Checking the row avoids allocating/scanning the full screen per
+// byte; print and horizontal insert/delete are the operations that can assemble
+// new contiguous text. Scrolling moves whole rows, and erase only blanks cells.
+func (s *nativeConsoleScreen) latchKeyExposure(y int) {
+	if s.err != nil {
+		return
+	}
+	row := s.cells[y]
+	for start := 0; start+len(nativeConsoleKey) <= len(row); start++ {
+		matched := true
+		for i := range nativeConsoleKey { // The fixture key and terminal are ASCII.
+			if row[start+i] != rune(nativeConsoleKey[i]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			s.err = fmt.Errorf("dummy credential leaked into observed console cells")
+			return
+		}
+	}
 }
 
 func (s *nativeConsoleScreen) resize(w, h int) {
@@ -257,3 +286,104 @@ func TestNativeConsoleDriverControls(t *testing.T) {
 		}
 	})
 }
+
+func TestNativeConsoleTransientKeyExposure(t *testing.T) {
+	prefix := "\x1b[H" + nativeConsoleKey[:10] + "\x1b[2;1Hfooter\x1b[1;11H" + nativeConsoleKey[10:]
+	// Establish that the injected cursor updates really display the whole key.
+	exposed := newNativeConsoleScreen(120, 40)
+	exposed.feed([]byte(prefix))
+	if !strings.Contains(exposed.text(), nativeConsoleKey) {
+		t.Fatal("invalid injection: cursor updates did not assemble the key")
+	}
+	for _, erase := range []struct{ name, bytes string }{
+		{"erase-line", "\x1b[1;1H\x1b[2K"},
+		{"clear-screen", "\x1b[2J\x1b[HAPI key: [hidden]"},
+		{"alternate-screen", "\x1b[?1049l\x1b[2J\x1b[?1049h\x1b[HAPI key: [hidden]"},
+	} {
+		t.Run(erase.name, func(t *testing.T) {
+			raw := []byte(prefix + erase.bytes)
+			if err := nativeConsoleOutputError(raw); err != nil {
+				t.Fatalf("invalid injection: raw/stripped oracle already detects it: %v", err)
+			}
+			for _, split := range []bool{false, true} {
+				s := newNativeConsoleScreen(120, 40)
+				if split {
+					s.feed([]byte(prefix[:len(prefix)-5]))
+					s.feed([]byte(prefix[len(prefix)-5:] + erase.bytes))
+				} else {
+					s.feed(raw)
+				}
+				if strings.Contains(s.text(), nativeConsoleKey) {
+					t.Fatal("invalid injection: final cells still contain key")
+				}
+				if s.err == nil {
+					t.Errorf("split=%t: transient cursor-assembled exposure was not latched", split)
+					continue
+				}
+				latched := s.err
+				s.resize(40, 12)
+				s.feed([]byte("\x1b[2J\x1b[?1049l\x1b[?1049h\x1b[HAPI key: [hidden]"))
+				s.resize(120, 40)
+				s.feed([]byte("\x1b[1z")) // Even a later parser failure must not replace it.
+				if s.err != latched {
+					t.Fatal("erase, resize or alternate-screen transition cleared the exposure latch")
+				}
+			}
+		})
+	}
+	t.Run("clean-erase-and-resize", func(t *testing.T) {
+		s := newNativeConsoleScreen(120, 40)
+		s.feed([]byte("\x1b[HAPI key: [hidden]\x1b[2J"))
+		s.resize(40, 12)
+		s.feed([]byte("\x1b[?1049l\x1b[?1049h\x1b[Hclean"))
+		s.resize(120, 40)
+		if s.err != nil {
+			t.Fatal("clean updates rejected:", s.err)
+		}
+	})
+	t.Run("delete-assembles-then-clears", func(t *testing.T) {
+		raw := []byte("\x1b[H" + nativeConsoleKey[:10] + "_" + nativeConsoleKey[10:] + "\x1b[1;11H\x1b[P\x1b[2J")
+		if err := nativeConsoleOutputError(raw); err != nil {
+			t.Fatal("invalid delete injection:", err)
+		}
+		s := newNativeConsoleScreen(120, 40)
+		s.feed(raw)
+		if s.err == nil || strings.Contains(s.text(), nativeConsoleKey) {
+			t.Fatal("horizontal delete exposure was not latched before clear")
+		}
+	})
+	t.Run("ordinary-read-and-final-drain-share-oracle", func(t *testing.T) {
+		raw := []byte(prefix + "\x1b[2J\x1b[HAPI key: [hidden]")
+		ordinary := &nativeConsoleDriver{screen: newNativeConsoleScreen(120, 40)}
+		if err := ordinary.consume(raw); err == nil {
+			t.Fatal("ordinary read oracle accepted transient exposure")
+		}
+		final := &nativeConsoleDriver{screen: newNativeConsoleScreen(120, 40), host: nativeConsoleDrainControl{tail: raw}}
+		if err := final.consumeDrain(); err == nil {
+			t.Fatal("final drain oracle accepted transient exposure")
+		}
+		if err := final.consume([]byte("\x1b[2Jclean")); err == nil {
+			t.Fatal("later clean batch cleared the exposure latch")
+		}
+		split := &nativeConsoleDriver{screen: newNativeConsoleScreen(120, 40), host: nativeConsoleDrainControl{tail: []byte(prefix[len(prefix)-5:] + "\x1b[2J")}}
+		if err := split.consume([]byte(prefix[:len(prefix)-5])); err != nil {
+			t.Fatal("incomplete ordinary fragment rejected:", err)
+		}
+		if err := split.consumeDrain(); err == nil {
+			t.Fatal("key assembled across ordinary read and final drain was not latched")
+		}
+		clean := &nativeConsoleDriver{screen: newNativeConsoleScreen(120, 40), host: nativeConsoleDrainControl{tail: []byte("\x1b[2JAPI key: [hidden]")}}
+		if err := clean.consumeDrain(); err != nil {
+			t.Fatal("clean final drain rejected:", err)
+		}
+	})
+}
+
+// Only final-drain transport data is substituted in this shared assertion
+// control. Calling any other host method would fail through the nil interface.
+type nativeConsoleDrainControl struct {
+	nativeConsoleHost
+	tail []byte
+}
+
+func (h nativeConsoleDrainControl) drained() []byte { return h.tail }
