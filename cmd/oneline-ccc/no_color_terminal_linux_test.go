@@ -386,6 +386,19 @@ func (p *noColorPTY) palette(t *testing.T, command, want string) {
 	p.await(t, p.send(t, command+"\r"), want)
 }
 
+func (p *noColorPTY) assertKeyHidden(t *testing.T, focus string) {
+	t.Helper()
+	frame := noColorTerminalScreen(t, p.transcript)
+	if !strings.Contains(frame, "Editing key | Esc keeps the previous draft") || !strings.Contains(frame, focus) {
+		t.Fatal("credential editor or expected focus missing before cancellation")
+	}
+	for _, text := range []string{frame, string(p.transcript), ansi.Strip(string(p.transcript))} {
+		if strings.Contains(text, noColorDummyKey) {
+			t.Fatal("dummy key visible before credential cancellation")
+		}
+	}
+}
+
 func (p *noColorPTY) finish(t *testing.T, entry string) {
 	t.Helper()
 	err := p.app.Wait()
@@ -435,8 +448,17 @@ func TestNoColorTerminalInteractive(t *testing.T) {
 			p.palette(t, "Gateway", "> Edit local endpoint")
 			// Move between adjacent local controls, independent of the top-level
 			// tab count (including the upcoming More tab).
-			p.await(t, p.send(t, "\t\r"), "API key: [hidden]")
-			p.await(t, p.send(t, noColorDummyKey+"\t\x1b[Z\x1b"), "Session-only storage is the default; no key reveal.")
+			p.await(t, p.send(t, "\t"), "> Enter API key (hidden)")
+			p.await(t, p.send(t, "\r"), "> API key: [hidden]")
+			// Masking deliberately has no visible length/value feedback. A focus
+			// change after typing forces an observable editor update before Esc;
+			// these checks do not assert that the hidden value was accepted.
+			p.send(t, noColorDummyKey)
+			p.await(t, p.send(t, "\t"), "> [ ] Persist using backend credential storage")
+			p.assertKeyHidden(t, "> [ ] Persist using backend credential storage")
+			p.await(t, p.send(t, "\x1b[Z"), "> API key: [hidden]")
+			p.assertKeyHidden(t, "> API key: [hidden]")
+			p.await(t, p.send(t, "\x1b"), "Session-only storage is the default; no key reveal.")
 			p.palette(t, "Configure selected client", "> [ ] Manage client")
 			p.send(t, " ")
 			p.palette(t, "Dashboard", "| Draft")
