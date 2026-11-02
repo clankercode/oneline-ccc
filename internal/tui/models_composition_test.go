@@ -243,3 +243,14 @@ func TestModelsCustomBudgetKeepsValidationAndPickerReturn(t *testing.T) {
 		t.Fatal("picker cancellation lost custom budget")
 	}
 }
+
+func TestModelsTinyHeaderRetainsUnicodeClientIdentity(t *testing.T) {
+	m, _ := loaded(t)
+	m.snapshot.Clients[0].Name = "Codex 模型 — a long fixture name"
+	activate(t, m, "client:codex")
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	if !strings.Contains(ansi.Strip(m.View().Content), "Codex 模型") {
+		t.Fatal("shell prefix displaces selected-client identity")
+	}
+	assertFrame(t, m)
+}

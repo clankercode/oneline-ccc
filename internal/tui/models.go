@@ -402,5 +402,9 @@ func (m *model) modelsHeader() string {
 	if c, ok := m.client(); ok {
 		name = m.public(c.Name)
 	}
-	return m.shellLine(m.heading(ansi.Truncate("oneline-ccc / Models / Selected: "+name, m.contentWidth(), m.ellipsis())), surfaceRaised)
+	title := "oneline-ccc / Models / Selected: " + name
+	if m.width < 60 {
+		title = "oneline-ccc / Selected: " + name
+	}
+	return m.shellLine(m.heading(ansi.Truncate(title, m.contentWidth(), m.ellipsis())), surfaceRaised)
 }
