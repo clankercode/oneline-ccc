@@ -29,12 +29,8 @@ func (m *model) repairRows() []row {
 			left = append(left, m.manualActionRows(c, i, c.id == "repair" || c.id == "repair:export")...)
 		}
 	}
-	if !wide {
-		left = append(append(left, row{}), scope...)
-	}
-	left = append(left, row{})
-	left = append(left, m.manualNoticeRows("Review before sharing", "Inspect the exact public-safe text. Share only the non-secret context your helper needs.", leftWidth)...)
-	left = append(left, row{text: m.note("Export writes to terminal scrollback. Review suggestions before ordinary Apply.")})
+	guidance := m.manualNoticeRows("Review before sharing", "Inspect the exact public-safe text. Share only the non-secret context your helper needs.", leftWidth)
+	guidance = append(guidance, row{text: m.note("Export writes to terminal scrollback. Review suggestions before ordinary Apply.")})
 	right := []row{{text: m.heading("Exact brief / redacted")}}
 	switch {
 	case m.busy == "repair":
@@ -50,8 +46,13 @@ func (m *model) repairRows() []row {
 		right = append(right, row{}, row{text: m.public(m.repair)})
 	}
 	if !wide {
-		return append(append(left, row{}), right...)
+		// Keep the exact document beside its actions in reading order; long
+		// scope/sharing guidance must not bury the empty or prepared state.
+		left = append(append(left, row{}), right...)
+		left = append(append(left, row{}), scope...)
+		return append(append(left, row{}), guidance...)
 	}
+	left = append(append(left, row{}), guidance...)
 	left, right = m.column(left, leftWidth), m.column(right, width-leftWidth-3)
 	var rs []row
 	separator := " │ "

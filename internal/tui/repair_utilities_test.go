@@ -122,3 +122,21 @@ func TestUtilitiesCompactInitialFrameKeepsReturnReachable(t *testing.T) {
 		assertFrame(t, m)
 	}
 }
+
+func TestRepairCompactInitialFrameShowsDocumentState(t *testing.T) {
+	for _, prepared := range []bool{false, true} {
+		m, _ := loaded(t)
+		m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		m.goTo("Repair")
+		m.focusID("repair")
+		want := "No brief prepared"
+		if prepared {
+			want = "EXACT-PUBLIC-BRIEF-SENTINEL"
+			m.repair = want
+		}
+		if !strings.Contains(ansi.Strip(m.View().Content), want) {
+			t.Fatalf("document state is buried in compact initial frame (prepared=%t)", prepared)
+		}
+		assertFrame(t, m)
+	}
+}
