@@ -93,6 +93,10 @@ report.
 The shared `run.ps1` harness also loads `rerun-defaults.ps1`. Its cases exercise
 omitted inputs and scripted Enter responses, hidden process/User key selection,
 active LLMP main-vs-profile precedence, unrelated-provider isolation, context
-and tier changes, and read-only dry-run reuse. The User-environment seam is
-injected only into a process-local copy; tests never access a real saved User
-key or persist fixture keys.
+and tier changes, and read-only dry-run reuse. Sequence cases cover a native
+arbitrary-TOML merge followed by another rerun, so a disabled Ultrafast capability
+cannot return from stale main-file state. Python parses both configurations and
+checks nested-key absence while unrelated comments and feature values survive.
+Every invocation replaces the User-environment seam in its process-local source
+copy with an absent or dummy key source, including when other fixtures are used;
+tests never access a real saved User key or persist fixture keys.

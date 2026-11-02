@@ -2,6 +2,43 @@
 
 Date: 2026-11-02. Repository: [clankercode/oneline-ccc](https://github.com/clankercode/oneline-ccc).
 
+## Current rerun and Explorer update
+
+Release checkpoint `8e2ac76` includes reviewed runtime correction `6fc00eb`.
+[Publication run 41406318242](https://github.com/clankercode/oneline-ccc/actions/runs/41406318242)
+passed all six jobs: Windows PowerShell 5.1 and PowerShell 7 each passed
+**101 configuration cases and 87 SSH cases**, native bare-Codex loading passed,
+real Windows SSH login/late-failure rollback passed, Pages deployed, and both
+public scriptblock/download checks passed. The coordinator independently fetched
+both hosted scripts and compared their bytes with the reviewed source.
+
+The Codex script SHA256 is
+`4f60f562d0496df7c8992e373005f503676fd4e8e40c089457d272d6fb7f632c`.
+The unchanged SSH helper SHA256 is
+`91aefa3fce6e09198e86a382ccbf7615fc923c803f2d8a1ea3b86bd1b19230b4`.
+
+Enter retains saved LLMP URL, hidden process/User key, exact model, tier and
+context budget. Unchanged generated configuration creates no extra backup.
+Native arbitrary-TOML merges preserve unrelated fields and clear a disabled
+Ultrafast flag so it cannot return on a later rerun. Explicit arguments and
+capability restrictions take precedence. The isolated test harness substitutes
+an absent or dummy Windows User key on every invocation.
+
+Normal Windows setup now sets the original user's Explorer DWORD values
+`HideFileExt=0` and `Hidden=1`, with `-SkipExplorerDefaults` opt-out. Protected
+OS-file visibility is unchanged. Dry-run and configuration-only runs skip registry
+mutation. Actual Explorer registry/UI behavior was not exercised by these native
+configuration tests, which use isolated configuration mode.
+
+An operator's actual Windows SSH run separately reached service restart and
+failed to start `sshd`. Its cause remains unresolved pending read-only service,
+event-log and listener diagnostics. Runner success does not establish SSH success
+on that machine; this release makes no such claim and changes no SSH source.
+
+The [TUI plan](../plans/tui-production-plan.md) passed a separate scoped review;
+it remains a plan, with no Go TUI implementation. Earlier evidence below records
+the previous MVP checkpoints.
+
 ## Delivered behavior
 
 The standalone PowerShell installer configures native Codex against an
