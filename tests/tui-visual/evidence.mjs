@@ -212,7 +212,7 @@ function semanticOutcomes(entry,frame) {
         || !/^[0-9a-f]{64}$/.test(m.draft_sha256))throw new Error('Models selector/identity/unchanged draft observations missing');
       if(entry.variant.startsWith('inline-')) {
         const field=entry.variant.slice(7),prefix=field+':',identity={model:m.model,budget:String(m.budget),tier:m.tier || 'Standard'}[field];
-        if(m.focused_id!==prefix+identity || typeof m.focused_row!=='string' || !text.replace(/\s+/gu,' ').includes(m.focused_row.replace(/\s+/gu,' ').trim()) || m.chooser!==field || !(m.focused_id.startsWith(prefix) || field==='model' && m.focused_id.startsWith('discovered:'))
+        if(m.focused_id!==prefix+identity || typeof m.focused_row!=='string' || !m.focused_row.includes(identity) || !text.replace(/\s+/gu,' ').includes(m.focused_row.replace(/\s+/gu,' ').trim()) || m.chooser!==field || !(m.focused_id.startsWith(prefix) || field==='model' && m.focused_id.startsWith('discovered:'))
           || !text.includes({model:'Choose model ID',budget:'Choose context budget',tier:'Choose default request tier'}[field]))throw new Error('Models inline chooser/focus not visible');
       } else {
         if(m.focused_id!=='models:advanced' || m.chooser!=='' || m.advanced!==(entry.variant==='advanced-expanded'))throw new Error('Models Advanced disclosure state differs');

@@ -16,6 +16,12 @@ for(const [variant,path] of Object.entries(paths)) {
       bad.entry.fixture.semantic_before=structuredClone(bad.entry.fixture.semantic_outcomes);
       await assert.rejects(check(bad),/Models|draft|focus|identity/i);
     });
+    if(variant.startsWith('inline-'))test(`${variant}/${entry.cols} matching false identity and focus still reject real row`,async()=>{
+      const bad=clone(),o=bad.entry.fixture.semantic_outcomes.models,field=variant.slice(7);
+      o[field]={model:'glm-5.3',budget:272000,tier:'Fast'}[field];o.focused_id=field+':'+o[field];
+      bad.entry.fixture.semantic_before=structuredClone(bad.entry.fixture.semantic_outcomes);
+      await assert.rejects(check(bad),/Models|focus|identity/i);
+    });
     if(variant.startsWith('advanced-'))test(`${variant}/${entry.cols} relabeling disclosure rejects actual marker`,async()=>{
       const bad=clone();bad.entry.variant=bad.entry.fixture.variant=variant==='advanced-expanded'?'advanced-collapsed':'advanced-expanded';
       bad.entry.fixture.semantic_outcomes.models.advanced=!bad.entry.fixture.semantic_outcomes.models.advanced;
