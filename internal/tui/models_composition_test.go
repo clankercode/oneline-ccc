@@ -273,3 +273,72 @@ func TestModelsNoClientDoesNotInventCurrentValues(t *testing.T) {
 		t.Fatal("empty client allowed configuration effects")
 	}
 }
+
+func TestModelsTinyChooserKeepsContext(t *testing.T) {
+	for _, field := range []string{"model", "budget", "tier"} {
+		for _, appearance := range []string{"dark", "light", "mono", "no-color", "ascii"} {
+			t.Run(field+"/"+appearance, func(t *testing.T) {
+				m, _ := loaded(t)
+				m.options.Theme, m.options.NoColor, m.options.ASCII = appearance, appearance == "no-color", appearance == "ascii"
+				if appearance == "no-color" || appearance == "ascii" {
+					m.options.Theme = "dark"
+				}
+				m.snapshot.Clients[0].Name = "Codex 模型 — long selected name"
+				activate(t, m, "client:codex")
+				m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+				activate(t, m, "field:"+field)
+				title := map[string]string{"model": "Choose model ID", "budget": "Choose context budget", "tier": "Choose default request tier"}[field]
+				before := m.draft()
+				check := func() {
+					t.Helper()
+					frame := ansi.Strip(m.View().Content)
+					if !strings.Contains(frame, title) || !strings.Contains(frame, "Codex 模型") || !strings.Contains(frame, "Enter") || !strings.Contains(frame, "Esc back") {
+						t.Fatalf("chooser lost field/client/commit/cancel context:\n%s", frame)
+					}
+					assertFrame(t, m)
+				}
+				check() // Actual first focused option, including the last budget preset.
+				press(m, "shift+tab")
+				check()
+				press(m, "tab")
+				check()
+				m.focusID("models:close")
+				check() // Last action cannot scroll away the chooser identity.
+				m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+				check()
+				m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+				check()
+				press(m, "esc")
+				wantFocus(t, m, "field:"+field)
+				if m.draft() != before {
+					t.Fatal("chooser context/navigation changed the draft")
+				}
+			})
+		}
+	}
+}
+
+func TestModelsTinyChooserLongIDAndStatus(t *testing.T) {
+	m, _ := loaded(t)
+	activate(t, m, "client:codex")
+	d := m.draft()
+	d.Profile.Model = "exact-模型-" + strings.Repeat("long-", 20) + "tail"
+	m.drafts[m.selected] = d
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
+	activate(t, m, "field:model")
+	m.status = "Inventory failed; draft kept"
+	for _, key := range []string{"", "pgdown", "pgup", "shift+tab", "tab"} {
+		if key != "" {
+			press(m, key)
+		}
+		frame := ansi.Strip(m.View().Content)
+		if !strings.Contains(frame, "Choose model ID") || !strings.Contains(frame, "Inventory failed; draft kept") {
+			t.Fatalf("long choice lost context/status:\n%s", frame)
+		}
+		assertFrame(t, m)
+	}
+	press(m, "esc")
+	if m.draft() != d {
+		t.Fatal("long choice navigation rewrote the exact ID")
+	}
+}

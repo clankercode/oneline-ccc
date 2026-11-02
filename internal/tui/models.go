@@ -243,9 +243,14 @@ func (m *model) modelsRows() []row {
 	}
 	panel := m.modelsPanel()
 	if panel != "" && panel != "advanced" {
-		title := map[string]string{"model": "Choose model ID", "budget": "Choose context budget", "tier": "Choose default request tier"}[panel]
+		title := modelsChoiceTitle(panel)
 		rs := []row{{text: m.heading(title)}, {text: m.note("Arrows focus; Enter chooses. Esc keeps draft.")}, {}}
-		if panel == "model" {
+		if m.height <= 12 {
+			// The Models header keeps field context outside the scrolling list.
+			// Spend this small viewport on real options rather than introductions.
+			rs = nil
+		}
+		if panel == "model" && m.height > 12 {
 			rs = append(rs, row{text: m.note("Suggested IDs / availability unverified")})
 		}
 		if panel == "budget" {
@@ -420,4 +425,29 @@ func (m *model) modelsHeader() string {
 		title = "oneline-ccc / Selected: " + name
 	}
 	return m.shellLine(m.heading(ansi.Truncate(title, m.contentWidth(), m.ellipsis())), surfaceRaised)
+}
+
+func modelsChoiceTitle(panel string) string {
+	switch panel {
+	case "model":
+		return "Choose model ID"
+	case "budget":
+		return "Choose context budget"
+	case "tier":
+		return "Choose default request tier"
+	}
+	return ""
+}
+
+// While a tiny chooser owns focus, its field replaces the inactive tabs. The
+// client title and live status keep their own rows; neither scrolls with options.
+func (m *model) modelsChoiceHeader() string {
+	if m.height > 12 {
+		return ""
+	}
+	title := modelsChoiceTitle(m.modelsPanel())
+	if title == "" {
+		return ""
+	}
+	return m.shellLine(m.heading(title)+m.note(" | Enter set"), surfaceRaised)
 }

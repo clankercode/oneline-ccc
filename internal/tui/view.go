@@ -17,6 +17,9 @@ func (m *model) View() tea.View {
 	header := m.shellHeader()
 	if m.screen == "Models" && m.modal == "" && m.editor == nil {
 		header[0] = m.modelsHeader()
+		if context := m.modelsChoiceHeader(); context != "" {
+			header[1] = context
+		}
 	}
 	lines, focusLine, start, available := m.layout()
 	footer := m.shellFooter("")
