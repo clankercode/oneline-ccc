@@ -34,6 +34,46 @@ func safeComponents(path string) error {
 	}
 	return nil
 }
+
+// validateAuthority is read-only. All native await boundaries and ownership
+// checks use it; revoked directories/records are never chmodded or adopted.
+func (m *Manager) validateAuthority(spec serviceSpec) error {
+	for _, path := range []string{m.stateRoot, m.root(), filepath.Join(m.root(), "transactions")} {
+		if safeComponents(path) != nil {
+			return errUnsafe
+		}
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !privateInfo(info) {
+			return errUnsafe
+		}
+	}
+	for _, name := range []string{"ownership.json", "pending.json", "lifecycle.lock", "observation.json"} {
+		if _, _, err := privateRead(filepath.Join(m.root(), name)); err != nil {
+			return err
+		}
+	}
+	for path := filepath.Dir(spec.artifact); inside(m.home, path); path = filepath.Dir(path) {
+		if safeComponents(path) != nil {
+			return errUnsafe
+		}
+		info, err := os.Lstat(path)
+		if err == nil {
+			if !info.IsDir() || !privateInfo(info) || info.Mode().Perm()&0022 != 0 {
+				return errUnsafe
+			}
+		} else if !os.IsNotExist(err) {
+			return errUnsafe
+		}
+		if path == m.home {
+			break
+		}
+	}
+	return nil
+}
+
 func privateRead(path string) ([]byte, bool, error) {
 	if !supportedFiles() {
 		return nil, false, errUnavailable
@@ -62,8 +102,10 @@ func atomicRecord(ctx context.Context, path string, value any) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if err := configtxn.PrivateDir(filepath.Dir(path)); err != nil {
-		return errUnsafe
+	for _, dir := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path)} {
+		if err := configtxn.PrivateDir(dir); err != nil {
+			return errUnsafe
+		}
 	}
 	before, existed, err := privateRead(path)
 	if err != nil {
@@ -84,6 +126,12 @@ func atomicRecord(ctx context.Context, path string, value any) error {
 	defer os.Remove(stage)
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	for _, dir := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path)} {
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !privateInfo(info) {
+			return errUnsafe
+		}
 	}
 	now, exists, err := privateRead(path)
 	if err != nil || exists != existed || !bytes.Equal(before, now) {

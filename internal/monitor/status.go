@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ type pendingAction struct {
 type nativeState struct {
 	loaded, active, enabled, artifact, owned, failed bool
 	phase, invocation                                string
+	unitPaths                                        []string
 }
 
 func definitionDigest(spec serviceSpec) string {
@@ -60,6 +60,9 @@ func (m *Manager) readOwner(spec serviceSpec) (bool, error) {
 	return true, nil
 }
 func (m *Manager) checkArtifact(spec serviceSpec) (present, owned bool, err error) {
+	if err = m.validateAuthority(spec); err != nil {
+		return false, false, err
+	}
 	owned, err = m.readOwner(spec)
 	if err != nil {
 		return false, false, err
@@ -78,15 +81,40 @@ func (m *Manager) call(ctx context.Context, args ...string) (commandResult, erro
 	if m.os == "darwin" {
 		name = "/bin/launchctl"
 	}
-	if m.runner == nil {
+	return m.nativeCall(ctx, name, args...)
+}
+func (m *Manager) nativeCall(ctx context.Context, name string, args ...string) (commandResult, error) {
+	if m.runner == nil || ctx.Err() != nil {
 		return commandResult{}, errUnavailable
 	}
-	return m.runner(ctx, name, args...)
+	spec, err := m.spec()
+	if err != nil {
+		return commandResult{}, err
+	}
+	if err = m.validateAuthority(spec); err != nil {
+		return commandResult{}, err
+	}
+	result, runErr := m.runner(ctx, name, args...)
+	if err = m.validateAuthority(spec); err != nil {
+		return commandResult{}, err
+	}
+	if ctx.Err() != nil {
+		return commandResult{}, errUnavailable
+	}
+	return result, runErr
 }
 func (m *Manager) query(ctx context.Context, spec serviceSpec) (nativeState, error) {
 	state := nativeState{}
 	if m.os == "linux" {
-		result, err := m.call(ctx, "--user", "--no-pager", "--no-ask-password", "show", unitName, "--property=LoadState,ActiveState,UnitFileState,FragmentPath,InvocationID")
+		paths, err := m.systemdPaths(ctx, spec)
+		if err != nil {
+			return state, err
+		}
+		state.unitPaths = paths
+		result, err := m.call(ctx, "--user", "--no-pager", "--no-ask-password", "show", unitName, "--property=LoadState,ActiveState,UnitFileState,FragmentPath,InvocationID,DropInPaths,SourcePath,Names")
+		if err == errUnsafe {
+			return state, errUnsafe
+		}
 		if err != nil || result.Code != 0 || len(result.Output) > recordLimit {
 			return state, errUnavailable
 		}
@@ -101,18 +129,25 @@ func (m *Manager) query(ctx context.Context, spec serviceSpec) (nativeState, err
 			}
 			fields[key] = value
 		}
-		if len(fields) != 5 {
+		if len(fields) != 8 {
 			return state, errUnavailable
 		}
+		for _, name := range []string{"LoadState", "ActiveState", "UnitFileState", "FragmentPath", "InvocationID", "DropInPaths", "SourcePath", "Names"} {
+			if _, ok := fields[name]; !ok {
+				return state, errUnavailable
+			}
+		}
+		if fields["DropInPaths"] != "" || fields["SourcePath"] != "" || (fields["Names"] != "" && fields["Names"] != unitName) {
+			return state, errForeignOverride
+		}
 		switch fields["LoadState"] {
-		case "not-found":
-			return state, nil
+		case "not-found": // Missing definition does not erase registration/process evidence.
 		case "loaded":
 			state.loaded = true
 		default:
 			return state, errUnavailable
 		}
-		if fields["FragmentPath"] != spec.artifact {
+		if (state.loaded && fields["FragmentPath"] != spec.artifact) || (!state.loaded && fields["FragmentPath"] != "" && fields["FragmentPath"] != spec.artifact) {
 			return state, errUnsafe
 		}
 		switch fields["ActiveState"] {
@@ -129,7 +164,9 @@ func (m *Manager) query(ctx context.Context, spec serviceSpec) (nativeState, err
 		switch fields["UnitFileState"] {
 		case "enabled":
 			state.enabled = true
-		case "disabled", "static", "", "enabled-runtime":
+		case "enabled-runtime":
+			state.enabled = true
+		case "disabled", "static", "":
 		default:
 			return state, errUnavailable
 		}
@@ -143,8 +180,22 @@ func (m *Manager) query(ctx context.Context, spec serviceSpec) (nativeState, err
 		if state.active && state.invocation == "" {
 			return state, errUnavailable
 		}
+		if fields["UnitFileState"] == "enabled-runtime" {
+			return state, errRuntimeEnabled
+		}
+		if state.loaded {
+			if err = m.effectiveCommand(ctx); err != nil {
+				return state, err
+			}
+		}
+		if err = m.checkSystemdPaths(spec, paths); err != nil {
+			return state, err
+		}
 	} else if m.os == "darwin" {
 		result, err := m.call(ctx, "print", spec.target)
+		if err == errUnsafe {
+			return state, errUnsafe
+		}
 		if err != nil || len(result.Output) > recordLimit {
 			return state, errUnavailable
 		}
@@ -201,15 +252,8 @@ func (m *Manager) query(ctx context.Context, spec serviceSpec) (nativeState, err
 }
 func (m *Manager) inspect(ctx context.Context, spec serviceSpec) (nativeState, error) {
 	state := nativeState{}
-	// Read-only check; do not chmod/adopt state paths while displaying status.
-	for _, path := range []string{m.stateRoot, m.root()} {
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !privateInfo(info) {
-			return state, errUnsafe
-		}
+	if err := m.validateAuthority(spec); err != nil {
+		return state, err
 	}
 	present, owned, err := m.checkArtifact(spec)
 	if err != nil {
@@ -228,7 +272,7 @@ func (m *Manager) inspect(ctx context.Context, spec serviceSpec) (nativeState, e
 	if checkErr != nil || currentPresent != present || currentOwned != owned {
 		return state, errUnsafe
 	}
-	if state.loaded && !owned {
+	if state.registrationEvidence() && (!owned || !state.loaded) {
 		return state, errUnsafe
 	}
 	state.artifact = present
@@ -237,7 +281,7 @@ func (m *Manager) inspect(ctx context.Context, spec serviceSpec) (nativeState, e
 }
 func (m *Manager) info(state nativeState) core.ServiceInfo {
 	status := "Not installed"
-	if state.artifact || state.loaded {
+	if state.artifact || state.registrationEvidence() {
 		status = "Stopped"
 		if state.active {
 			status = "Running"
@@ -265,7 +309,7 @@ func (m *Manager) info(state nativeState) core.ServiceInfo {
 }
 func (m *Manager) failure(err error) core.ServiceInfo {
 	status := "Unavailable"
-	if err == errUnsafe {
+	if err == errUnsafe || err == errRuntimeEnabled || err == errForeignOverride {
 		status = "Conflict"
 	}
 	if err == errUncertain {
@@ -274,6 +318,12 @@ func (m *Manager) failure(err error) core.ServiceInfo {
 	detail := "Observer unavailable; foreground use does not require it"
 	if err == errUnsafe {
 		detail = "Foreign or unsafe observer artifacts were preserved"
+	}
+	if err == errRuntimeEnabled {
+		detail = errRuntimeEnabled.Error()
+	}
+	if err == errForeignOverride {
+		detail = errForeignOverride.Error()
 	}
 	if err == errUncertain {
 		detail = "Lifecycle outcome uncertain; inspect before reconciliation; no automatic retry"
@@ -364,4 +414,11 @@ func recordValue(d *json.Decoder, depth int) bool {
 	default:
 		return false
 	}
+}
+
+func (state nativeState) registrationEvidence() bool {
+	return state.loaded || state.active || state.enabled || state.failed || state.phase != "" || state.invocation != ""
+}
+func (state nativeState) fullyUninstalled() bool {
+	return !state.artifact && !state.registrationEvidence()
 }

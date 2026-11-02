@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,9 @@ import (
 
 func fixture(t *testing.T) *Manager {
 	t.Helper()
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("POSIX fixture requires native Linux/macOS protections")
+	}
 	root := t.TempDir()
 	home := filepath.Join(root, "user home 雪%$")
 	if err := os.Mkdir(home, 0700); err != nil {

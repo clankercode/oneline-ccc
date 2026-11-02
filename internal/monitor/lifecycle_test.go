@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -20,10 +21,30 @@ type fakeService struct {
 	calls                          [][]string
 	fail                           string
 	after                          func(string)
+	unitPaths, effectiveArgv       []string
+	dropInPaths                    string
 }
 
 func (f *fakeService) run(_ context.Context, name string, args ...string) (commandResult, error) {
 	f.calls = append(f.calls, append([]string{name}, args...))
+	if filepath.Base(name) == "busctl" {
+		var value any
+		kind := "as"
+		switch args[len(args)-1] {
+		case "UnitPath":
+			value = f.unitPaths
+		case "ExecStart":
+			kind = "a(sasbttttuii)"
+			value = []any{[]any{f.effectiveArgv[0], f.effectiveArgv, false, 0, 0, 0, 0, 0, 0, 0}}
+		default:
+			return commandResult{Code: 1}, nil
+		}
+		data, _ := json.Marshal(struct {
+			Type string `json:"type"`
+			Data []any  `json:"data"`
+		}{Type: kind, Data: []any{value}})
+		return commandResult{Output: string(data)}, nil
+	}
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "show ") {
 		load := "not-found"
@@ -38,7 +59,11 @@ func (f *fakeService) run(_ context.Context, name string, args ...string) (comma
 		if f.enabled {
 			enabled = "enabled"
 		}
-		return commandResult{Output: "LoadState=" + load + "\nActiveState=" + active + "\nUnitFileState=" + enabled + "\nFragmentPath=" + f.fragment + "\nInvocationID=" + f.invocation + "\n"}, nil
+		output := "LoadState=" + load + "\nActiveState=" + active + "\nUnitFileState=" + enabled + "\nFragmentPath=" + f.fragment + "\nInvocationID=" + f.invocation + "\n"
+		if strings.Contains(joined, "DropInPaths") {
+			output += "DropInPaths=" + f.dropInPaths + "\nSourcePath=\nNames=" + unitName + "\n"
+		}
+		return commandResult{Output: output}, nil
 	}
 	action := ""
 	for _, candidate := range []string{"daemon-reload", "enable", "disable", "start", "stop", "restart"} {
@@ -59,6 +84,9 @@ func (f *fakeService) run(_ context.Context, name string, args ...string) (comma
 		} else {
 			f.loaded = false
 			f.fragment = ""
+			if !f.active && !f.enabled {
+				f.invocation = ""
+			}
 		}
 	case "enable":
 		f.enabled = true
@@ -89,14 +117,14 @@ func setupService(t *testing.T) (*Manager, *fakeService) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeService{filePath: spec.artifact}
+	f := &fakeService{filePath: spec.artifact, effectiveArgv: m.argv(), unitPaths: []string{filepath.Dir(spec.artifact), filepath.Join(m.home, "runtime", "systemd", "user"), filepath.Join(m.home, "vendor", "systemd", "user"), filepath.Join(m.home, "runtime", "systemd", "user.control")}}
 	m.runner = f.run
 	return m, f
 }
 func mutationCount(f *fakeService) int {
 	n := 0
 	for _, call := range f.calls {
-		if !strings.Contains(strings.Join(call, " "), " show ") {
+		if filepath.Base(call[0]) != "busctl" && !strings.Contains(strings.Join(call, " "), " show ") {
 			n++
 		}
 	}

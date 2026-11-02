@@ -34,6 +34,15 @@ func (m *Manager) command(ctx context.Context, spec serviceSpec, args ...string)
 	if ctx.Err() != nil {
 		return errUncertain
 	}
+	if m.os == "linux" {
+		state, err := m.inspect(ctx, spec)
+		if err != nil {
+			return errUncertain
+		}
+		if err = m.checkSystemdPaths(spec, state.unitPaths); err != nil {
+			return errUncertain
+		}
+	}
 	present, owned, err := m.checkArtifact(spec)
 	allowMissing := m.os == "linux" && len(args) > 3 && args[3] == "daemon-reload"
 	if err != nil || !owned || (!present && !allowMissing) {
@@ -99,7 +108,7 @@ func resolved(action string, before string, state nativeState, osName string) bo
 	case "restart":
 		return state.owned && state.artifact && state.loaded && state.active && state.invocation != "" && state.invocation != before
 	case "uninstall":
-		return !state.artifact && !state.loaded
+		return state.fullyUninstalled()
 	}
 	return false
 }
@@ -230,7 +239,7 @@ func (m *Manager) Action(ctx context.Context, action string) (core.ServiceInfo, 
 	if state.phase != "" {
 		return fail(errUncertain)
 	}
-	noop := action == "install" && resolved(action, "", state, m.os) || action == "start" && state.active || action == "stop" && !state.active || (action == "uninstall" && !state.artifact && !state.loaded)
+	noop := action == "install" && resolved(action, "", state, m.os) || action == "start" && resolved(action, "", state, m.os) || action == "stop" && !state.active || (action == "uninstall" && state.fullyUninstalled())
 	if noop {
 		return m.info(state), nil
 	}

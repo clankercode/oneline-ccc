@@ -63,3 +63,25 @@ GOMAXPROCS=2 go test -p 2 ./internal/monitor
 
 Parent integration must exercise the frozen CLI and native disposable user-session
 service lifecycle; this package's unit tests do not establish native release proof.
+
+The reviewed lifecycle fixes also validate private state directories/records and
+service path authority before and after every native await. Linux queries the
+manager's typed UnitPath through bounded busctl JSON, scans every returned search
+root for foreign main units and unit/dash-prefix/type-wide .conf drop-ins, and
+requires empty cached DropInPaths/SourcePath, no foreign aliases and the exact
+cached native ExecStart argv. The same proof is refreshed before each native
+mutation, including daemon-reload/enable/start/restart. Overrides are preserved
+and yield Conflict; they are never activated or adopted. Missing busctl or
+unrecognized/incomplete native evidence yields Unavailable without activation.
+
+A missing unit definition does not erase active/transition/enablement/invocation
+state. Uninstall can clear a pending reservation only when the artifact, loaded
+registration and all that evidence are gone. Inconsistent not-found registrations
+are preserved as Conflict/Unknown. Runtime-only enablement is explicitly unsupported
+and returns actionable Conflict before any native mutation; it is not interpreted
+as disabled. Reconcile it through the native user manager before retrying.
+
+POSIX fixtures skip only on unsupported platforms. A separate Windows test still
+executes there and checks Unavailable, no native actions and no filesystem writes.
+No native service commands were run to validate these changes; fake-runner proof
+and cross-compilation remain distinct from disposable native-session acceptance.

@@ -15,10 +15,12 @@ import (
 )
 
 var (
-	errUnsafe      = errors.New("observer refused unsafe, foreign or changed state; preserve it and reconcile locally")
-	errUnavailable = errors.New("observer backend unavailable; use foreground observation where protected filesystem support is available")
-	errIO          = errors.New("protected observer operation failed; no client configuration was changed")
-	errUncertain   = errors.New("observer lifecycle outcome is uncertain; inspect native user service state before reconciliation; no automatic retry")
+	errForeignOverride = errors.New("foreign or unverified effective systemd definition/drop-ins; preserve overrides and reconcile before observer lifecycle actions")
+	errRuntimeEnabled  = errors.New("runtime-enabled observer registration is unsupported; preserve it and reconcile runtime enablement through the native user manager")
+	errUnsafe          = errors.New("observer refused unsafe, foreign or changed state; preserve it and reconcile locally")
+	errUnavailable     = errors.New("observer backend unavailable; use foreground observation where protected filesystem support is available")
+	errIO              = errors.New("protected observer operation failed; no client configuration was changed")
+	errUncertain       = errors.New("observer lifecycle outcome is uncertain; inspect native user service state before reconciliation; no automatic retry")
 )
 
 type commandResult struct {
