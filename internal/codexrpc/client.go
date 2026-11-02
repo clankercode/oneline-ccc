@@ -59,6 +59,32 @@ func ConfigEnvironment(stage string) []string {
 	return append(env, "CODEX_HOME="+stage, "LLMP_API_KEY=fixture-only-config-validation", "OPENAI_API_KEY=fixture-only-config-validation", "RUST_LOG=error")
 }
 
+// rpcCleanup keeps the existing cleanup policy at one boundary so a controlled
+// schedule can distinguish root reaping from delivery of the Wait result. The
+// production callbacks below retain the sole command.Wait and native owner.
+type rpcCleanup struct {
+	wait, terminate, close, killRoot func() error
+	after                            func(time.Duration) <-chan time.Time
+}
+
+func (c rpcCleanup) run() (result error) {
+	done := make(chan error, 1)
+	go func() { done <- c.wait() }()
+	select {
+	case <-done:
+	case <-c.after(time.Second):
+		if err := c.terminate(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			result = ownedCleanupFailure("cannot terminate owned Codex configuration processes", err)
+			_ = c.killRoot()
+		}
+		<-done
+	}
+	if err := c.close(); err != nil {
+		result = errors.Join(result, ownedCleanupFailure("cannot clean up owned Codex configuration processes", err))
+	}
+	return result
+}
+
 func Run(parent context.Context, program Program, stage string, action func(*Client) error) (result error) {
 	ctx, cancel := context.WithTimeout(parent, 25*time.Second)
 	defer cancel()
@@ -112,22 +138,12 @@ func Run(parent context.Context, program Program, stage string, action func(*Cli
 	}()
 	defer func() {
 		_ = input.Close()
-		done := make(chan error, 1)
-		go func() { done <- command.Wait() }()
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			if terminateErr := owner.Terminate(); terminateErr != nil && !errors.Is(terminateErr, os.ErrProcessDone) {
-				result = errors.Join(result, ownedCleanupFailure("cannot terminate owned Codex configuration processes", terminateErr))
-				_ = command.Process.Kill()
-			}
-			<-done
-		}
 		// Even a clean direct-process exit can leave descendants holding CWD or
 		// handles in the stage. Complete owned-tree cleanup before the adapter
 		// is allowed to remove it, and report failure without native path text.
-		if cleanupErr := owner.Close(); cleanupErr != nil {
-			result = errors.Join(result, ownedCleanupFailure("cannot clean up owned Codex configuration processes", cleanupErr))
+		cleanup := rpcCleanup{wait: command.Wait, terminate: owner.Terminate, close: owner.Close, killRoot: command.Process.Kill, after: time.After}
+		if cleanupErr := cleanup.run(); cleanupErr != nil {
+			result = errors.Join(result, cleanupErr)
 		}
 		cancel()
 		_ = output.Close()

@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -67,6 +69,9 @@ func TestRequestsIgnoreNotificationsAndRedactNativeErrors(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		var errno syscall.Errno
+		found := errors.As(err, &errno)
+		t.Logf("request/redaction cleanup diagnostic: native_errno_present=%t native_errno=%d", found, errno)
 		t.Fatal(err)
 	}
 }
