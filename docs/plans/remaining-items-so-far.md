@@ -23,8 +23,9 @@ with its detailed requirements placed before them.
 Execution started **2026-11-03** under the active full-backlog goal. The
 [product completion campaign](product-completion-campaign.md) records ordered
 milestones and task boundaries. Current work: item 1's rendered shutdown race,
-item 18's navigation and native capture tooling. All checkboxes remain open until
-the complete corresponding acceptance evidence exists.
+item 18's navigation and composition, and item 21's capture-evidence fixes.
+All checkboxes remain open until the complete corresponding acceptance evidence
+exists.
 Discovered work is appended below with stable IDs; it is part of the same goal.
 The item 19 implementation is integrated at `cbbaf77` and its Go/native Codex
 gates pass; real no-color terminal and platform acceptance remains open.
@@ -269,6 +270,13 @@ requirements carry those instructions into the backlog so they survive handoff:
 
 Recorded 2026-11-03 during independent reviews and actual baseline-image
 inspection. These are concrete obligations within P0, not visual acceptance.
+The first four findings below have independently reviewed source fixes in
+`403ea35`, integrated as `da17aa0`; the focused TUI race gate passes. The merged
+suite exposed two CLI terminal fixtures using the old control order; their
+updated region-aware journeys now pass the focused and full merged Go gates.
+Final rendered journey and all-screen acceptance remain open. Keep implementation
+progress separate from visual acceptance so this list does not imply either
+that the fixes are absent or that the rejected experience is now approved.
 
 - [ ] **Repeated visits need visit-specific Back frames.** A Models → Review →
   Models → Back → Back journey must recover the earlier visit's control and
@@ -409,6 +417,9 @@ inspection. These are concrete obligations within P0, not visual acceptance.
     `--plain`, redirected streams and incapable terminals retain plain status.
     Carry the same decision into signal ownership, help and native usage, with
     tests for entry mode, no-color rendering, typing and safe interruption.
+    Observe populated credential-editor frames and each focus transition before
+    cancellation; a burst of typing plus Escape can be coalesced by the renderer
+    and cannot prove masking or correct editor navigation.
 
 20. [ ] **Restore terminal ownership after startup and forced-error failures.**
     Discovered 2026-11-03 in the shutdown review: upstream initialization/error
@@ -419,3 +430,16 @@ inspection. These are concrete obligations within P0, not visual acceptance.
     children are restored/joined on every affected exit. Cover supported Windows
     and macOS paths as well as Linux. A nil-model/headless startup-error test and
     successful cross-compilation do not prove these cases.
+
+21. [ ] **Make native visual evidence fail safely and remain reproducible.**
+    Discovered 2026-11-03 in independent capture-tool review: valid blank PNGs,
+    mismatched scenario/cell evidence and stale renderer metadata can currently
+    pass verification; a failed capture leader can also leave descendants alive.
+    Reject blank/header-only/wrong-target and inconsistent cell/text artifacts,
+    verify the intended native screen/editor/overlay was reached, and clean up
+    the entire owned process group even after leader exit. Preserve immutable
+    renderer provenance when resuming partial batches; record untracked build
+    inputs and distinguish capture-tool revision from served-reference source
+    hashes. Pin these failure cases with executed negative regressions and retain
+    honest provenance for existing captures rather than rewriting their history.
+    This supports P0 acceptance; artifact integrity alone is not a visual PASS.
