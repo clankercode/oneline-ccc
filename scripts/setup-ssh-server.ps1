@@ -205,6 +205,13 @@ foreach ($firewallProfile in $firewallProfiles) {
 }
 $unsafeRules = @()
 foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -Direction Inbound -Action Allow)) {
+    # Windows exposes UWP family scope on the rule even when its application
+    # filter Package is null. This metadata restricts the rule to a packaged app.
+    $familyProperty = $rule.PSObject.Properties['PackageFamilyName']
+    if ($null -ne $familyProperty) {
+        $family = ([string]$familyProperty.Value).Trim()
+        if ($family -and $family -notin @('Any', '*')) { continue }
+    }
     $port = $rule | Get-NetFirewallPortFilter -PolicyStore ActiveStore
     if ([string]$port.Protocol -notin @('TCP', '6', 'Any', '256')) { continue }
     $coversSshPort = $false
@@ -219,7 +226,7 @@ foreach ($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -
     $packageProperty = $application.PSObject.Properties['Package']
     if ($null -ne $packageProperty) {
         $package = ([string]$packageProperty.Value).Trim()
-        if ($package -and $package -ne 'Any') { continue }
+        if ($package -and $package -notin @('Any', '*')) { continue }
     }
     $service = $rule | Get-NetFirewallServiceFilter -PolicyStore ActiveStore
     if ([string]$application.Program -ne 'Any' -and [string]$application.Program -notlike '*\sshd.exe') { continue }

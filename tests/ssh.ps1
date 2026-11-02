@@ -573,6 +573,11 @@ foreach ($serviceCase in @(
     }
 }
 $firewallCases = @(
+    @{Name = 'wildcard application package remains broad'; Program = 'Any'; Package = '*'; Service = 'Any'; Protocol = 'TCP'; Port = '22'; Remote = 'Any'; Profile = 'Private'; Conflict = $true},
+    @{Name = 'package family with null application package'; PackageFamilyName = 'Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy'; Program = 'Any'; Package = $null; Service = 'Any'; Protocol = 'Any'; Port = 'Any'; Remote = 'Any'; Profile = 'Domain, Private'; Conflict = $false},
+    @{Name = 'empty package family remains broad'; PackageFamilyName = ''; Program = 'Any'; Package = $null; Service = 'Any'; Protocol = 'TCP'; Port = '22'; Remote = 'Any'; Profile = 'Private'; Conflict = $true},
+    @{Name = 'null package family remains broad'; PackageFamilyName = $null; Program = 'Any'; Package = $null; Service = 'Any'; Protocol = 'TCP'; Port = '22'; Remote = 'Any'; Profile = 'Private'; Conflict = $true},
+    @{Name = 'Any package family remains broad'; PackageFamilyName = 'Any'; Program = 'Any'; Package = $null; Service = 'Any'; Protocol = 'TCP'; Port = '22'; Remote = 'Any'; Profile = 'Private'; Conflict = $true},
     @{Name = 'packaged app catchall'; Program = 'Any'; Package = 'S-1-15-2-12345'; Service = 'Any'; Protocol = 'TCP'; Port = 'Any'; Remote = 'Any'; Profile = 'Any'; Conflict = $false},
     @{Name = 'browser catchall'; Program = 'C:\Apps\browser.exe'; Service = 'Any'; Protocol = 'TCP'; Port = 'Any'; Remote = 'Any'; Profile = 'Any'; Conflict = $false},
     @{Name = 'unrelated service'; Program = 'Any'; Service = 'Dnscache'; Protocol = 'TCP'; Port = 'Any'; Remote = 'Any'; Profile = 'Any'; Conflict = $false},
@@ -595,6 +600,9 @@ foreach ($firewallCase in $firewallCases) {
             LocalPort = $firewallCase.Port; Protocol = $firewallCase.Protocol
             Program = $firewallCase.Program; Package = $package; Service = $firewallCase.Service
             Enabled = 'True'; Direction = 'Inbound'; Action = 'Allow'
+        }
+        if ($firewallCase.ContainsKey('PackageFamilyName')) {
+            $operatorRule | Add-Member -NotePropertyName PackageFamilyName -NotePropertyValue $firewallCase.PackageFamilyName
         }
         $state.Rules[$operatorRule.Name] = $operatorRule
         $ruleBefore = $operatorRule | ConvertTo-Json -Compress
