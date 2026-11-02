@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -19,6 +20,9 @@ type nativeOwner struct {
 	cmd        *exec.Cmd
 	terminal   *os.File
 	foreground int
+	killGroup  func(int, syscall.Signal) error
+	groupMu    sync.Mutex
+	groupDone  bool
 }
 
 func prepareNative(cmd *exec.Cmd) (*nativeOwner, error) {
@@ -30,7 +34,7 @@ func prepareNative(cmd *exec.Cmd) (*nativeOwner, error) {
 	if attr.Pgid != 0 || attr.Setsid || attr.Setctty || attr.Foreground {
 		return nil, ErrPolicy
 	}
-	tree := &nativeOwner{cmd: cmd}
+	tree := &nativeOwner{cmd: cmd, killGroup: syscall.Kill}
 	attr.Setpgid = true
 	if terminal, ok := cmd.Stdin.(*os.File); ok {
 		info, err := terminal.Stat()
@@ -57,16 +61,35 @@ func prepareNative(cmd *exec.Cmd) (*nativeOwner, error) {
 }
 func (p *nativeOwner) started() error { return nil }
 func (p *nativeOwner) terminate() error {
-	err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+	p.groupMu.Lock()
+	defer p.groupMu.Unlock()
+	return p.terminateLocked()
+}
+func (p *nativeOwner) terminateLocked() error {
+	if p.groupDone || p.cmd.Process == nil {
+		return os.ErrProcessDone
+	}
+	err := p.killGroup(-p.cmd.Process.Pid, syscall.SIGKILL)
+	// A successful terminal signal retires this numeric group target. Wait
+	// remains the caller's responsibility; subsequent cleanup must not signal
+	// zombies or a recycled PGID after that ownership anchor has been reaped.
+	// A refusal (including EPERM) keeps the first failure observable/retryable.
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		p.groupDone = true
+	}
 	if errors.Is(err, syscall.ESRCH) {
 		return os.ErrProcessDone
 	}
 	return err
 }
 func (p *nativeOwner) close() error {
+	// Serialize with cancellation and other Close calls, including the
+	// temporary SIGTTOU policy around foreground restoration.
+	p.groupMu.Lock()
+	defer p.groupMu.Unlock()
 	var cleanupErr error
 	if p.cmd.Process != nil {
-		cleanupErr = p.terminate()
+		cleanupErr = p.terminateLocked()
 		if errors.Is(cleanupErr, os.ErrProcessDone) {
 			cleanupErr = nil
 		}

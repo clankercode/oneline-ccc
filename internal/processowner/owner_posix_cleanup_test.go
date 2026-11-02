@@ -63,10 +63,14 @@ func TestPOSIXCleanupFixture(t *testing.T) {
 }
 
 func TestPOSIXCleanupAcrossRootWait(t *testing.T) {
-	for _, tc := range []struct{ name, raceOptions string }{
-		{"default-race-exit", ""},
-		{"no-race-exit-delay", "atexit_sleep_ms=0"},
-		{"forced-race-exit-overlap", "atexit_sleep_ms=1200"},
+	for _, tc := range []struct {
+		name, raceOptions string
+		forceKill         bool
+	}{
+		{name: "default-race-exit"},
+		{name: "no-race-exit-delay", raceOptions: "atexit_sleep_ms=0"},
+		{name: "forced-race-exit-overlap", raceOptions: "atexit_sleep_ms=1200"},
+		{name: "successful-kill-before-wait", raceOptions: "atexit_sleep_ms=0", forceKill: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stage := filepath.Join(t.TempDir(), "stage")
@@ -89,6 +93,21 @@ func TestPOSIXCleanupAcrossRootWait(t *testing.T) {
 			owner, err := Prepare(cmd)
 			if err != nil {
 				t.Fatal(err)
+			}
+			signalCalls := 0
+			if tc.forceKill {
+				kill := owner.native.killGroup
+				owner.native.killGroup = func(group int, signal syscall.Signal) error {
+					signalCalls++
+					if signalCalls > 1 {
+						// Reproduce the observed post-kill errno deterministically,
+						// without signaling any retired/recycled numeric group.
+						return syscall.EPERM
+					}
+					err := kill(group, signal)
+					t.Logf("owned first group kill succeeded=%t", err == nil)
+					return err
+				}
 			}
 			started, waited, cleanupComplete := false, false, false
 			var rootWait chan error
@@ -132,10 +151,17 @@ func TestPOSIXCleanupAcrossRootWait(t *testing.T) {
 					conn.Close()
 				}
 			}()
+			if tc.forceKill {
+				// The ready root still holds stdin open and has not been reaped:
+				// the first real group signal retains its ownership anchor.
+				if err := owner.Terminate(); err != nil {
+					t.Fatal("owned first group kill failed", err)
+				}
+			}
 			_ = input.Close()
 			rootWait = make(chan error, 1)
 			go func() { rootWait <- cmd.Wait() }()
-			forced := false
+			forced := tc.forceKill
 			var waitErr error
 			select {
 			case waitErr = <-rootWait:
@@ -159,6 +185,9 @@ func TestPOSIXCleanupAcrossRootWait(t *testing.T) {
 			t.Logf("forced=%t root_wait_error=%t close_native_errno=%d", forced, waitErr != nil, errno)
 			if err != nil {
 				t.Errorf("owned group cleanup failed: %v", err)
+			}
+			if tc.forceKill && signalCalls != 1 {
+				t.Errorf("post-Wait cleanup repeated group signaling: calls=%d", signalCalls)
 			}
 			if conn, dialErr := net.DialTimeout("tcp", address, time.Second); dialErr == nil {
 				_ = conn.SetDeadline(time.Now().Add(time.Second))
