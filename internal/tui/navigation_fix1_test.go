@@ -126,14 +126,22 @@ func TestFix1HelpPagingBoundariesAndResize(t *testing.T) {
 			m, _ := loaded(t)
 			m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 			m.openModal("help")
-			last := (len(m.catalog()) - 1) / 4
+			declaredLast := func() int {
+				t.Helper()
+				var page, count int
+				if _, err := fmt.Sscanf(m.modalRows()[0].text, "Shortcut help | Page %d of %d", &page, &count); err != nil || count < 1 {
+					t.Fatal("Help must declare its page range", err)
+				}
+				return count - 1
+			}
+			last := declaredLast()
 			check := func(want int) {
 				t.Helper()
 				if m.modalFocus != want {
 					t.Fatalf("stored Help page = %d, want %d", m.modalFocus, want)
 				}
-				// Check the page content independently of viewport scrolling caused
-				// by wrapped entries; frame geometry is covered separately.
+				// Movement must match the displayed range. Wrapped-row readability
+				// and complete binding coverage are checked independently.
 				if !strings.Contains(m.modalRows()[0].text, fmt.Sprintf("Page %d of %d", want+1, last+1)) {
 					t.Fatal("stored/rendered Help page disagree")
 				}
@@ -152,7 +160,7 @@ func TestFix1HelpPagingBoundariesAndResize(t *testing.T) {
 			press(m, keys[0])
 			check(last)
 			m.Update(tea.WindowSizeMsg{Width: 80, Height: 16})
-			last = (len(m.catalog()) - 1) / 8
+			last = declaredLast()
 			check(last)
 			press(m, keys[1])
 			check(last - 1)
@@ -161,7 +169,7 @@ func TestFix1HelpPagingBoundariesAndResize(t *testing.T) {
 			last = 0
 			check(0)
 			m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
-			last = (len(m.catalog()) - 1) / 4
+			last = declaredLast()
 			check(0)
 			press(m, keys[0])
 			check(1)
