@@ -19,6 +19,8 @@ import sys
 import termios
 import time
 
+from resource_budget import BudgetError, budget_environment, cpu_budget, verification_slot
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HERE = pathlib.Path(__file__).resolve().parent
 CACHE = ROOT / ".cache/tui-visual"
@@ -176,9 +178,8 @@ def run(command, **kwargs):
 
 def build():
     scratch = CACHE / "tmp"
-    scratch.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, GOMAXPROCS="2", GOTMPDIR=str(scratch), TMPDIR=str(scratch))
-    run(["go", "test", "-p", "2", "-tags=visualcapture", "-c", "-o", str(BINARY), "./internal/tui"], env=env)
+    env = budget_environment(scratch)
+    run(["go", "test", "-p", env["GOMAXPROCS"], "-tags=visualcapture", "-c", "-o", str(BINARY), "./internal/tui"], env=env)
 
 
 def bootstrap():
@@ -263,9 +264,23 @@ def main():
     parser.add_argument("--output", default="artifacts/tui-native-baseline")
     args = parser.parse_args()
     if args.mode == "bootstrap": bootstrap(); return
-    if args.mode == "build": build(); return
+    if args.mode == "build":
+        cpu_budget()
+        with verification_slot(ROOT):
+            build()
+        return
     if args.mode == "list":
         print(json.dumps({"screens": SCREENS, "modals": MODALS, "editors": EDITORS, "variants": VARIANTS, "integration_extensions": EXTENSIONS, "uncovered_states": GAPS}, indent=2)); return
+    if args.plan:
+        execute_capture(args)
+    else:
+        cpu_budget()
+        # Hold one slot through the build, native PTYs and browser render.
+        with verification_slot(ROOT):
+            execute_capture(args)
+
+
+def execute_capture(args):
     sizes = parse_list(args.sizes, SIZES)
     themes = parse_list(args.themes, THEMES)
     scenarios = [args.scenario] if args.mode == "capture" else (SCREENS if args.batch_set == "screens" else SCENARIOS + (list(EXTENSIONS) if args.batch_set == "integrated" else []))
@@ -306,7 +321,7 @@ def main():
         name = entry["id"]
         # A small allowlist excludes operator credentials/config from the child.
         env = {key: os.environ[key] for key in ["PATH", "LANG", "LC_ALL"] if key in os.environ}
-        env.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "GOMAXPROCS": "2", "TMPDIR": str(scratch),
+        env.update({"TERM": "xterm-256color", "COLORTERM": "truecolor", "GOMAXPROCS": cpu_budget(), "TMPDIR": str(scratch),
                     "ONELINE_VISUAL_CAPTURE": "1", "ONELINE_CAPTURE_COLS": str(entry["cols"]), "ONELINE_CAPTURE_ROWS": str(entry["rows"]),
                     "ONELINE_CAPTURE_SCENARIO": entry["scenario"], "ONELINE_CAPTURE_THEME": entry["theme"], "ONELINE_CAPTURE_STATE": entry["state"],
                     "ONELINE_CAPTURE_VARIANT": entry["variant"], "ONELINE_CAPTURE_COLOR": args.color, "ONELINE_CAPTURE_ASCII": "1" if args.ascii else "0",
@@ -346,6 +361,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except CaptureError as error:
+    except (CaptureError, BudgetError) as error:
         print(f"capture: {error}", file=sys.stderr)
         sys.exit(1)

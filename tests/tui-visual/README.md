@@ -28,15 +28,48 @@ No production dependency or `go.mod` change is needed. Bootstrap is the only
 network-dependent step; later captures use bundled local assets and block all
 browser network requests. Do not install packages globally.
 
-Every capture rebuilds the guarded test binary with `GOMAXPROCS=2` and `-p 2`.
+Every capture rebuilds the guarded test binary using the existing Go build cache.
+`GOMAXPROCS` defaults to `1`; an explicit positive integer up to the host's
+logical CPU count is respected for both Go execution and `go test -p`. Invalid
+values fail before building. No separate binary cache or stale-binary shortcut
+is used: dirty, ignored and untracked fixture/build inputs still reach Go.
+`capture`, actual `batch` and `build` hold a blocking POSIX `flock` through the
+entire build/PTY/browser operation. Its persistent file lives in the resolved
+Git common directory, so worktrees share one slot and unrelated repositories
+do not block each other. A queued job prints a waiting message, sleeps in the
+kernel, then announces acquisition; failures release the slot. `list` and
+`--plan` need no slot. The fault controller uses the same slot for its captures
+and its final Python/Node checks. Node test-file concurrency also follows the
+selected budget, preserving all five fault-test files.
+
 The build tag `visualcapture` and `ONELINE_VISUAL_CAPTURE=1` guard the helper.
 Regular Go tests do not activate it. To run the surrounding TUI suite:
 
 ```sh
-mkdir -p .cache/tui-visual/tmp
-GOMAXPROCS=2 GOTMPDIR="$PWD/.cache/tui-visual/tmp" TMPDIR="$PWD/.cache/tui-visual/tmp" \
-  go test -p 2 -count=1 -tags=visualcapture ./internal/tui
+python3 tests/tui-visual/resource_budget.py -- go test -count=1 -tags=visualcapture ./internal/tui
 ```
+
+For an iteration, run the resource-budget tests and the affected Go tests:
+
+```sh
+python3 -m unittest discover -s tests/tui-visual -p test_resource_budget.py -v
+python3 tests/tui-visual/resource_budget.py -- go test -count=1 -run '^TestPaletteHelpAndEditorFitSmallTerminal$' ./internal/tui
+```
+
+The wrapper also serializes direct `node tests/tui-visual/render.mjs ...`
+commands and preserves the existing `GOCACHE`, toolchain and build flags. It
+adds the selected package budget to `GOFLAGS`; explicit command-line `-p` still
+takes precedence. Do not nest this wrapper around `capture.py` or
+`run_fault_tests.py`, which already acquire the slot. Commands bypassing these
+entrypoints are outside this cooperative budget. Browser CPU use is not capped
+by `GOMAXPROCS`; serialization bounds overlapping capture jobs, and each batch
+still uses one real browser process.
+
+After integration, run the required normal/race/vet and capture/evidence gates
+once for that exact integrated revision. Focused iteration checks do not replace
+the required size/theme/state matrix or race coverage; avoid rerunning the whole
+matrix and race suite for every cosmetic edit. Use the wrapper for direct heavy
+Go/render commands and the capture/controller entrypoints for evidence gates.
 
 The actual guarded helper is exercised by `capture`/`batch` through the PTY.
 It intentionally skips when invoked by an ordinary test run without the guard.
