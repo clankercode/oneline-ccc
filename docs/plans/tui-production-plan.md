@@ -1,6 +1,8 @@
 # Go TUI production plan
 
-Planning baseline: 2026-11-02. No Go implementation, installation or deployment is claimed.
+Planning baseline: 2026-11-02. The proposal below retains that baseline; current
+implementation and evidence are recorded in the [native foundation](native-foundation.md)
+and its [delivery ledger](../ledgers/native-foundation-ledger.md).
 Authority: [broader brief](broader-utility-brief.md), [product brief](../product-brief.md), [existing research](../research/existing-projects.md), [Windows evidence](../verification/windows-mvp.md).
 Companions: [screen flows](../design/tui-screen-flows.md), [stack evidence and IGC decisions](../research/tui-stack.md).
 
@@ -10,6 +12,12 @@ specimen is a design aid, not evidence of a running Go TUI.
 Interaction follow-up: [usability contract](../design/tui-usability.md) connects
 management choices, model settings, review, simulated receipts and keyboard
 help/search. Carry these paths into T1/T4; browser tests do not satisfy native gates.
+
+Production follow-up from native acceptance: resolve the pinned Bubble Tea/
+cancelreader reader-close race in rendered SIGTERM shutdown and prove native
+Windows/macOS interactive terminal behavior before wider console acceptance.
+The development slice's Linux rendered-PTY and separate headless race gates are
+documented in [native verification](../verification/native-foundation.md).
 
 ## Goal, scope and evidence labels
 

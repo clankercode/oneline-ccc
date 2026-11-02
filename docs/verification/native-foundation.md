@@ -20,6 +20,12 @@ private fixture home. It traverses Dashboard, help, command search, masked key
 entry, client configuration, full review, Apply and receipt. No client config
 exists before Apply. Native launch transfers the terminal to Codex; interrupting
 the child returns to the dashboard. Exit restores the original terminal modes.
+The final acceptance correction shares process ownership between direct launches,
+native configuration calls and version probes. It stops inherited descendants
+before removing private staging, and restores the pre-child terminal state before
+Bubble Tea resumes. A real rendered-PTY regression covers SIGTERM while a child
+has the terminal in raw mode; the isolated native Codex journey checks the same
+shutdown path.
 Captured layouts cover 120x40, 100x30, 80x24, 60x20 and 40x12. These are Linux
 terminal results; native Windows/macOS console behavior requires its own proof.
 
@@ -28,6 +34,12 @@ checks on Linux, Windows and macOS, including isolated native Codex and Windows
 Credential Manager checks. It also builds amd64/arm64 binaries for all three OS
 families with cgo disabled. Compilation is separate from runtime acceptance.
 Each uploaded development artifact includes its checksum.
+
+The rendered-PTY SIGTERM regression runs without the race detector. Running that
+specific fixture with race instrumentation reproduces a reader-close race in the
+pinned Bubble Tea/cancelreader dependency. Headless shutdown and process ownership
+remain race-tested. This dependency limitation is retained for wider production
+acceptance; a race-suite pass does not imply that the rendered-PTY test ran.
 
 Observer tests use fake native runners and disposable service definitions.
 Windows explicitly tests Unavailable with no native actions or filesystem writes.
@@ -51,4 +63,4 @@ platform/release and automatic distribution gates retained in the
 [production plan](../plans/tui-production-plan.md).
 
 The final integration revision, independent review disposition and exact final
-gate results are recorded in the accompanying native-foundation ledger.
+gate results are recorded in the [native-foundation ledger](../ledgers/native-foundation-ledger.md).
