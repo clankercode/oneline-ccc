@@ -56,15 +56,18 @@ function fixtureState(entry,frame) {
 
 function moreOutcome(entry,frame,o) {
   const more=o.more, ds=more?.destinations;
-  if(!Array.isArray(ds) || !ds.length || ds.some(d=>!d.label || d.id!==`nav:${d.label}`)
-    || new Set(ds.map(d=>d.id)).size!==ds.length)throw new Error('More production destination observations missing');
-  // These bounded specimens show the complete menu. Bind its order to actual
-  // terminal rows so truncating observations cannot redefine first/last.
-  const rows=frame.text.filter(line=>/^(?:> | {2})\S/.test(line)).map(line=>line.slice(2).trimEnd());
-  if(JSON.stringify(rows)!==JSON.stringify(ds.map(d=>d.label)))throw new Error('More destination rows/order disagree with actual frame');
+  // This is the fixed secondary-navigation contract, not a reconstruction of
+  // its layout. Observe the complete production catalog even when only a menu
+  // window fits: truncating metadata must never redefine a boundary.
+  const destinations=['Gateway','Service','Repair','SSH','Utilities','Settings'];
+  if(!Array.isArray(ds) || ds.length!==destinations.length
+    || ds.some((d,i)=>d?.label!==destinations[i] || d.id!==`nav:${destinations[i]}`))throw new Error('More production destination inventory/order disagrees with navigation contract');
+  const visible=frame.text.map(line=>line.trim());
+  const rows=visible.map(line=>line.replace(/^> /u,'')).filter(line=>destinations.includes(line));
+  if(!rows.length || rows.some((label,i)=>i>0 && destinations.indexOf(label)<=destinations.indexOf(rows[i-1])))throw new Error('More destination rows/order disagree with actual frame');
   const focused=ds.find(d=>d.id===more.focused_id);
   if(!focused || focused.label!==more.focused_label || focused.label!==more.enter_screen
-    || !frame.text.some(line=>line.trim()===`> ${focused.label}`))throw new Error('More focused destination disagrees with production frame/Enter');
+    || JSON.stringify(visible.filter(line=>/^> /u.test(line)))!==JSON.stringify([`> ${focused.label}`]))throw new Error('More focused destination disagrees with production frame/Enter');
   const expected=entry.variant==='baseline'?ds[0]:ds.at(-1);
   if(more.focused_id!==expected.id)throw new Error(`${entry.variant==='baseline'?'First':'Last'} More destination not reached`);
 }

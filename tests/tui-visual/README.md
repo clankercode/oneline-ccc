@@ -127,6 +127,12 @@ the actual modal rows and catalog, verify first/last focused destination IDs and
 probe Enter on an isolated model. Setup stops at the last actual destination
 before a wrapping menu can return to first. Shared export checks require the
 focused row in the captured frame and matching Enter destination observations.
+The verifier checks the complete six-destination secondary-navigation contract
+and its order independently of the visible menu window. A compact frame may
+show only some destinations and their purpose rows; its visible destinations
+must remain in catalog order, with exactly the observed focused destination and
+matching Enter target. Shell insets do not change destination identity. Truncated,
+reordered, duplicate or unknown inventory cannot redefine the first/last boundary.
 `--batch integrated` requests all 25
 surfaces (375 baseline rows), while `--batch all` preserves the original 24.
 The manifest counts eight known modals and separately records the seven in

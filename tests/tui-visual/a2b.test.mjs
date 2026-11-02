@@ -21,6 +21,16 @@ for(const [name,d] of Object.entries(data)) {
     else { assert.match(level,/observed-prepared-model-and-frame-controls/);assert.match(level,/setup not PTY/);if(name.startsWith('filter-'))assert.match(level,d.entry.fixture.semantic_outcomes.dashboard.production_projection?/rendered filter indicator and query prefix frame-bound/:/query is model-observed only; rendered cue unproven/); }
   });
   if(name.startsWith('more-')) {
+    for(const mutation of ['reordered','duplicate','unknown','missing'])test(`${name} rejects ${mutation} complete inventory`,async()=>{
+      const bad=clone(d),more=bad.entry.fixture.semantic_outcomes.more;
+      const rows=more.destinations;
+      if(mutation==='reordered')[rows[1],rows[2]]=[rows[2],rows[1]];
+      if(mutation==='duplicate')rows[1]=structuredClone(rows[0]);
+      if(mutation==='unknown')rows[1]={id:'nav:Unknown',label:'Unknown'};
+      if(mutation==='missing')rows.splice(1,1);
+      bad.entry.fixture.semantic_before=structuredClone(bad.entry.fixture.semantic_outcomes);
+      await assert.rejects(check(bad),/destination|inventory|order/i);
+    });
     test(`${name} rejects first/last relabeling`,async()=>{
       const bad=clone(d);bad.entry.variant=bad.entry.fixture.variant=d.entry.variant==='baseline'?'last-item':'baseline';
       await assert.rejects(check(bad),/first|last/i);
