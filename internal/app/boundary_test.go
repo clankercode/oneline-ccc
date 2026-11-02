@@ -31,10 +31,15 @@ func TestLaunchRefusesConfigDriftAcrossInspection(t *testing.T) {
 type fixtureMonitor struct {
 	actions  []string
 	observed bool
+	status   string
 }
 
 func (m *fixtureMonitor) Status(context.Context) core.ServiceInfo {
-	return core.ServiceInfo{Backend: "systemd user", Status: "Running", Detail: "fixture-private-key"}
+	status := m.status
+	if status == "" {
+		status = "Running"
+	}
+	return core.ServiceInfo{Backend: "systemd user", Status: status, Detail: "fixture-private-key"}
 }
 func (m *fixtureMonitor) Action(_ context.Context, action string) (core.ServiceInfo, error) {
 	m.actions = append(m.actions, action)
@@ -58,6 +63,26 @@ func TestMonitorDelegatesOnlyExplicitActionsAndRedactsDetail(t *testing.T) {
 	}
 	if err = e.Observe(context.Background(), true); err != nil || !m.observed {
 		t.Fatal("observation not delegated")
+	}
+}
+func TestFailedMonitorStatusSurvivesSafeProjection(t *testing.T) {
+	e, _, _, _ := fixture(t, false)
+	e.deps.monitor = &fixtureMonitor{status: "Failed"}
+	snapshot, err := e.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := e.Service(context.Background(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range []core.ServiceInfo{snapshot.Service, status} {
+		if service.Status != "Failed" || service.Backend != "systemd user" {
+			t.Fatalf("monitor failure lost in projection: %#v", service)
+		}
+		if !strings.Contains(service.Detail, "failed") || strings.Contains(service.Detail, "fixture-private-key") {
+			t.Fatal("failed status needs locally generated safe detail")
+		}
 	}
 }
 func TestPlanningRechecksStateAfterStagingWait(t *testing.T) {

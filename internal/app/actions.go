@@ -270,7 +270,7 @@ func safeService(s core.ServiceInfo) core.ServiceInfo {
 		out.Backend = s.Backend
 	}
 	switch s.Status {
-	case "Not installed", "Installed", "Running", "Stopped", "Unavailable", "Conflict", "Unknown", "Transitioning":
+	case "Not installed", "Installed", "Running", "Stopped", "Failed", "Unavailable", "Conflict", "Unknown", "Transitioning":
 		out.Status = s.Status
 	}
 	// Native command/error text is never part of the public projection.
@@ -278,6 +278,8 @@ func safeService(s core.ServiceInfo) core.ServiceInfo {
 	switch out.Status {
 	case "Unavailable":
 		out.Detail = "Native user-session observer unavailable; foreground management remains usable."
+	case "Failed":
+		out.Detail = "Native user-session observer failed; inspect its native status before restarting."
 	case "Conflict":
 		out.Detail = "Foreign or unsafe observer state was preserved; reconcile locally."
 	case "Unknown":
