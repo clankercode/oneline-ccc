@@ -134,8 +134,15 @@ function Assert-CodexVersion {
         throw 'Codex installed but was not found on PATH. Reopen PowerShell.'
     }
     $codexCommand = Get-CodexCommand
-    $versionOutput = (& $codexCommand.Source --version 2>$null | Out-String)
-    if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch '(\d+\.\d+\.\d+)') {
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 treats native stderr as an error even when
+        # redirected. A fresh CODEX_HOME can cause a harmless PATH warning.
+        $ErrorActionPreference = 'Continue'
+        $versionOutput = (& $codexCommand.Source --version 2>$null | Out-String)
+        $versionExitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousErrorAction }
+    if ($versionExitCode -ne 0 -or $versionOutput -notmatch '(\d+\.\d+\.\d+)') {
         throw 'Codex installed but its version could not be verified. Install current @openai/codex using npm.'
     }
     if ([version]$Matches[1] -lt [version]'0.134.0') {
@@ -362,6 +369,7 @@ requires_openai_auth = false
     Write-Output 'The selected context budget does not increase the actual model capacity.'
 } catch {
     # Never emit exception payloads from dependencies, URLs, files or credentials.
+    Write-Verbose ('Setup failure type: ' + $_.Exception.GetType().FullName + '; line: ' + $_.InvocationInfo.ScriptLineNumber)
     $safeMessages = @(
         'Required input', 'Configuration values', 'Existing config', 'Managed configuration',
         'Managed block', 'An existing LLMP', 'Existing inline', 'BaseUrl must',

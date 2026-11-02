@@ -25,7 +25,7 @@ function New-Case([string]$Name) {
     return $directory
 }
 function Get-Profile([string]$HomeDirectory) { return Join-Path $HomeDirectory 'llmp.config.toml' }
-function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential) {
+function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}) {
     $arguments = @{
         BaseUrl = 'https://fixture.invalid/v1/'; Model = 'fixture-model'
         ContextWindow = 353000; AutoCompactTokenLimit = 300000
@@ -59,6 +59,7 @@ try { $invocation; exit 0 } catch { Write-Output `$_.Exception.Message; exit 1 }
     $start.EnvironmentVariables['CODEX_HOME'] = $HomeDirectory
     $start.EnvironmentVariables['LLMP_API_KEY'] = $dummyKey
     if ($NoCredential) { $start.EnvironmentVariables['LLMP_API_KEY'] = '' }
+    foreach ($name in $EnvironmentOverrides.Keys) { $start.EnvironmentVariables[$name] = [string]$EnvironmentOverrides[$name] }
     foreach ($name in @('TEMP', 'TMP', 'TMPDIR')) { $start.EnvironmentVariables[$name] = $root }
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
@@ -125,6 +126,44 @@ Test-Case 'dry run works without credentials' {
     $homeDirectory = New-Case 'dry-run-no-credential'
     Invoke-Installer $homeDirectory @{DryRun = $true} -NoCredential | Out-Null
     Assert-True (@(Get-ChildItem $homeDirectory -Force).Count -eq 0) 'Credential-free dry run created config'
+}
+foreach ($versionCase in @(
+    @{Name = 'stderr-warning'; Version = 'codex-cli 0.165.0'; ExitCode = 0; Fail = $false},
+    @{Name = 'nonzero-exit'; Version = 'codex-cli 0.165.0'; ExitCode = 7; Fail = $true},
+    @{Name = 'malformed-version'; Version = 'not-a-version'; ExitCode = 0; Fail = $true}
+)) {
+    Test-Case ('native version probe: ' + $versionCase.Name) {
+        $homeDirectory = New-Case ('version-home-' + $versionCase.Name)
+        $fakeDirectory = New-Case ('version-bin-' + $versionCase.Name)
+        $marker = Join-Path $fakeDirectory 'called.txt'
+        if ($env:OS -eq 'Windows_NT') {
+            $fakeCommand = Join-Path $fakeDirectory 'codex.cmd'
+            $commandText = '@echo off' + "`r`n" +
+                'echo called>"%CODEX_VERSION_MARKER%"' + "`r`n" +
+                'echo fixture PATH alias warning 1>&2' + "`r`n" +
+                'echo ' + $versionCase.Version + "`r`n" +
+                'exit /b ' + $versionCase.ExitCode + "`r`n"
+        } else {
+            $fakeCommand = Join-Path $fakeDirectory 'codex'
+            $commandText = '#!/bin/sh' + "`n" +
+                'printf called > "$CODEX_VERSION_MARKER"' + "`n" +
+                'echo fixture PATH alias warning >&2' + "`n" +
+                'echo ' + $versionCase.Version + "`n" +
+                'exit ' + $versionCase.ExitCode + "`n"
+        }
+        Write-Utf8 $fakeCommand $commandText
+        if ($env:OS -ne 'Windows_NT') { & chmod +x $fakeCommand; Assert-True ($LASTEXITCODE -eq 0) 'Cannot make fixture executable' }
+        $environment = @{
+            PATH = $fakeDirectory + [IO.Path]::PathSeparator + $env:PATH
+            CODEX_VERSION_MARKER = $marker
+        }
+        $output = Invoke-Installer $homeDirectory -EnvironmentOverrides $environment -Failure:$versionCase.Fail
+        Assert-True (Test-Path -LiteralPath $marker) 'Version fixture was not invoked'
+        if ($versionCase.Fail) {
+            Assert-True ($output.Contains('version could not be verified')) 'Invalid native version did not receive a version error'
+            Assert-True (@(Get-ChildItem $homeDirectory -Force).Count -eq 0) 'Invalid native version created config'
+        } else { Verify-Toml (Get-Profile $homeDirectory) }
+    }
 }
 Test-Case 'idempotent reruns' {
     $homeDirectory = New-Case 'idempotent'
