@@ -24,7 +24,7 @@ func (m *model) controls() []control {
 					check = "[x]"
 				}
 				label := fmt.Sprintf("%s %s  %s", check, c.Name, c.Status)
-				if !c.Installed {
+				if !c.Installed && !strings.Contains(strings.ToLower(c.Status), "not installed") {
 					label += " | Not installed"
 				}
 				if c.ID == m.selected {
