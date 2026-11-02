@@ -246,7 +246,7 @@ if (-not $user) {
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($random) } finally { $rng.Dispose() }
     $password = ConvertTo-SecureString ('Aa1!' + [Convert]::ToBase64String($random)) -AsPlainText -Force
-    try { $user = New-LocalUser -Name $UserName -Password $password -Description 'Optional oneline-ccc SSH account (non-administrator)' }
+    try { $user = New-LocalUser -Name $UserName -Password $password -Description 'oneline-ccc SSH (non-administrator)' }
     finally { $password.Dispose(); [Array]::Clear($random, 0, $random.Length) }
     $usersGroup = Get-LocalGroup -SID 'S-1-5-32-545'
     Add-LocalGroupMember -Group $usersGroup -Member $user

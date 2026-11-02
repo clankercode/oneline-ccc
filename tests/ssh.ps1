@@ -396,14 +396,22 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
     }
     # These operations are never needed for the existing-user fixture. Block them
     # rather than risk a platform branch mutating the host or runner.
-    foreach ($command in @('New-LocalUser', 'Set-LocalUser', 'Remove-LocalUser', 'Add-LocalGroupMember',
+    foreach ($command in @('Set-LocalUser', 'Remove-LocalUser',
         'Set-NetConnectionProfile', 'Set-NetFirewallRule',
-        'Enable-NetFirewallRule', 'Disable-NetFirewallRule', 'Start-Process', 'Add-Type', 'Invoke-WebRequest', 'Read-Host', 'Get-LocalGroup')) {
+        'Enable-NetFirewallRule', 'Disable-NetFirewallRule', 'Start-Process', 'Add-Type', 'Invoke-WebRequest', 'Read-Host')) {
         Set-Item -Path ('Function:local:' + $command) -Value {
             $state.Events.Add('FORBIDDEN:' + $MyInvocation.MyCommand.Name)
             throw ('Forbidden host operation: ' + $MyInvocation.MyCommand.Name)
         }
     }
+    function New-LocalUser {
+        param($Name, [Security.SecureString]$Password, [ValidateLength(0, 48)][string]$Description)
+        $state.Events.Add('UserCreate')
+        $state.UserExists = $true
+        Get-LocalUser -Name $Name
+    }
+    function Get-LocalGroup { param($SID) Assert-True ($SID -eq 'S-1-5-32-545') 'New user must join only the standard Users group'; [pscustomobject]@{SID = $SID} }
+    function Add-LocalGroupMember { param($Group, $Member) Assert-True ($Group.SID -eq 'S-1-5-32-545') 'New user was granted a privileged group'; $state.Events.Add('UsersGroupAdd') }
     function Copy-Item {
         param($LiteralPath, $Destination, [switch]$Force)
         Assert-FixturePath $LiteralPath; Assert-FixturePath $Destination
@@ -495,6 +503,12 @@ Test-Case 'missing user requires explicit creation before any mutations' {
     $state.UserExists = $false
     Invoke-MockedSetup $state -Failure | Out-Null
     Assert-True ($state.Events.Count -eq 0) 'Missing user reached mutations'
+}
+Test-Case 'explicit new user respects native description limit and standard group' {
+    $state = New-SetupFixture 'create-user'
+    $state.UserExists = $false
+    Invoke-MockedSetup $state -Create | Out-Null
+    Assert-True ($state.Events -contains 'UserCreate' -and $state.Events -contains 'UsersGroupAdd') 'Explicit account creation was not exercised'
 }
 Test-Case 'dry-run preserves existing keys, config and ACLs without OS access' {
     $state = New-SetupFixture 'dryrun-no-op'
