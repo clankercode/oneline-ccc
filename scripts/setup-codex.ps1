@@ -314,7 +314,7 @@ function Test-CodexManagedDefault([string]$Text) {
     return $Text -cmatch $shape
 }
 
-function Start-CodexConfigProcess([string]$Executable, [string]$Stage) {
+function Start-CodexConfigProcess([string]$Executable, [string]$Stage, [string]$WorkingDirectory) {
     $process = $null
     try {
         $info = New-Object System.Diagnostics.ProcessStartInfo
@@ -348,6 +348,8 @@ function Start-CodexConfigProcess([string]$Executable, [string]$Stage) {
         $info.StandardOutputEncoding = $utf8
         $info.StandardErrorEncoding = $utf8
         $info.WorkingDirectory = $Stage
+        # Keep child CWD outside the GUID home that must be deleted after RPCs.
+        if ($WorkingDirectory) { $info.WorkingDirectory = $WorkingDirectory }
         $info.EnvironmentVariables['CODEX_HOME'] = $Stage
         # Do not expose inherited credentials to the config-only subprocess.
         foreach ($key in @($info.EnvironmentVariables.Keys)) {
@@ -359,9 +361,6 @@ function Start-CodexConfigProcess([string]$Executable, [string]$Stage) {
         $info.EnvironmentVariables['OPENAI_API_KEY'] = 'dummy-fixture-key'
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $info
-        # .NET Framework creates its stdin writer during Start and may flush a
-        # BOM before our explicit writer exists. Bound the console encoding change
-        # to process creation and restore the caller's encoding immediately.
         $previousInputEncoding = [Console]::InputEncoding
         try {
             [Console]::InputEncoding = $utf8
@@ -371,11 +370,51 @@ function Start-CodexConfigProcess([string]$Executable, [string]$Stage) {
         $inputWriter.AutoFlush = $true
         # Drain concurrently; never forward raw stderr or protocol to the console.
         $drain = $process.StandardError.ReadToEndAsync()
-        return @{ Process = $process; Input = $inputWriter; Stderr = $drain; NextId = 1 }
+        $transportKind = 'other'
+        switch -Regex ([IO.Path]::GetFileName($info.FileName)) {
+            '^codex(?:\.exe)?$' { $transportKind = 'native' }
+            '^node(?:\.exe)?$' { $transportKind = 'node' }
+            '^cmd(?:\.exe)?$' { $transportKind = 'cmd' }
+        }
+        return @{ Process = $process; Input = $inputWriter; Stderr = $drain; NextId = 1; TransportKind = $transportKind }
     } catch {
         if ($process) { Stop-CodexConfigProcess @{Process = $process} }
         throw 'Codex configuration process could not start.'
     }
+}
+
+# Diagnostic only: targeted parent-PID queries, no command lines or process killing.
+function Get-CodexConfigDescendants([int]$RootProcessId, [hashtable]$Diagnostics) {
+    $items = @()
+    if ($env:OS -ne 'Windows_NT') { return $items }
+    $Diagnostics.Snapshot = 'complete'
+    $pending = New-Object 'System.Collections.Generic.Queue[int]'
+    $pending.Enqueue($RootProcessId)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($pending.Count -gt 0 -and $items.Count -lt 32 -and $clock.ElapsedMilliseconds -lt 2000) {
+        $ownerPid = $pending.Dequeue()
+        try {
+            $children = @(Get-CimInstance Win32_Process -Filter ('ParentProcessId=' + $ownerPid) -Property ProcessId,Name -OperationTimeoutSec 1 -ErrorAction Stop)
+            foreach ($child in $children) {
+                if ($items.Count -ge 32) { $Diagnostics.Snapshot = 'partial'; break }
+                $observed = $null
+                try {
+                    $observed = [Diagnostics.Process]::GetProcessById([int]$child.ProcessId)
+                    $kind = 'other'
+                    switch -Regex ($child.Name) {
+                        '^codex(?:\.exe)?$' { $kind = 'codex' }
+                        '^(powershell|pwsh)(?:\.exe)?$' { $kind = 'powershell' }
+                        '^node(?:\.exe)?$' { $kind = 'node' }
+                        '^cmd(?:\.exe)?$' { $kind = 'cmd' }
+                    }
+                    $items += @{Id = $observed.Id; Started = $observed.StartTime.ToUniversalTime(); Kind = $kind}
+                    $pending.Enqueue($observed.Id)
+                } catch { } finally { if ($observed) { $observed.Dispose() } }
+            }
+        } catch { $Diagnostics.Snapshot = 'partial'; break }
+    }
+    if ($pending.Count) { $Diagnostics.Snapshot = 'partial' }
+    return $items
 }
 
 function Stop-CodexConfigProcess($Connection) {
@@ -385,6 +424,10 @@ function Stop-CodexConfigProcess($Connection) {
     try {
         # A failed Start has no owned PID to stop.
         try { $null = $process.Id } catch { return }
+        if ($Connection.Diagnostics) {
+            try { $Connection.Diagnostics.Children += @(Get-CodexConfigDescendants $process.Id $Connection.Diagnostics) }
+            catch { $Connection.Diagnostics.Snapshot = 'partial' }
+        }
         # A close/flush failure must never skip wait, kill, and reap.
         try {
             if ($Connection.Input) { $Connection.Input.Close() }
@@ -394,11 +437,14 @@ function Stop-CodexConfigProcess($Connection) {
             try { $process.StandardInput.BaseStream.Close() } catch { }
         }
         try { $reaped = $process.WaitForExit(2000) } catch { }
+        if ($Connection.Diagnostics) { $Connection.Diagnostics.Stop = 'graceful' }
         if (-not $reaped) {
+            if ($Connection.Diagnostics) { $Connection.Diagnostics.Stop = 'killed' }
             try { $process.Kill() } catch { }
             try { $reaped = $process.WaitForExit(2000) } catch { }
         }
         if (-not $reaped) { throw 'Codex configuration process could not be stopped.' }
+        if ($Connection.Diagnostics) { $Connection.Diagnostics.Stops += $Connection.Diagnostics.Stop }
     } finally {
         # Framework Process.Dispose does not close redirected streams.
         try { $process.StandardOutput.Close() } catch { }
@@ -442,7 +488,9 @@ function Initialize-CodexConfigConnection($Connection) {
     $Connection.Input.WriteLine('{"method":"initialized","params":{}}')
 }
 
-function Remove-CodexConfigStageTree([string]$Path) {
+# Delete links themselves, never enumerate them or change target attributes.
+function Remove-CodexConfigStageTree([string]$Path, [string]$StageRoot) {
+    if (-not $StageRoot) { $StageRoot = $Path }
     $isDirectory = $false
     try {
         $attributes = [IO.File]::GetAttributes($Path)
@@ -457,7 +505,7 @@ function Remove-CodexConfigStageTree([string]$Path) {
         }
         if ($isDirectory) {
             foreach ($entry in [IO.Directory]::GetFileSystemEntries($Path)) {
-                Remove-CodexConfigStageTree $entry
+                Remove-CodexConfigStageTree $entry $StageRoot
             }
             [IO.Directory]::Delete($Path, $false)
         } else { [IO.File]::Delete($Path) }
@@ -466,7 +514,12 @@ function Remove-CodexConfigStageTree([string]$Path) {
         if (-not $cause.Data.Contains('CodexCleanupEntry')) {
             $category = 'other-file'
             $name = [IO.Path]::GetFileName($Path)
-            if ($isDirectory) { $category = 'directory' }
+            if ($isDirectory) {
+                if ([string]::Equals($Path, $StageRoot, [StringComparison]::OrdinalIgnoreCase)) { $category = 'stage-root' }
+                elseif ($Path -match '[/\\]arg0(?:-windows)?([/\\]|$)') { $category = 'directory-arg0' }
+                elseif ($Path -match '[/\\]skills([/\\]|$)') { $category = 'directory-skills' }
+                else { $category = 'directory-other' }
+            }
             elseif ($name -ceq 'config.toml') { $category = 'config' }
             elseif ($Path -match '[/\\]arg0(?:-windows)?[/\\]') {
                 if ($name -ceq '.lock') { $category = 'arg0-lock' }
@@ -481,7 +534,7 @@ function Remove-CodexConfigStageTree([string]$Path) {
     }
 }
 
-function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot) {
+function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtable]$Diagnostics) {
     try {
         $full = [IO.Path]::GetFullPath($Stage)
         $root = [IO.Path]::GetFullPath($ScratchRoot)
@@ -501,7 +554,7 @@ function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot) {
                 if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                     throw 'Staging directory was replaced.'
                 }
-                Remove-CodexConfigStageTree $full
+                Remove-CodexConfigStageTree $full $full
                 return
             } catch {
                 if ($attempt -eq 4) { throw }
@@ -522,8 +575,39 @@ function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot) {
             }
         }
         $entry = $cause.Data['CodexCleanupEntry']
-        if ($entry -cmatch '^(arg0-lock|arg0-alias|arg0-executable|skills|config|log|database|directory|other-file)$') {
+        if ($entry -cmatch '^(arg0-lock|arg0-alias|arg0-executable|skills|config|log|database|stage-root|directory-arg0|directory-skills|directory-other|other-file)$') {
             $category += '; entry=' + $entry
+        }
+        $cwd = 'unknown'
+        try {
+            $current = [IO.Path]::GetFullPath([Environment]::CurrentDirectory)
+            $comparison = [StringComparison]::OrdinalIgnoreCase
+            $cwd = 'outside'
+            if ([string]::Equals($current, $full, $comparison)) { $cwd = 'stage' }
+            elseif ($current.StartsWith($full + [IO.Path]::DirectorySeparatorChar, $comparison)) { $cwd = 'inside' }
+        } catch { }
+        $category += '; parent-cwd=' + $cwd
+        if ($Diagnostics) {
+            $live = 0
+            $kinds = @()
+            foreach ($child in $Diagnostics.Children) {
+                $observed = $null
+                try {
+                    $observed = [Diagnostics.Process]::GetProcessById($child.Id)
+                    if (-not $observed.HasExited -and $observed.StartTime.ToUniversalTime() -eq $child.Started) {
+                        $live++
+                        if ($child.Kind -cin @('codex','powershell','cmd','node','other')) { $kinds += $child.Kind }
+                    }
+                } catch { } finally { if ($observed) { $observed.Dispose() } }
+            }
+            $category += '; live-descendants=' + $live
+            if ($Diagnostics.Snapshot -cin @('complete','partial','unknown')) { $category += '; child-snapshot=' + $Diagnostics.Snapshot }
+            if ($kinds.Count) { $category += '; child-kinds=' + (($kinds | Sort-Object -Unique) -join ',') }
+            if ($Diagnostics.Stop -cin @('graceful','killed')) { $category += '; stop=' + $Diagnostics.Stop }
+            $transports = @($Diagnostics.Transports | Where-Object { $_ -cin @('native','node','cmd','other') })
+            if ($transports.Count) { $category += '; transport=' + ($transports -join ',') }
+            $stops = @($Diagnostics.Stops | Where-Object { $_ -cin @('graceful','killed') })
+            if ($stops.Count) { $category += '; stops=' + ($stops -join ',') }
         }
         throw ('Default Codex configuration staging cleanup failed (' + $category + '). Existing configuration was not changed.')
     }
@@ -555,6 +639,7 @@ function Get-CodexDefaultConfig(
 ) {
     $stage = $null
     $connection = $null
+    $diagnostics = @{Children = @(); Stop = 'unknown'; Snapshot = 'unknown'; Transports = @(); Stops = @()}
     try {
         if ([string]::IsNullOrWhiteSpace($Existing) -or (Test-CodexManagedDefault $Existing)) {
             return $Generated
@@ -583,7 +668,9 @@ function Get-CodexDefaultConfig(
         Protect-CodexConfigStage $stage
         $path = Join-Path $stage 'config.toml'
         [IO.File]::WriteAllText($path, $Existing, (New-Object Text.UTF8Encoding($false)))
-        $connection = Start-CodexConfigProcess $CodexExecutable $stage
+        $connection = Start-CodexConfigProcess $CodexExecutable $stage $root
+        $connection.Diagnostics = $diagnostics
+        $diagnostics.Transports += $connection.TransportKind
         Initialize-CodexConfigConnection $connection
         $read = Invoke-CodexConfigRpc $connection 'config/read' @{includeLayers = $true}
         $layers = @($read.layers | Where-Object {
@@ -610,7 +697,9 @@ function Get-CodexDefaultConfig(
         Stop-CodexConfigProcess $connection
         $connection = $null
         # Fresh process validates the actual startup config, including catalog content.
-        $connection = Start-CodexConfigProcess $CodexExecutable $stage
+        $connection = Start-CodexConfigProcess $CodexExecutable $stage $root
+        $connection.Diagnostics = $diagnostics
+        $diagnostics.Transports += $connection.TransportKind
         Initialize-CodexConfigConnection $connection
         $verified = Invoke-CodexConfigRpc $connection 'config/read' @{includeLayers = $true}
         foreach ($edit in $edits) {
@@ -630,7 +719,7 @@ function Get-CodexDefaultConfig(
     } catch { throw 'Default Codex configuration could not be merged safely. Existing configuration was not changed.' }
     finally {
         try { Stop-CodexConfigProcess $connection }
-        finally { if ($stage) { Remove-CodexConfigStage $stage $root } }
+        finally { if ($stage) { Remove-CodexConfigStage $stage $root $diagnostics } }
     }
 }
 

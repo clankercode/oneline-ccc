@@ -257,7 +257,7 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     # allowlist is overridden below; only bounded scratch-file commands pass through.
     $allowed = @('Add-LocalGroupMember', 'Add-Type', 'Add-WindowsCapability', 'Assert-FixturePath',
         'Assert-NoReparse', 'ConvertTo-SecureString', 'Copy-Item', 'Get-Acl', 'Get-ChildItem',
-        'Get-CimInstance', 'Get-Item', 'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser',
+        'ForEach-Object', 'Get-SshEffectivePolicy', 'Get-ScheduledTask', 'New-ScheduledTaskAction', 'New-ScheduledTaskPrincipal', 'New-ScheduledTaskSettingsSet', 'New-TimeSpan', 'Register-ScheduledTask', 'Start-ScheduledTask', 'Stop-ScheduledTask', 'Unregister-ScheduledTask', 'Start-Sleep', 'Get-CimInstance', 'Get-Item', 'Get-LocalGroup', 'Get-LocalGroupMember', 'Get-LocalUser',
         'Get-NetConnectionProfile', 'Get-NetFirewallProfile', 'Get-NetFirewallAddressFilter', 'Get-NetFirewallApplicationFilter',
         'Get-NetFirewallPortFilter', 'Get-NetFirewallServiceFilter', 'Get-NetFirewallRule',
         'Get-NetIPAddress', 'Get-Service', 'Get-WindowsCapability', 'Invoke-FixtureNative',
@@ -290,6 +290,8 @@ function New-SetupFixture([string]$Name) {
         Events = (New-Object 'System.Collections.Generic.List[string]')
         Rules = @{}; UserExists = $true; ProfileExists = $true; Enabled = $true; Capability = 'Installed'
         PublicNetwork = $false; FailNative = $false; BadEffective = $false
+        ProbeAsOtherUser = $false; FailProbe = $false; TaskRegistered = $false
+        TaskState = 'Ready'; DelayedProbeStop = $false; TaskStopPolls = 0; FailProbeStop = $false
         FailFirewall = $false; FailService = $false; Acls = @{}
         Service = [pscustomobject]@{Status = 'Stopped'; StartType = 'Manual'}
         FirewallEnabled = 'True'; DefaultInboundAction = 'Block'; EmptyFirewallProfiles = $false
@@ -307,6 +309,7 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
     $NonInteractive = $true
     $AllowPublicNetworkProfile = [bool]$Public
     $RemoteAddress = 'LocalSubnet'
+    $identity = [pscustomobject]@{User = [pscustomobject]@{Value = $(if ($state.ProbeAsOtherUser) { 'S-1-5-21-111-222-333-9999' } else { 'S-1-5-21-111-222-333-1001' })}}
     $profiles = @('Private')
     if ($Public) { $profiles += 'Public' }
     function Assert-FixturePath([string]$Path) {
@@ -412,6 +415,42 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
     }
     function Get-LocalGroup { param($SID) Assert-True ($SID -eq 'S-1-5-32-545') 'New user must join only the standard Users group'; [pscustomobject]@{SID = $SID} }
     function Add-LocalGroupMember { param($Group, $Member) Assert-True ($Group.SID -eq 'S-1-5-32-545') 'New user was granted a privileged group'; $state.Events.Add('UsersGroupAdd') }
+    function New-ScheduledTaskAction { param($Execute, $Argument) [pscustomobject]@{Execute = $Execute; Argument = $Argument} }
+    function New-ScheduledTaskPrincipal {
+        param($UserId, $LogonType, $RunLevel)
+        Assert-True ($UserId -eq 'S-1-5-18' -and $LogonType -eq 'ServiceAccount' -and $RunLevel -eq 'Highest') 'Effective probe must run as SYSTEM'
+        [pscustomobject]@{UserId = $UserId}
+    }
+    function New-ScheduledTaskSettingsSet { param($ExecutionTimeLimit, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) Assert-True ($AllowStartIfOnBatteries -and $DontStopIfGoingOnBatteries) 'Probe must work on battery power'; Assert-True ($ExecutionTimeLimit.TotalSeconds -le 60) 'Probe task must have a bounded execution limit'; [pscustomobject]@{} }
+    function Register-ScheduledTask { param($TaskName, $Action, $Principal, $Settings) $state.Events.Add('ProbeRegister'); $state.TaskRegistered = $true }
+    function Start-ScheduledTask {
+        param($TaskName)
+        Assert-FixturePath $probeDirectory
+        Assert-True ($state.Acls[$probeDirectory] -eq 'restricted:S-1-5-32-544') 'Probe directory must be restricted before SYSTEM task starts'
+        $state.Events.Add('ProbeStart')
+        $state.TaskState = 'Running'
+        $policy = @(Invoke-FixtureNative $sshd -T -f $Configuration -C $context)
+        [IO.File]::WriteAllLines($probeOutput, [string[]]$policy)
+        [IO.File]::WriteAllText(($probeDone + '.tmp'), $(if ($state.FailProbe) { '255' } else { '0' }))
+        [IO.File]::Move(($probeDone + '.tmp'), $probeDone)
+    }
+    function Get-ScheduledTask {
+        param($TaskName)
+        if ($state.TaskStopPolls -gt 0) { $state.TaskStopPolls--; if ($state.TaskStopPolls -eq 0) { $state.TaskState = 'Ready' } }
+        [pscustomobject]@{State = $state.TaskState}
+    }
+    function Stop-ScheduledTask {
+        param($TaskName)
+        $state.Events.Add('ProbeStop')
+        if ($state.FailProbeStop) { throw 'Fixture task stop failed' }
+        if ($state.DelayedProbeStop) { $state.TaskStopPolls = 2 } else { $state.TaskState = 'Ready' }
+    }
+    function Unregister-ScheduledTask {
+        param($TaskName, [switch]$Confirm)
+        Assert-True ($state.TaskState -notin @('Running', 'Queued')) 'Must confirm task stopped before unregistering'
+        $state.Events.Add('ProbeUnregister'); $state.TaskRegistered = $false
+    }
+    function Start-Sleep { param($Milliseconds) Assert-True ($state.TaskStopPolls -gt 0) 'Unexpected fixture probe wait'; $state.Events.Add('ProbeStopWait') }
     function Copy-Item {
         param($LiteralPath, $Destination, [switch]$Force)
         Assert-FixturePath $LiteralPath; Assert-FixturePath $Destination
@@ -535,6 +574,14 @@ namespace OnelineSsh {
     [OnelineSsh.UserProfile]::Calls = 0
     Invoke-MockedSetup $state | Out-Null
     Assert-True ([OnelineSsh.UserProfile]::Calls -eq 1) 'Native profile boundary was not exercised'
+}
+Test-Case 'other-user effective policy runs bounded SYSTEM task and cleans all probe files' {
+    $state = New-SetupFixture 'system-probe'
+    $state.ProbeAsOtherUser = $true
+    Invoke-MockedSetup $state | Out-Null
+    foreach ($event in @('ProbeRegister', 'ProbeStart', 'ProbeStop', 'ProbeUnregister')) { Assert-True ($state.Events -contains $event) ('Missing probe lifecycle: ' + $event) }
+    Assert-True (-not $state.TaskRegistered) 'SYSTEM probe task remained registered'
+    Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $state.ProgramData 'ssh') -Filter 'Oneline-CCC-SSH-Probe-*').Count -eq 0) 'Probe files remained after validation'
 }
 Test-Case 'dry-run preserves existing keys, config and ACLs without OS access' {
     $state = New-SetupFixture 'dryrun-no-op'
@@ -689,6 +736,33 @@ foreach ($markerCase in $markerCases) {
         Assert-True ($result.Error -match 'managed block|marker') ('Wrong managed block refusal: ' + $result.Error)
         Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Refused managed block changed live state'
     }
+}
+Test-Case 'SYSTEM probe failure cleans task and refuses before authorization' {
+    $state = New-SetupFixture 'system-probe-failure'
+    $state.ProbeAsOtherUser = $true; $state.FailProbe = $true
+    $before = Get-LiveFixtureState $state
+    $result = Invoke-MockedSetup $state -Failure
+    Assert-True ($result.Error -match 'SYSTEM SSH effective-policy probe failed') ('Wrong probe failure: ' + $result.Error)
+    Assert-True (-not $state.TaskRegistered) 'Failed SYSTEM probe task remained registered'
+    Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Failed SYSTEM probe installed authorization or changed service/firewall'
+    Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $state.ProgramData 'ssh') -Filter 'Oneline-CCC-SSH-Probe-*').Count -eq 0) 'Failed probe files remained'
+}
+Test-Case 'SYSTEM probe cleanup waits for delayed stop before unregistering' {
+    $state = New-SetupFixture 'system-probe-delayed-stop'
+    $state.ProbeAsOtherUser = $true; $state.DelayedProbeStop = $true
+    Invoke-MockedSetup $state | Out-Null
+    Assert-True ($state.Events -contains 'ProbeStopWait') 'Delayed task stop was not awaited'
+    Assert-True (-not $state.TaskRegistered) 'Stopped task remained registered'
+}
+Test-Case 'unconfirmed SYSTEM task stop preserves protected files and refuses authorization' {
+    $state = New-SetupFixture 'system-probe-stop-failure'
+    $state.ProbeAsOtherUser = $true; $state.FailProbeStop = $true
+    $before = Get-LiveFixtureState $state
+    $result = Invoke-MockedSetup $state -Failure
+    Assert-True ($result.Error -match 'Unable to clean up temporary SYSTEM probe') ('Wrong cleanup refusal: ' + $result.Error)
+    Assert-True ($state.TaskRegistered) 'Running task was unregistered before confirmed stop'
+    Assert-True (@(Get-ChildItem -LiteralPath (Join-Path $state.ProgramData 'ssh') -Filter 'Oneline-CCC-SSH-Probe-*').Count -eq 1) 'Protected files deleted while task could still run'
+    Assert-True ((Get-LiveFixtureState $state) -ceq $before) 'Unconfirmed stop installed authorization or changed service/firewall'
 }
 # FINAL_RESULTS
 Write-Output ('Results: ' + $script:passed + ' passed; ' + $script:failures.Count + ' failed. Artifacts: ' + $root)

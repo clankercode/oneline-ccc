@@ -207,3 +207,56 @@ mode 0700. Evidence:
 `.cache/review-private-stage-242659fa72a64a599570da7b86846b72`.
 Windows ACL/.NET Framework sharing behavior remains native CI evidence; no broad
 review or test round was run.
+
+## SYSTEM SSH effective-policy probe review
+
+Privileged probe targeted review is now complete; the cleanup finding below is resolved. Protected directory,
+wrapper/output ACLs, fixed executable, individually quoted file arguments, and
+validated account context look sound on inspection. Candidate policy is already
+restricted before use. The registered task has no trigger and a one-minute
+execution limit; completion polling is bounded and happens before authorization.
+
+### Resolved: task shutdown was requested but not confirmed before file removal
+
+Location: `Get-SshEffectivePolicy` finally block.
+
+The current code checks Running once, requests Stop, immediately unregisters,
+then deletes wrapper/output files. It never observes that shutdown completed;
+Queued state is omitted. A successful stop request is not evidence that no
+SYSTEM action can still use those paths. This conflicts with the stated cleanup
+invariant and leaves uncertain process/file lifetime on timeout.
+
+Suggested fix: request stop for the owned temporary task, boundedly confirm it
+has left Running/Queued before unregistering/deleting files, and retain protected
+files with an explicit cleanup error if termination cannot be proved. Add delayed
+stop and queued-state fixture checks. Native task/login verification remains CI
+evidence; no SYSTEM task was executed by this reviewer on Linux.
+
+## Final SYSTEM-probe cleanup closure
+
+Frozen cleanup now handles Running and Queued, requests Stop, polls up to ten
+seconds, and requires Ready/Disabled before unregistering or deleting protected
+probe files. Failed or unconfirmed shutdown preserves those files/task and
+returns an explicit cleanup error before authorization. This closes the finding.
+
+Independent current SSH harness: **83 passed, zero failed**, including delayed
+stop confirmation and stop-failure preservation/refusal. Evidence:
+`.cache/ssh-tests-21da45c1e6dd433186affe4f6274db43`.
+No unresolved Important or Critical finding from this focused review. Actual
+SYSTEM scheduled-task and login execution remains the next native CI validation;
+this reviewer executed mocks on Linux only.
+
+## Final working-directory and diagnostic delta
+
+Focused review found no new Important or Critical issue. App-server CWD now uses
+the stable scratch parent while CODEX_HOME still selects the private GUID stage;
+both initial and fresh-validation processes use this pairing. Cleanup diagnostics
+expose fixed categories, counts, and whitelisted process/transport kinds, not
+paths, command lines, or credentials. Targeted parent-PID CIM snapshots only
+observe processes; they do not kill descendants. Start-time comparison reduces
+PID-reuse misclassification in later diagnostic counts.
+
+Independent actual Stop-function injection made both descendant diagnostics and
+input Close throw. Shutdown still performed two waits, kill/reap, and disposal,
+while marking the snapshot partial. No broader test round or native CIM execution
+was run. Existing native Windows CI remains the runtime verification gate.

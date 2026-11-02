@@ -26,32 +26,24 @@ $baselineSshRule = Get-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenS
 if ($baselineSshRule) { Disable-NetFirewallRule -PolicyStore PersistentStore -Name 'OpenSSH-Server-In-TCP' }
 Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled True -DefaultInboundAction Block
 
-try {
-    & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
-} catch {
-    $setupFailure = $_
-    $diagnosticUser = Get-LocalUser -Name onelinefixture -ErrorAction SilentlyContinue
-    if ($diagnosticUser) {
-        Write-Output ('SSH user-token diagnostic: enabled={0}, userSid={1}, processSid={2}' -f $diagnosticUser.Enabled, $diagnosticUser.SID.Value, [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
-        $diagnosticConfig = Join-Path $env:ProgramData 'ssh\sshd_config'
-        if (-not (Test-Path -LiteralPath $diagnosticConfig)) { $diagnosticConfig = Join-Path $sshRoot 'sshd_config_default' }
-        foreach ($diagnosticUserName in @('onelinefixture', ($env:COMPUTERNAME + '\onelinefixture').ToLowerInvariant())) {
-            $diagnosticErrorAction = $ErrorActionPreference
-            try {
-                $ErrorActionPreference = 'Continue'
-                $diagnosticOutput = @(& (Join-Path $sshRoot 'sshd.exe') -ddd -T -f $diagnosticConfig -C "user=$diagnosticUserName,host=localhost,addr=127.0.0.1" 2>&1)
-                $diagnosticExit = $LASTEXITCODE
-            } finally { $ErrorActionPreference = $diagnosticErrorAction }
-            Write-Output ("SSH user-token probe user={0}, exit={1}" -f $diagnosticUserName, $diagnosticExit)
-            $diagnosticOutput | ForEach-Object { [string]$_ } | Where-Object { $_ -match 'ga_init|unable to generate user token|not running as system|returning process token' } | Write-Output
-        }
-    }
-    throw $setupFailure
-}
+& (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -CreateUser -PublicKeyFile ($keyPath + '.pub') -NonInteractive
 $sshd = Join-Path $sshRoot 'sshd.exe'
 & $sshd -t
 if ($LASTEXITCODE -ne 0) { throw 'Installed sshd configuration is invalid' }
-$effective = @(& $sshd -T -C 'user=onelinefixture,host=localhost,addr=127.0.0.1')
+# Reuse the exact production probe: administrator -T cannot resolve a different
+# user's group token, whereas the real sshd service and this probe run as SYSTEM.
+$helperAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repository 'scripts/setup-ssh-server.ps1'), [ref]$null, [ref]$null)
+$probeDefinitions = @($helperAst.FindAll({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in @('Set-RestrictedAcl', 'Get-SshEffectivePolicy')
+}, $true))
+if ($probeDefinitions.Count -ne 2) { throw 'Production effective-policy probe definitions are missing' }
+$effective = @(& {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $sshRoot = Join-Path $env:ProgramData 'ssh'
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    foreach ($definition in $probeDefinitions) { . ([scriptblock]::Create($definition.Extent.Text)) }
+    Get-SshEffectivePolicy (Join-Path $sshRoot 'sshd_config') 'onelinefixture' (Get-LocalUser -Name onelinefixture).SID.Value
+})
 foreach ($setting in @('passwordauthentication no', 'authenticationmethods publickey', 'pubkeyauthentication yes')) {
     if ($effective -notcontains $setting) { throw 'Effective SSH authentication policy is incorrect' }
 }
@@ -103,3 +95,9 @@ if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($config)) -cne $oldConfig 
 $newRuleNames = @(Get-NetFirewallRule -Name 'Oneline-CCC-SSH-*' | Select-Object -ExpandProperty Name | Sort-Object)
 if (($newRuleNames -join ',') -cne ($oldRuleNames -join ',') -or (Get-Service sshd).Status -ne 'Running') { throw 'Failed setup changed firewall rules or previous service state' }
 Write-Output 'Late SSH setup failure restored authorization, config, ACLs, firewall rules, and running service.'
+
+if (@(Get-ScheduledTask -TaskName 'Oneline-CCC-SSH-Probe-*' -ErrorAction SilentlyContinue).Count -or
+    @(Get-ChildItem -LiteralPath (Join-Path $env:ProgramData 'ssh') -Filter 'Oneline-CCC-SSH-Probe-*').Count) {
+    throw 'Temporary SYSTEM policy probe tasks or files remained after setup/rollback'
+}
+Write-Output 'Temporary SYSTEM policy probe tasks and files were removed.'

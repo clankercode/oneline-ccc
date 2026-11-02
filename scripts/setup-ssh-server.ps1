@@ -141,6 +141,94 @@ function Set-RestrictedAcl([string]$Path, [string]$OwnerSid, [bool]$Directory) {
     }
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
+function Get-SshEffectivePolicy([string]$Configuration, [string]$TargetName, [string]$TargetSid) {
+    $context = "user=$($TargetName.ToLowerInvariant()),host=localhost,addr=127.0.0.1"
+    if ($identity.User.Value -eq $TargetSid -or $identity.User.Value -eq 'S-1-5-18') {
+        $result = @(& $sshd -T -f $Configuration -C $context)
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect effective SSH policy; live config is unchanged.' }
+        return $result
+    }
+    # Windows OpenSSH cannot generate another user's group token from an admin
+    # process. Probe as SYSTEM, as the real sshd service does; never bypass -T.
+    $taskName = 'Oneline-CCC-SSH-Probe-' + [guid]::NewGuid().ToString('N')
+    $probeDirectory = Join-Path $sshRoot $taskName
+    $probeScript = Join-Path $probeDirectory 'probe.ps1'
+    $probeOutput = Join-Path $probeDirectory 'policy.out'
+    $probeError = Join-Path $probeDirectory 'policy.err'
+    $probeDone = Join-Path $probeDirectory 'probe.done'
+    $probeFiles = @($probeScript, $probeOutput, $probeError, ($probeDone + '.tmp'), $probeDone)
+    $registered = $false
+    $scriptText = @'
+param($Executable, $Configuration, $Context, $OutputPath, $ErrorPath, $DonePath)
+$ErrorActionPreference = 'Continue'
+$probeExit = 1
+try {
+    $lines = @(& $Executable -T -f $Configuration -C $Context 2> $ErrorPath)
+    $probeExit = $LASTEXITCODE
+    [IO.File]::WriteAllLines($OutputPath, [string[]]$lines, (New-Object Text.UTF8Encoding($false)))
+} finally {
+    [IO.File]::WriteAllText(($DonePath + '.tmp'), [string]$probeExit)
+    [IO.File]::Move(($DonePath + '.tmp'), $DonePath)
+}
+exit $probeExit
+'@
+    try {
+        New-Item -ItemType Directory -Path $probeDirectory | Out-Null
+        Set-RestrictedAcl $probeDirectory 'S-1-5-32-544' $true
+        foreach ($path in @($probeScript, $probeOutput, $probeError)) {
+            [IO.File]::WriteAllText($path, '', $utf8)
+            Set-RestrictedAcl $path 'S-1-5-32-544' $false
+        }
+        [IO.File]::WriteAllText($probeScript, $scriptText, $utf8)
+        # Windows file names cannot contain double quotes; the context contains
+        # only a validated local account name and fixed connection attributes.
+        $quoted = @($probeScript, $sshd, $Configuration, $context, $probeOutput, $probeError, $probeDone) | ForEach-Object { '"' + $_ + '"' }
+        $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + ($quoted -join ' ')
+        $action = New-ScheduledTaskAction -Execute (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument $arguments
+        $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
+        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings | Out-Null
+        $registered = $true
+        Start-ScheduledTask -TaskName $taskName
+        $deadline = [DateTime]::UtcNow.AddSeconds(55)
+        while (-not (Test-Path -LiteralPath $probeDone)) {
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'SYSTEM SSH policy probe timed out; no authorization installed.' }
+            Start-Sleep -Milliseconds 200
+        }
+        if ([IO.File]::ReadAllText($probeDone).Trim() -ne '0') { throw 'SYSTEM SSH effective-policy probe failed; no authorization installed.' }
+        return [IO.File]::ReadAllLines($probeOutput)
+    } finally {
+        # Do not remove code/output while a SYSTEM task could still use it.
+        if ($registered) {
+            $cleanupFailures = @()
+            try {
+                $taskState = [string](Get-ScheduledTask -TaskName $taskName).State
+                if ($taskState -in @('Running', 'Queued')) {
+                    Stop-ScheduledTask -TaskName $taskName
+                    $stopDeadline = [DateTime]::UtcNow.AddSeconds(10)
+                    do {
+                        $taskState = [string](Get-ScheduledTask -TaskName $taskName).State
+                        if ($taskState -notin @('Running', 'Queued')) { break }
+                        if ([DateTime]::UtcNow -ge $stopDeadline) { throw 'SYSTEM probe task did not stop within its cleanup deadline.' }
+                        Start-Sleep -Milliseconds 200
+                    } while ($true)
+                }
+                if ($taskState -notin @('Ready', 'Disabled')) { throw 'Cannot confirm the SYSTEM probe task has stopped.' }
+            } catch { $cleanupFailures += 'stop task' }
+            if (-not $cleanupFailures.Count) {
+                try { Unregister-ScheduledTask -TaskName $taskName -Confirm:$false }
+                catch { $cleanupFailures += 'unregister task' }
+            }
+            if ($cleanupFailures.Count) {
+                throw "Unable to clean up temporary SYSTEM probe '$taskName' ($($cleanupFailures -join ', ')); no authorization installed. Inspect this task and its protected files."
+            }
+        }
+        foreach ($path in $probeFiles) {
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        }
+        if (Test-Path -LiteralPath $probeDirectory) { Remove-Item -LiteralPath $probeDirectory -Force }
+    }
+}
 function Assert-NoReparse([string]$Path) {
     $current = $Path
     while ($current) {
@@ -350,8 +438,7 @@ try {
     } finally { if (Test-Path -LiteralPath $keyCheck) { Remove-Item -LiteralPath $keyCheck -Force } }
     & $sshd -t -f $candidate
     if ($LASTEXITCODE -ne 0) { throw 'sshd.exe -t rejected candidate configuration; live config is unchanged.' }
-    $effective = @(& $sshd -T -f $candidate -C "user=$($UserName.ToLowerInvariant()),host=localhost,addr=127.0.0.1")
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect effective SSH policy; live config is unchanged.' }
+    $effective = @(Get-SshEffectivePolicy $candidate $UserName $userSid)
     $effectivePorts = @($effective | Where-Object { $_ -match '^port ' })
     $otherListeners = @($effective | Where-Object { $_ -match '^listenaddress ' -and $_ -notmatch ':22$' })
     if ($effectivePorts.Count -ne 1 -or $effectivePorts[0] -ne 'port 22' -or $otherListeners.Count) {
