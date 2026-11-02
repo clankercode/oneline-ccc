@@ -1,21 +1,28 @@
 # Protected configuration transactions
 
-`New(root)`, `Read(path)`, `Apply(ctx, writes)` and `Recover(ctx)` implement a
+`New(root)`, `Read(path)`, `ReadUncreated(path)`, `Apply(ctx, writes)` and
+`Recover(ctx)` implement a
 bounded local-filesystem transaction engine. Use one stable private account state
 root across all application invocations. Never locate that root in a configuration
 file's replacement path. Target parent directories must already exist.
 
 `Read` rejects symlinks in any component, nonregular files, special permission
 bits and snapshots over 5 MiB. `Before` and the initially unchanged `Data` are
-independent copies. `Apply` refuses duplicate normalized paths and at most accepts
+independent copies. `ReadUncreated` additionally allows missing ancestor
+directories without creating them. It verifies every existing ancestor: on POSIX
+these must belong to the current account or root and lack group/other write bits;
+on Windows every existing component is checked through a non-following native
+handle for reparse points. Existing targets still use the strict Read rules.
+
+`Apply` refuses duplicate normalized paths and at most accepts
 128 writes, each with both input and output bounded to 5 MiB. Output is supplied
 by the caller; native schema validation and preservation of foreign syntax belong
 to that caller. No-op destinations retain their inode and modification time.
 
-`PrivateDir(path)` creates missing directories as 0700 or verifies existing
-owner-only directories. It refuses to adopt or chmod insecure existing directories.
+`PrivateDir(path)` creates missing directories as 0700 on POSIX (a protected
+restricted DACL on Windows) or verifies existing private directories. It refuses to adopt or chmod insecure existing directories.
 `PrivateFile(path, data)` uses the same rules for private parents and creates a
-bounded 0600 file exclusively. Existing files, including empty files and symlinks,
+bounded 0600 file exclusively (the same restricted file DACL on Windows). Existing files, including empty files and symlinks,
 are never overwritten. A filesystem failure can leave an incomplete new private
 file; the helper returns an error and does not promise transaction semantics.
 
@@ -27,7 +34,7 @@ lockfiles must be owned private regular files with a single hard link.
 
 Each operation has a private `txn-<id>` directory, durable JSON intent without
 config content, and exact private `<index>.before` backups for existing targets.
-Same-directory stages start at 0600. Their final POSIX mode is synced before
+Same-directory stages start private. Their final POSIX mode is synced before
 replacement. Stages and originals are rechecked after hooks and immediately before
 replacement; the target's parent directory is synced after rename. Backups remain
 available after success. Mode bits survive replacement and rollback; ownership,
@@ -64,11 +71,46 @@ The unexported `Store.checkpoint` fault hook uses these logical durable boundari
 - `before-rollback:i`, `rollback-replaced:i`, `restored:i`, `rolled-back`
 
 Linux has native unit/race verification. macOS shares the POSIX implementation
-and has a compilation check only. Windows and other platforms return
-`ErrUnsupported` before creating state, locks, stages or targets. Windows
-owner-only ACL, reparse and sharing behavior are not implemented or claimed.
+and has compilation checks only. Windows uses x/sys/windows with a deliberately
+narrow native policy, compiled here with platform-specific tests for parent CI:
 
-Use local trusted POSIX filesystems only. Advisory locks cannot exclude foreign
+- New directories/files, journals, backups and stable locks are created with the
+  current account as owner and a protected DACL granting full access only to that
+  account, SYSTEM and Administrators. Directories have object/container inheritance
+  flags; files have no inheritance flags. Existing broad or custom ACLs are refused,
+  never silently narrowed. The accepted policy is regenerated exactly on replace;
+  no new field in the public Write or journal is necessary for that fixed policy.
+- Windows transaction target parents must already satisfy this private directory
+  policy. System ancestors are checked for reparses, without requiring a private
+  DACL on system roots such as C:\Users. Existing ordinary inherited configurations
+  require explicit future migration; the engine does not adopt them implicitly.
+- Every existing path component is opened with OPEN_REPARSE_POINT, and inspected
+  for all reparse attributes, including junctions/cloud links. Opens used for data
+  reads additionally verify owner, protected DACL, file type, attributes, link count
+  and streams on that very handle. Paths must be local drive-qualified paths;
+  UNC/device namespaces, ADS syntax, DOS device names and trailing-dot/space aliases
+  are refused. Duplicate/reserved paths and parent locks use Windows case folding.
+- Snapshot Mode is 0600 as an API marker for the accepted native security policy;
+  POSIX chmod bits are not used as Windows security evidence. Custom ACLs, readonly,
+  compressed, encrypted, sparse, hidden and other nonordinary attributes, extra
+  hard links, named streams and unsupported stream queries fail closed. The ordinary
+  data stream is checked through NtQueryInformationFile on the open file handle.
+- File FlushFileBuffers and same-volume write-through MoveFileEx replacements are
+  used. Sharing/lock errors receive at most eight attempts separated by 20 ms, with
+  destination drift and cancellation checked on every attempt. There is no fallback
+  to truncate-in-place. Windows directory sync verifies the handle; it cannot offer
+  an unprivileged POSIX directory-fsync guarantee. Power-loss persistence is unproven.
+- This slice preserves the supported owner/DACL policy, not arbitrary SACL/audit
+  metadata, extended attributes or timestamps. It targets ordinary private NTFS
+  configuration files; native CI must validate the supported contract before any
+  Windows release claim. Other unsupported OS targets still return ErrUnsupported.
+
+Windows descriptor/path policy tests run under an isolated Wine prefix here.
+Wine's filesystem translation drops SE_DACL_PROTECTED and changes ACEs, so native
+filesystem tests intentionally fail shut there. Wine and cross-compilation do not
+establish native Windows ACL, junction, sharing or recovery behavior.
+
+Use local trusted filesystems only. Advisory locks cannot exclude foreign
 editors. Hash check plus rename is not a universal filesystem compare-and-swap;
 a foreign writer or directory renamer can still race the final system calls.
 Close active config editors before applying. This engine does not defend against

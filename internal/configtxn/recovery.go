@@ -102,7 +102,7 @@ func (s *Store) rollback(ctx context.Context, j *journal) (Result, error) {
 			continue
 		}
 		if e.State == "replacing" || e.State == "applied" || e.State == "restoring" {
-			err := s.restore(j, i)
+			err := s.restore(ctx, j, i)
 			if err != nil {
 				if !errors.Is(err, ErrConflict) && !errors.Is(err, ErrUnsafe) {
 					return s.unknown(j), err
@@ -151,7 +151,7 @@ func (s *Store) rollback(ctx context.Context, j *journal) (Result, error) {
 	return s.receipt(j), nil
 }
 
-func (s *Store) restore(j *journal, i int) error {
+func (s *Store) restore(ctx context.Context, j *journal, i int) error {
 	e := &j.Entries[i]
 	now, err := Read(e.Path)
 	if err != nil {
@@ -218,7 +218,7 @@ func (s *Store) restore(j *journal, i int) error {
 		return ErrConflict
 	}
 	if e.Existed {
-		if err = replace(stage(j, i, true), e.Path); err != nil {
+		if err = replace(ctx, stage(j, i, true), e.Path); err != nil {
 			return err
 		}
 	} else {
@@ -246,7 +246,7 @@ func cleanupStage(path, hash string) error {
 	if err != nil {
 		return ErrIO
 	}
-	if !w.Existed || !owned(info) || digest(w.Before) != hash {
+	if !w.Existed || !ownedPath(path, info) || digest(w.Before) != hash {
 		return ErrConflict
 	}
 	if os.Remove(path) != nil {
@@ -256,16 +256,16 @@ func cleanupStage(path, hash string) error {
 }
 
 func chmodSync(path string, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_RDONLY|safeOpenFlags(), 0)
+	f, err := openMode(path)
 	if err != nil {
 		return ErrIO
 	}
 	defer f.Close()
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || !owned(info) {
+	if err != nil || !info.Mode().IsRegular() || !ownedPath(path, info) {
 		return ErrUnsafe
 	}
-	if f.Chmod(mode) != nil || f.Sync() != nil {
+	if setMode(f, mode) != nil || f.Sync() != nil {
 		return ErrIO
 	}
 	return nil
@@ -277,7 +277,7 @@ func verifyReplacement(path, hash string, mode os.FileMode) error {
 		return ErrConflict
 	}
 	info, err := os.Lstat(path)
-	if err != nil || !w.Existed || !owned(info) || w.Mode.Perm() != mode || digest(w.Before) != hash {
+	if err != nil || !w.Existed || !ownedPath(path, info) || w.Mode.Perm() != mode || digest(w.Before) != hash {
 		return ErrConflict
 	}
 	return nil

@@ -30,10 +30,10 @@ func (s *Store) validate(writes []Write) ([]Write, error) {
 			return nil, err
 		}
 		w.Path = p
-		if seen[p] || reserved(s.Root, p) || (!w.Existed && len(w.Before) != 0) || w.Mode&^os.FileMode(0777) != 0 {
+		if seen[pathKey(p)] || reserved(s.Root, p) || (!w.Existed && len(w.Before) != 0) || w.Mode&^os.FileMode(0777) != 0 {
 			return nil, ErrUnsafe
 		}
-		seen[p] = true
+		seen[pathKey(p)] = true
 		if len(w.Before) > maxSnapshot || len(w.Data) > maxSnapshot {
 			return nil, ErrLimit
 		}
@@ -157,7 +157,7 @@ func (s *Store) Apply(ctx context.Context, writes []Write) (Result, error) {
 		if err = expected(w); err != nil {
 			return s.failed(j, err)
 		}
-		if err = replace(stage(j, i, false), w.Path); err != nil {
+		if err = replace(ctx, stage(j, i, false), w.Path); err != nil {
 			return s.failed(j, err)
 		}
 		if err = s.hitEntry("replaced", i); err != nil {
@@ -219,14 +219,20 @@ func verifyStage(j *journal, i int) error {
 	}
 	return nil
 }
-func replace(src, dst string) error {
+func replace(ctx context.Context, src, dst string) error {
 	if err := checkPath(src, false); err != nil {
 		return err
 	}
 	if err := checkPath(dst, true); err != nil {
 		return err
 	}
-	if os.Rename(src, dst) != nil {
+	if err := renameFile(ctx, src, dst); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, ErrConflict) {
+			return ErrConflict
+		}
 		return ErrIO
 	}
 	return syncDir(filepath.Dir(dst))

@@ -29,19 +29,25 @@ func canonical(path string) (string, error) {
 	if err != nil {
 		return "", ErrUnsafe
 	}
+	if err = platformPath(p); err != nil {
+		return "", err
+	}
 	return p, nil
 }
 
 // Check every component rather than accepting symlinks which happen to resolve
 // inside the approved tree. Missing destination is allowed, missing parents are not.
 func checkPath(path string, absent bool) error {
+	if err := platformPath(path); err != nil {
+		return err
+	}
 	for p := path; ; p = filepath.Dir(p) {
 		info, err := os.Lstat(p)
 		if err != nil {
 			if !(absent && p == path && errors.Is(err, os.ErrNotExist)) {
 				return ErrUnsafe
 			}
-		} else if info.Mode()&os.ModeSymlink != 0 || (p != path && !info.IsDir()) {
+		} else if info.Mode()&os.ModeSymlink != 0 || (p != path && !info.IsDir()) || checkComponent(p, info) != nil {
 			return ErrUnsafe
 		}
 		if filepath.Dir(p) == p {
@@ -74,13 +80,16 @@ func Read(path string) (Write, error) {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeType != 0 || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
 		return Write{}, ErrUnsafe
 	}
-	f, err := os.OpenFile(p, os.O_RDONLY|safeOpenFlags(), 0)
+	f, err := openRead(p)
 	if err != nil {
+		if errors.Is(err, ErrUnsafe) {
+			return Write{}, ErrUnsafe
+		}
 		return Write{}, ErrIO
 	}
 	defer f.Close()
 	opened, err := f.Stat()
-	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() {
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || validateHandle(f) != nil {
 		return Write{}, ErrUnsafe
 	}
 	if opened.Size() > maxSnapshot {
@@ -98,7 +107,7 @@ func Read(path string) (Write, error) {
 		return Write{}, ErrConflict
 	}
 	w.Existed = true
-	w.Mode = opened.Mode().Perm()
+	w.Mode = snapshotMode(opened)
 	w.Before = b
 	w.Data = bytes.Clone(b)
 	return w, nil
@@ -117,29 +126,17 @@ func expected(w Write) error {
 
 func digest(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 
-func syncDir(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return ErrIO
-	}
-	defer f.Close()
-	if f.Sync() != nil {
-		return ErrIO
-	}
-	return nil
-}
-
 func writeExclusive(path string, b []byte, mode os.FileMode) error {
 	if err := checkPath(path, true); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|safeOpenFlags(), 0600)
+	f, err := createFile(path)
 	if err != nil {
 		return ErrIO
 	}
 	_, err = f.Write(b)
 	if err == nil {
-		err = f.Chmod(mode)
+		err = setMode(f, mode)
 	}
 	if err == nil {
 		err = f.Sync()
@@ -163,7 +160,7 @@ func ensurePrivateDir(path string) error {
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		if err = os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		if err = createDir(path); err != nil && !errors.Is(err, os.ErrExist) {
 			return ErrIO
 		}
 		if err = syncDir(filepath.Dir(path)); err != nil {
@@ -171,7 +168,7 @@ func ensurePrivateDir(path string) error {
 		}
 		info, err = os.Lstat(path)
 	}
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 || !owned(info) {
+	if err != nil || !info.IsDir() || !privateMetadata(path, info, true) {
 		return ErrUnsafe
 	}
 	return checkPath(path, false)
@@ -182,7 +179,7 @@ func privateFile(path string) error {
 		return err
 	}
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || !owned(info) {
+	if err != nil || !info.Mode().IsRegular() || !privateMetadata(path, info, false) {
 		return ErrUnsafe
 	}
 	return nil
@@ -192,7 +189,7 @@ func readPrivate(path string, limit int64) ([]byte, error) {
 	if err := privateFile(path); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|safeOpenFlags(), 0)
+	f, err := openRead(path)
 	if err != nil {
 		return nil, ErrIO
 	}

@@ -1,6 +1,7 @@
 package configtxn
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -46,7 +47,7 @@ func (s *Store) save(j *journal) error {
 	if err = ensurePrivateDir(d); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(d, "journal-")
+	f, err := privateTemp(d, "journal-")
 	if err != nil {
 		return ErrIO
 	}
@@ -63,7 +64,7 @@ func (s *Store) save(j *journal) error {
 	if err = checkPath(filepath.Join(d, "journal.json"), true); err != nil {
 		return err
 	}
-	if os.Rename(tmp, filepath.Join(d, "journal.json")) != nil {
+	if renameFile(context.Background(), tmp, filepath.Join(d, "journal.json")) != nil {
 		return ErrIO
 	}
 	return syncDir(d)
@@ -79,7 +80,7 @@ func (s *Store) begin(writes []Write) (*journal, error) {
 		j.Entries = append(j.Entries, entry{Path: w.Path, Existed: w.Existed, Mode: uint32(w.Mode.Perm()), BeforeHash: digest(w.Before), AfterHash: digest(w.Data), State: "pending"})
 	}
 	// Never reuse an existing operation directory, including on ID collision.
-	if err := os.Mkdir(s.operation(j.ID), 0700); err != nil {
+	if err := createDir(s.operation(j.ID)); err != nil {
 		return nil, ErrIO
 	}
 	if err := syncDir(s.Root); err != nil {
@@ -119,10 +120,10 @@ func (s *Store) load(id string) (*journal, error) {
 	seen := map[string]bool{}
 	for _, e := range j.Entries {
 		p, err := canonical(e.Path)
-		if err != nil || p != e.Path || seen[p] || reserved(s.Root, p) || !validHex(e.BeforeHash, 32) || !validHex(e.AfterHash, 32) || e.Mode > 0777 {
+		if err != nil || p != e.Path || seen[pathKey(p)] || reserved(s.Root, p) || !validHex(e.BeforeHash, 32) || !validHex(e.AfterHash, 32) || e.Mode > 0777 {
 			return nil, ErrJournal
 		}
-		seen[p] = true
+		seen[pathKey(p)] = true
 		switch e.State {
 		case "pending", "ready", "replacing", "applied", "restoring", "restored", "conflict":
 		default:
@@ -146,8 +147,8 @@ func (s *Store) receipt(j *journal) Result {
 }
 
 func reserved(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) || filepath.Base(path) == ".ccc-configtxn.lock" || strings.HasPrefix(filepath.Base(path), ".ccc-")
+	rel, err := filepath.Rel(pathKey(root), pathKey(path))
+	return err != nil || rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) || pathKey(filepath.Base(path)) == ".ccc-configtxn.lock" || strings.HasPrefix(pathKey(filepath.Base(path)), ".ccc-")
 }
 
 // Checkpoint errors model process interruption: leave durable intent intact and

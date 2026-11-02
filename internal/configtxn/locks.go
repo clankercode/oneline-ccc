@@ -25,6 +25,9 @@ func lock(ctx context.Context, path string) (*flock.Flock, error) {
 	if err := checkPath(path, true); err != nil {
 		return nil, err
 	}
+	if err := prepareLock(path); err != nil {
+		return nil, err
+	}
 	if _, err := os.Lstat(path); err == nil {
 		if err = privateFile(path); err != nil {
 			return nil, err
@@ -51,7 +54,7 @@ func lock(ctx context.Context, path string) (*flock.Flock, error) {
 func lockParents(ctx context.Context, paths []string) (heldLocks, error) {
 	set := map[string]bool{}
 	for _, p := range paths {
-		set[filepath.Dir(p)] = true
+		set[pathKey(filepath.Dir(p))] = true
 	}
 	parents := make([]string, 0, len(set))
 	for p := range set {
@@ -61,6 +64,10 @@ func lockParents(ctx context.Context, paths []string) (heldLocks, error) {
 	var locks heldLocks
 	for _, p := range parents {
 		if err := checkPath(p, false); err != nil {
+			locks.close()
+			return nil, err
+		}
+		if err := targetParent(p); err != nil {
 			locks.close()
 			return nil, err
 		}

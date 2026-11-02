@@ -52,7 +52,7 @@ func TestPrivateStagingHelpers(t *testing.T) {
 }
 
 func TestUnsupportedPlatformRefusesBeforeMutation(t *testing.T) {
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		t.Skip("native unsupported-platform test")
 	}
 	d := t.TempDir()
