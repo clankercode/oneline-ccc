@@ -335,3 +335,41 @@ Ubuntu fallback on this Arch host; no package manager or OS-library installer is
 invoked automatically. Exact PNG reproducibility requires matching pinned
 Chromium, fonts, metrics and host glyph fallback. The manifest records enough
 data to distinguish a changed app from a changed capture environment.
+
+## Composed Dashboard and candidate Models evidence
+
+Composed prepared captures export `production_projection`: actual production
+layout/bodyLine rows, shell row counts, and client identity links from the real
+`clientRows` first row into the actual body. The checker binds visible body row
+order and focused/selected projections to the terminal frame, checks management
+and full-name-to-truncated-name identity, and preserves the existing transition
+and baseline/Pi negative controls. It does not render replacement client labels.
+The old single-label branch remains for unchanged historical observations.
+Visible active-filter indicators and query prefixes are checked independently;
+a truncated query still has only model-observed full identity. Preparation
+remains direct Update, followed by the separate real PTY key protocol.
+
+Models adds three **inline panels**, not modals: `--variant inline-model`,
+`inline-budget`, `inline-tier`, plus `advanced-expanded` and
+`advanced-collapsed`, all with `--scenario models`. They fail closed on source
+without `modelsForms`/field selectors. Read-only scalar observation preserves
+compilation on that older source. Actual selected client, focused choice,
+unchanged draft, production body and disclosure marker must agree with native
+View/frame. Navigation setup does not establish chooser commit/cancel PTY
+journeys. New Models controls run via `A2C_MODELS_MANIFESTS` with
+`node --test tests/tui-visual/models.test.mjs`.
+
+A2c candidate evidence is pinned to original Models production `014267d`, with
+only provisional tool/helper inputs overlaid in an isolated candidate worktree.
+It is not a claim that Models has been integrated into the tool branch. Checked
+images cover model/budget/tier panels at80x24, and tier/Advanced expanded and
+collapsed at40x12. At40x12 model/budget titles were outside the captured View:
+those attempts fail their existing visible-title predicate and remain failures.
+No predicate was relaxed to count them as complete selector captures.
+
+Discovery empty/error/busy/reordered/removed/same-ID-different-source captures
+remain open. The current fakeBackend supplies only one fixed discovery result;
+a follow-up needs an explicit queued fake-backend fixture and a bounded busy
+command barrier, with stable source-qualified identity and unchanged draft
+checks. No supported variant or visual PASS is claimed for those states. Full
+size/theme coverage and independent product visual acceptance remain open.
