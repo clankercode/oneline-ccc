@@ -17,6 +17,7 @@ work and full screen-by-screen visual campaign are still in progress.
 | Terminal input lifetime | `b8dab03`, `6c50a7a` | Cancellation-aware event dispatch and joined decoder/raw reader before Close on Quit, Kill and terminal release; [independent re-review and provenance](../review/native-terminal-input-rereview.md) |
 | Startup and error ownership | `28576af`, `418283a` | Deferred cleanup for partial setup, returned errors and panics; serialized resource ownership; observed cancellation checked before Init outside the ownership lock; [review](../review/native-startup-review.md) and [resolved cancellation re-review](../review/native-startup-rereview.md). Failed-reader constructor descriptors and native platform proof remain open |
 | Secondary screen, layer and editor references | Reviewed source `46b50cd`, verifier `f285ff8`; source/docs integration follows `1d75e8b` | Six secondary design targets, eight layers and seven editors; 14 integrated browser journeys pass. [Reference verification, independent reviews and pending CI wiring](tui-native-references.md); these are design targets, not native acceptance |
+| Native capture integrity and semantics | `cb936e6` | Reviewed opacity, state/outcome, provenance, cleanup and legacy-proof checks; controller fault, real-legacy and tagged TUI race gates pass. [Evidence and remaining integration/type/coverage limits](tui-native-captures.md); no visual PASS |
 
 The terminal correction uses licensed, pinned module mirrors because the checked
 upstream revisions did not contain the required dispatch/join fix. The isolated
@@ -74,9 +75,10 @@ CI and native terminal evidence have their own status.
 - New shared shell and client Dashboard composition, then every other screen,
   editor and overlay, still need the mandatory alternating visual/source review
   against pinned mockups on the exact final installed revision.
-- Capture-integrity failures remain under fix/re-review. Reviewed secondary
-  references are now available; compare every corresponding native surface with
-  those targets. Existing captures retain their original provenance.
+- Reviewed capture tooling is integrated; the inherited observation-type guard,
+  integrated More semantics and compact draft/filter fixture coverage remain
+  follow-ups. Reviewed secondary references are available; compare every native
+  surface with those targets. Existing captures retain their original provenance.
 - Narrow Help title/current-page visibility is still a concrete readability case.
 - Bounded startup/error cleanup is integrated. Failed-reader constructor-private
   descriptors, native platform failures and uncooperative external I/O remain

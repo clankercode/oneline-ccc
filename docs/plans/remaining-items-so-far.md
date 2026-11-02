@@ -371,6 +371,10 @@ that the fixes are absent or that the rejected experience is now approved.
    or removing staging files; determine whether the failure is in ownership,
    process-state observation or the fixture. A prior green run or a rerun alone
    does not explain or close this failure.
+   Keep diagnostic fixture cleanup within its ownership lifetime: complete all
+   required group signals before releasing the final process identity anchor,
+   and retire redundant deferred signaling after explicit cleanup. A recycled
+   numeric PGID must never be treated as continued ownership of the old group.
 
 3. [ ] **Ship the native app through one-line installers.** Add Windows, macOS and
    Linux commands that download the appropriate binary, install it and launch it
