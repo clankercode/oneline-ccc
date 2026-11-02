@@ -26,12 +26,18 @@ with tempfile.TemporaryDirectory(prefix='evidence-faults-', dir=scratch) as temp
         ('palette-empty','palette','baseline','no-results','80x24'),
         ('review-last','review','baseline','last-page','40x12'),
         ('review-ack','review','baseline','acknowledged','40x12'),
+        ('more-first','more','baseline','baseline','40x12'),
+        ('more-last','more','baseline','last-item','40x12'),
+        ('pending','dashboard','parity','pending-focus','40x12'),
+        ('filter-match','dashboard','parity','filter-match','40x12'),
+        ('filter-unicode','dashboard','unicode','filter-unicode','40x12'),
     ]:
         path = pathlib.Path(temp) / name
         subprocess.run([sys.executable,str(HERE/'capture.py'),'capture','--scenario',scenario,'--state',state,
                         '--variant',variant,'--sizes',size,'--output',str(path)],cwd=ROOT,check=True)
         scenes[name] = str(path/'manifest.json')
     env = dict(os.environ, A2_TEST_MANIFEST=str(output/'manifest.json'),
-               A2_SCENE_MANIFESTS=json.dumps(scenes), PYTHONDONTWRITEBYTECODE='1')
+               A2_SCENE_MANIFESTS=json.dumps(scenes), A2B_BASELINE_MANIFEST=str(output/'manifest.json'),
+               A2B_UNICODE_BASELINE_MANIFEST=scenes['unicode'], A2B_SCENE_MANIFESTS=json.dumps({key:scenes[key] for key in ['more-first','more-last','pending','filter-match','filter-unicode']}), PYTHONDONTWRITEBYTECODE='1')
     subprocess.run([sys.executable,'-m','unittest','discover','-s',str(HERE),'-p','test_*.py','-v'], cwd=ROOT,env=env,check=True)
-    subprocess.run(['node','--test',str(HERE/'render.test.mjs'),str(HERE/'semantic.test.mjs'),str(HERE/'legacy.test.mjs')], cwd=ROOT,env=env,check=True)
+    subprocess.run(['node','--test',str(HERE/'render.test.mjs'),str(HERE/'semantic.test.mjs'),str(HERE/'legacy.test.mjs'),str(HERE/'a2b.test.mjs'),str(HERE/'prepared.test.mjs')], cwd=ROOT,env=env,check=True)

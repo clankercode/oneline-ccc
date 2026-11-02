@@ -31,7 +31,9 @@ function scene(entry) {
 
 // State predicates use actual serialized clients, never the echoed request.
 function fixtureState(entry,frame) {
-  const clients=entry.fixture.clients || [], c=clients[0];
+  const observed=entry.fixture.clients;
+  if(observed!==null && !Array.isArray(observed))throw new Error('Fixture clients must be an array or helper nil-slice null; invalid client observation shape');
+  const clients=observed ?? [], c=clients[0];
   const fail=()=>{throw new Error(`Fixture client state ${entry.state} not reached`);};
   if(entry.state==='empty'){if(clients.length)fail();return;}
   if(!c)fail();
@@ -52,6 +54,92 @@ function fixtureState(entry,frame) {
   }
 }
 
+function moreOutcome(entry,frame,o) {
+  const more=o.more, ds=more?.destinations;
+  if(!Array.isArray(ds) || !ds.length || ds.some(d=>!d.label || d.id!==`nav:${d.label}`)
+    || new Set(ds.map(d=>d.id)).size!==ds.length)throw new Error('More production destination observations missing');
+  // These bounded specimens show the complete menu. Bind its order to actual
+  // terminal rows so truncating observations cannot redefine first/last.
+  const rows=frame.text.filter(line=>/^(?:> | {2})\S/.test(line)).map(line=>line.slice(2).trimEnd());
+  if(JSON.stringify(rows)!==JSON.stringify(ds.map(d=>d.label)))throw new Error('More destination rows/order disagree with actual frame');
+  const focused=ds.find(d=>d.id===more.focused_id);
+  if(!focused || focused.label!==more.focused_label || focused.label!==more.enter_screen
+    || !frame.text.some(line=>line.trim()===`> ${focused.label}`))throw new Error('More focused destination disagrees with production frame/Enter');
+  const expected=entry.variant==='baseline'?ds[0]:ds.at(-1);
+  if(more.focused_id!==expected.id)throw new Error(`${entry.variant==='baseline'?'First':'Last'} More destination not reached`);
+}
+
+function preparedDashboard(entry,frame,o) {
+  const p=entry.fixture.preparation,d=o.dashboard,clients=entry.fixture.clients;
+  if(entry.scenario!=='dashboard' || p?.kind!=='prepared-fixture-state'
+    || p.transport!=='direct production Update; setup keys are not PTY-delivered'
+    || !p.before || !d || JSON.stringify(p.after)!==JSON.stringify(d)
+    || JSON.stringify(p.before)===JSON.stringify(p.after))throw new Error('Prepared fixture provenance/transition missing; setup is not PTY evidence');
+  if(typeof d.production_view!=='string' || d.production_view!==entry.fixture.expected_view?.content
+    || !Array.isArray(d.production_client_controls))throw new Error('Prepared production controls/View missing or disagree with actual frame; recapture required');
+  const ids=clients.map(c=>c.id);
+  if(!ids.includes(d.selected_id) || !d.focused_id?.startsWith('client:') || !ids.includes(d.focused_id.slice(7))
+    || !Array.isArray(d.clients) || d.clients.length!==clients.length)throw new Error('Prepared Dashboard focus/selection observations missing');
+  for(const [i,c] of d.clients.entries()) {
+    if(c.id!==clients[i].id || c.baseline_enabled!==Boolean(clients[i].managed) || typeof c.enabled!=='boolean' || typeof c.baseline_enabled!=='boolean'
+      || !/^[0-9a-f]{64}$/.test(c.draft_sha256) || !/^[0-9a-f]{64}$/.test(c.baseline_sha256)
+      || c.dirty!==(c.draft_sha256!==c.baseline_sha256))throw new Error('Prepared Dashboard draft observations disagree');
+    const matching=(clients[i].id+' '+clients[i].name).toLowerCase().includes(d.filter.toLowerCase());
+    if(c.matching!==matching)throw new Error('Prepared filter matching observations disagree with actual clients');
+  }
+  if(o.filter.query!==d.filter || o.filter.matching_clients!==d.clients.filter(c=>c.matching).length)throw new Error('Prepared filter matching count/query mismatch');
+
+  const inventory=d.unfiltered_production_client_controls;
+  if(!Array.isArray(inventory) || JSON.stringify(inventory.map(c=>c.id))!==JSON.stringify(ids.map(id=>`client:${id}`)))throw new Error('Prepared unfiltered production control inventory missing');
+  const controls=d.production_client_controls,matching=d.clients.filter(c=>c.matching).map(c=>`client:${c.id}`);
+  if(JSON.stringify(controls.map(c=>c.id))!==JSON.stringify(matching)
+    || controls.filter(c=>c.focused).length!==1 || !controls.some(c=>c.id===d.focused_id && c.focused))throw new Error('Prepared focused client must be an actual matching production control');
+  const normalize=s=>s.replace(/\s+/gu,' ').trim(),text=normalize(frame.text.join(' '));
+  for(const control of inventory) {
+    const id=control.id.slice(7),client=clients.find(c=>c.id===id),state=d.clients.find(c=>c.id===id);
+    if(typeof control.label!=='string' || !control.label.includes(client.name)
+      || control.label.slice(0,3)!==(state.enabled?'[x]':'[ ]')
+      || control.label.includes(' | Selected')!==(id===d.selected_id)
+      || control.label.includes(' | Draft')!==state.dirty)throw new Error('Prepared unfiltered production row identity/management/selection/draft differs');
+    if(!state.matching && text.includes(normalize(control.label)))throw new Error('Prepared filtered frame shows an excluded production client control');
+  }
+  for(const control of controls) {
+    const id=control.id.slice(7),client=clients.find(c=>c.id===id),state=d.clients.find(c=>c.id===id);
+    if(typeof control.label!=='string' || typeof control.row_text!=='string'
+      || !control.label.includes(client.name) || control.label.slice(0,3)!==(state.enabled?'[x]':'[ ]')
+      || control.label.includes(' | Selected')!==(id===d.selected_id) || control.selected!==(id===d.selected_id)
+      || control.label.includes(' | Draft')!==state.dirty
+      || normalize(control.row_text)!==normalize((control.focused?'> ':'  ')+control.label))throw new Error('Prepared production control management/selection/draft observations disagree');
+    if((control.focused || control.selected) && !text.includes(normalize(control.row_text)))throw new Error('Prepared focused/selected production row missing from actual frame');
+  }
+  if(entry.variant==='pending-focus') {
+    const c=d.clients.find(c=>c.id==='codex'),claude=d.clients.find(c=>c.id==='claude'),before=p.before.clients?.find(c=>c.id==='codex');
+    if(entry.state!=='parity' || JSON.stringify(p.keys)!==JSON.stringify(['space','down','shift+tab'])
+      || p.before.focused_id!=='client:codex' || p.before.selected_id!=='codex' || !before || before.dirty
+      || d.focused_id!=='client:codex' || d.selected_id!=='claude' || d.filter!=='' || !c?.dirty || claude?.dirty!==false
+      || c.enabled===c.baseline_enabled || before.draft_sha256!==c.baseline_sha256)throw new Error('Pending Codex focus / selected Claude draft transition missing');
+    if(d.clients.some((after,i)=>{
+      const before=p.before.clients?.[i];
+      if(!before || before.id!==after.id || before.baseline_sha256!==after.baseline_sha256 || before.baseline_enabled!==after.baseline_enabled || before.matching!==after.matching)return true;
+      if(after.id==='codex')return before.enabled===after.enabled || before.dirty || before.draft_sha256!==after.baseline_sha256;
+      return JSON.stringify(before)!==JSON.stringify(after);
+    }))throw new Error('Pending management before/after transition changed another client or baseline');
+  } else {
+    if(p.before.selected_id!=='codex' || d.selected_id!==p.before.selected_id
+      || d.clients.some((after,i)=>{
+        const before=p.before.clients?.[i];
+        if(!before)return true;
+        return ['id','enabled','baseline_enabled','dirty','draft_sha256','baseline_sha256'].some(key=>before[key]!==after[key]);
+      }))throw new Error('Prepared filter-only transition changed selected identity or drafts');
+    const selected=/\bSelected: (\S+) \|/.exec(text);
+    if(selected?.[1]!==d.selected_id)throw new Error('Prepared selected identity disagrees with actual frame detail row');
+    const unicode=entry.variant==='filter-unicode',query=unicode?'Codex 模型 — café · a deliberately long client name':'claude',id=unicode?'codex':'claude';
+    if(entry.state!==(unicode?'unicode':'parity') || p.before.filter!=='' || p.query!==query || d.filter!==query
+      || JSON.stringify(p.keys)!==JSON.stringify(['/','paste','enter'])
+      || d.clients.filter(c=>c.matching).length!==1 || !d.clients.find(c=>c.id===id)?.matching)throw new Error('Matching active prepared filter transition missing');
+  }
+}
+
 function semanticOutcomes(entry,frame) {
   const legacy=entry.validation_schema<3 || !entry.validation_schema;
   const hasClients=Object.hasOwn(entry.fixture,'clients');
@@ -64,6 +152,7 @@ function semanticOutcomes(entry,frame) {
   if(!o || !entry.fixture.semantic_before)throw new Error('Missing semantic outcome observations');
   if(JSON.stringify(o)!==JSON.stringify(entry.fixture.semantic_before))throw new Error('Semantic outcome changed after actual PTY key delivery');
   const text=frame.text.join('\n');
+  if(entry.scenario==='more')moreOutcome(entry,frame,o);
   if(entry.scenario==='help' || entry.scenario==='review') {
     const match=/Page\s*(\d+)\s*of\s*(\d+)/.exec(text),page=o.page;
     if(!page || !Number.isInteger(page.number) || !Number.isInteger(page.total) || page.number<1 || page.number>page.total
@@ -73,6 +162,10 @@ function semanticOutcomes(entry,frame) {
   }
   switch(entry.variant) {
     case 'baseline':break;
+    case 'last-item':if(entry.scenario!=='more')throw new Error('Last item requires More');break;
+    case 'pending-focus':case 'filter-match':case 'filter-unicode':
+      preparedDashboard(entry,frame,o);
+      return 'observed-prepared-model-and-frame-controls; setup not PTY-delivered'+(entry.variant==='pending-focus'?'':'; active filter query is model-observed only; rendered cue unproven');
     case 'last-page':if(!['help','review'].includes(entry.scenario))throw new Error('Invalid page variant');break;
     case 'acknowledged':if(entry.scenario!=='review')throw new Error('Invalid acknowledgment variant');break;
     case 'no-results': {

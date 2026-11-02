@@ -31,9 +31,9 @@ SCREENS = ["dashboard", "models", "review", "jobs", "gateway", "service", "repai
 MODALS = ["help", "palette", "discard", "quit", "ssh-confirm", "monitor-install", "monitor-uninstall"]
 EDITORS = ["edit-filter", "edit-model", "edit-budget", "edit-compaction", "edit-endpoint", "edit-credential", "edit-key"]
 SCENARIOS = SCREENS + MODALS + EDITORS
-EXTENSIONS = {"more": {"semantic_id": "nav:More", "availability": "A3 integration required; absent at baseline 0fab61e",
+EXTENSIONS = {"more": {"semantic_id": "nav:More", "availability": "production nav:More required; observed at integration base cb936e6",
                        "modal_inventory_after_integration": 8, "variants": ["baseline", "last-item"]}}
-VARIANTS = {"dashboard": ["no-results"], "palette": ["no-results"], "help": ["last-page"],
+VARIANTS = {"dashboard": ["no-results", "pending-focus", "filter-match", "filter-unicode"], "palette": ["no-results"], "help": ["last-page"],
             "review": ["last-page", "acknowledged"], "edit-budget": ["invalid"],
             "edit-compaction": ["invalid"], "edit-endpoint": ["invalid"], "more": ["last-item"]}
 GAPS = ["loading and asynchronous progress/cancellation", "discovery loading/error/empty",
@@ -41,7 +41,9 @@ GAPS = ["loading and asynchronous progress/cancellation", "discovery loading/err
         "SSH/child handoff and terminal return", "key save/persistent/error and draft focus-return journeys",
         "long multiline repair briefs, editor caret/paste/save/cancel permutations",
         "Windows and macOS terminal evidence", "independent native/reference visual and geometry acceptance",
-        "A3 More menu: eighth modal after integration; pending last-item outcome guard and baseline/last-item captures"]
+        "More first/last evidence is bounded to explicitly captured sizes/themes; complete modal matrix remains open",
+        "Help intermediate pages and complete compact pagination/geometry matrix remain unverified",
+        "Dashboard prepared fixture setup keys are not PTY journey evidence; A3b compact draft/filter visual acceptance remains open"]
 
 
 class CaptureError(RuntimeError):
@@ -283,7 +285,7 @@ def main():
         # Always rebuild to prevent stale-binary evidence on a changed UI branch.
         build()
     manifest = {"schema": 1, "kind": "native-pty", "command": shlex.join(["python3", "tests/tui-visual/capture.py", *sys.argv[1:]]),
-                "source": source(), "coverage": {"inventory": {"screens": 10, "modals": 7, "editors": 7},
+                "source": source(), "coverage": {"inventory": {"screens": 10, "modals": 8, "editors": 7, "legacy_batch_modals": 7},
                     "required_sizes": SIZES, "required_themes": THEMES, "uncovered_states": GAPS, "integration_extensions": EXTENSIONS,
                     "visual_acceptance": "OPEN; generated frames are not visual PASS"}, "captures": []}
     for scenario in scenarios:

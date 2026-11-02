@@ -19,6 +19,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/clankercode/oneline-ccc/internal/core"
 )
 
@@ -169,6 +170,50 @@ func visualScene(m *model, scenario, state, variant, theme string, cols, rows in
 	}
 	switch variant {
 	case "baseline":
+		if scenario == "more" {
+			o, err := visualMore(m)
+			if err != nil {
+				return err
+			}
+			if o.FocusedID != o.Destinations[0].ID {
+				return fmt.Errorf("first More destination not focused")
+			}
+		}
+	case "last-item":
+		if scenario != "more" {
+			return fmt.Errorf("last-item requires More")
+		}
+		o, err := visualMore(m)
+		if err != nil {
+			return err
+		}
+		if o.FocusedID != o.Destinations[len(o.Destinations)-1].ID {
+			return fmt.Errorf("last More destination not focused")
+		}
+	case "pending-focus":
+		if scenario != "dashboard" || m.focused().id != "client:codex" || m.selected != "claude" ||
+			m.drafts["codex"] == m.baselines["codex"] || m.drafts["codex"].Enabled == m.baselines["codex"].Enabled ||
+			m.drafts["claude"] != m.baselines["claude"] {
+			return fmt.Errorf("pending Codex focus / selected Claude draft difference not reached")
+		}
+	case "filter-match", "filter-unicode":
+		query := "claude"
+		id := "claude"
+		if variant == "filter-unicode" {
+			query, id = visualUnicodeName, "codex"
+		}
+		matches := 0
+		for _, c := range clients {
+			if m.matches(c.ID, c.Name) {
+				matches++
+				if c.ID != id {
+					return fmt.Errorf("unexpected matching filter client")
+				}
+			}
+		}
+		if scenario != "dashboard" || m.filter != query || matches != 1 {
+			return fmt.Errorf("matching active filter state not reached")
+		}
 	case "acknowledged":
 		if scenario != "review" || !m.reviewRead || m.reviewPage != len(m.reviewPages())-1 {
 			return fmt.Errorf("review not acknowledged on final page")
@@ -261,13 +306,103 @@ type visualValidation struct {
 	After    string `json:"after_draft_sha256"`
 	Retained bool   `json:"editor_retained"`
 }
+type visualDestination struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+type visualMoreState struct {
+	Destinations []visualDestination `json:"destinations"`
+	FocusedID    string              `json:"focused_id"`
+	FocusedLabel string              `json:"focused_label"`
+	EnterScreen  string              `json:"enter_screen"`
+}
+
+// Inspect production rows and their catalog identities, then exercise Enter on
+// an isolated model. No menu indices, labels, or rendered rows are synthesized.
+func visualMore(m *model) (visualMoreState, error) {
+	var out visualMoreState
+	if m.modal != "more" {
+		return out, fmt.Errorf("More modal missing")
+	}
+	for _, r := range m.modalRows() {
+		label := strings.TrimSpace(strings.TrimPrefix(r.text, "> "))
+		for _, c := range m.catalog() {
+			if strings.HasPrefix(c.id, "nav:") && c.id != "nav:More" && c.label == label {
+				out.Destinations = append(out.Destinations, visualDestination{c.id, c.label})
+				if r.focus {
+					if out.FocusedID != "" {
+						return out, fmt.Errorf("multiple focused More destinations")
+					}
+					out.FocusedID, out.FocusedLabel = c.id, c.label
+				}
+				break
+			}
+		}
+	}
+	if len(out.Destinations) == 0 || out.FocusedID == "" {
+		return out, fmt.Errorf("More destination rows/catalog focus missing")
+	}
+	probe := visualClone(m)
+	if press(probe, "enter") != nil || probe.modal != "" || "nav:"+probe.screen != out.FocusedID {
+		return out, fmt.Errorf("More Enter destination disagrees with focused production row")
+	}
+	out.EnterScreen = probe.screen
+	return out, nil
+}
+
+func visualDashboard(m *model) map[string]any {
+	clients := make([]map[string]any, 0, len(m.snapshot.Clients))
+	for _, c := range m.snapshot.Clients {
+		d, b := m.drafts[c.ID], m.baselines[c.ID]
+		hash := func(v core.Desired) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%#v", v)))) }
+		clients = append(clients, map[string]any{"id": c.ID, "matching": m.matches(c.ID, c.Name), "dirty": d != b,
+			"enabled": d.Enabled, "baseline_enabled": b.Enabled, "draft_sha256": hash(d), "baseline_sha256": hash(b)})
+	}
+	out := map[string]any{"focused_id": m.focused().id, "selected_id": m.selected, "filter": m.filter, "clients": clients}
+	if m.screen == "Dashboard" && m.modal == "" && m.editor == nil {
+		controls := make([]map[string]any, 0)
+		for i, c := range m.controls() {
+			if !strings.HasPrefix(c.id, "client:") {
+				continue
+			}
+			r := m.controlRow(c, i)
+			controls = append(controls, map[string]any{"id": c.id, "label": c.label, "row_text": ansi.Strip(r.text), "focused": r.focus, "selected": r.selected})
+		}
+		out["production_client_controls"] = controls
+		all := visualClone(m)
+		all.filter = ""
+		inventory := make([]map[string]any, 0)
+		for i, c := range all.controls() {
+			if !strings.HasPrefix(c.id, "client:") {
+				continue
+			}
+			r := all.controlRow(c, i)
+			inventory = append(inventory, map[string]any{"id": c.id, "label": c.label, "row_text": ansi.Strip(r.text)})
+		}
+		out["unfiltered_production_client_controls"] = inventory
+		out["production_view"] = m.View().Content
+	}
+	return out
+}
+
 type visualSetup struct {
-	Actions    []string
-	Validation *visualValidation
+	Actions     []string
+	Preparation map[string]any
+	Validation  *visualValidation
 }
 
 func (s *visualSetup) outcomes(m *model) (map[string]any, error) {
 	out := map[string]any{"status": m.status}
+	if m.modal == "more" {
+		more, err := visualMore(m)
+		if err != nil {
+			return nil, err
+		}
+		out["more"] = more
+	}
+	if s.Preparation != nil {
+		out["dashboard"] = visualDashboard(m)
+	}
 	if m.modal == "help" {
 		page, err := visualHelpPage(m)
 		if err != nil {
@@ -307,6 +442,15 @@ func (s *visualSetup) outcomes(m *model) (map[string]any, error) {
 
 func visualClone(m *model) *model {
 	copy := *m
+	copy.locations = make(map[string]location)
+	for k, v := range m.locations {
+		copy.locations[k] = v
+	}
+	copy.regionFocus = make(map[string]string)
+	for k, v := range m.regionFocus {
+		copy.regionFocus[k] = v
+	}
+	copy.history = append([]navigationFrame(nil), m.history...)
 	copy.drafts = make(map[string]core.Desired)
 	for id, d := range m.drafts {
 		copy.drafts[id] = d
@@ -324,6 +468,7 @@ func visualClone(m *model) *model {
 // layout/focus index or A3 implementation is assumed. Refuse if neither restores.
 func visualProtocol(m *model) ([]string, error) {
 	before := m.View().Content
+	beforeDashboard, _ := json.Marshal(visualDashboard(m))
 	for _, keys := range [][]string{{"tab", "shift+tab"}, {"shift+tab", "tab"}} {
 		probe := visualClone(m)
 		commands := false
@@ -332,7 +477,8 @@ func visualProtocol(m *model) ([]string, error) {
 				commands = true
 			}
 		}
-		if !commands && probe.View().Content == before && visualDraftHash(probe) == visualDraftHash(m) {
+		afterDashboard, _ := json.Marshal(visualDashboard(probe))
+		if !commands && probe.View().Content == before && bytes.Equal(beforeDashboard, afterDashboard) {
 			return keys, nil
 		}
 	}
@@ -358,6 +504,58 @@ func TestVisualProtocolRestoresClampedBoundary(t *testing.T) {
 			}
 			if m.View().Content != before {
 				t.Fatal("actual Tab pair changed production View at clamped modal boundary")
+			}
+		})
+	}
+}
+
+func TestVisualMoreBoundarySemantics(t *testing.T) {
+	for _, size := range [][2]int{{40, 12}, {80, 24}} {
+		m, _ := visualPrepare(t, "more", "baseline", "baseline", "dark", size[0], size[1])
+		if err := visualScene(m, "more", "baseline", "baseline", "dark", size[0], size[1]); err != nil {
+			t.Fatal(err)
+		}
+		press(m, "down")
+		if visualScene(m, "more", "baseline", "baseline", "dark", size[0], size[1]) == nil {
+			t.Fatal("nonfirst More destination accepted as baseline")
+		}
+		last, _ := visualPrepare(t, "more", "baseline", "last-item", "dark", size[0], size[1])
+		if err := visualScene(last, "more", "baseline", "last-item", "dark", size[0], size[1]); err != nil {
+			t.Fatal(err)
+		}
+		press(last, "up")
+		if visualScene(last, "more", "baseline", "last-item", "dark", size[0], size[1]) == nil {
+			t.Fatal("nonlast More destination accepted as last-item")
+		}
+	}
+}
+
+func TestVisualPreparedDashboardSemantics(t *testing.T) {
+	for _, tc := range []struct{ state, variant, query string }{
+		{"parity", "pending-focus", ""}, {"parity", "filter-match", "claude"}, {"unicode", "filter-unicode", visualUnicodeName},
+	} {
+		t.Run(tc.variant, func(t *testing.T) {
+			m, _ := visualPrepare(t, "dashboard", tc.state, "baseline", "dark", 40, 12)
+			if tc.variant == "pending-focus" {
+				m.focusID("client:codex")
+				press(m, " ")
+				press(m, "down")
+				press(m, "shift+tab")
+			} else {
+				press(m, "/")
+				m.Update(tea.PasteMsg{Content: tc.query})
+				press(m, "enter")
+			}
+			if err := visualScene(m, "dashboard", tc.state, tc.variant, "dark", 40, 12); err != nil {
+				t.Fatalf("genuine prepared state: %v", err)
+			}
+			if tc.variant == "pending-focus" {
+				m.selected = "codex"
+			} else {
+				m.filter = "zz-no-fixture-match"
+			}
+			if visualScene(m, "dashboard", tc.state, tc.variant, "dark", 40, 12) == nil {
+				t.Fatal("incorrect prepared state accepted")
 			}
 		})
 	}
@@ -620,6 +818,40 @@ func visualPrepare(t *testing.T, scenario, state, variant, theme string, cols, r
 	}
 	switch variant {
 	case "baseline":
+	case "pending-focus", "filter-match", "filter-unicode":
+		if scenario != "dashboard" {
+			t.Fatal("prepared variants require Dashboard")
+		}
+		before := visualDashboard(m)
+		keys := []string{}
+		query := ""
+		if variant == "pending-focus" {
+			if state != "parity" {
+				t.Fatal("pending-focus requires parity clients including Claude")
+			}
+			m.focusID("client:codex")
+			keys = []string{"space", "down", "shift+tab"}
+			drain(press(m, " "))
+			drain(press(m, "down"))
+			drain(press(m, "shift+tab"))
+		} else {
+			if variant == "filter-match" && state != "parity" {
+				t.Fatal("filter-match requires parity clients")
+			}
+			if variant == "filter-unicode" && state != "unicode" {
+				t.Fatal("filter-unicode requires Unicode client")
+			}
+			query = "claude"
+			if variant == "filter-unicode" {
+				query = visualUnicodeName
+			}
+			keys = []string{"/", "paste", "enter"}
+			drain(press(m, "/"))
+			m.Update(tea.PasteMsg{Content: query})
+			drain(press(m, "enter"))
+		}
+		setup.Preparation = map[string]any{"kind": "prepared-fixture-state", "transport": "direct production Update; setup keys are not PTY-delivered", "keys": keys, "query": query, "before": before, "after": visualDashboard(m)}
+		setup.Actions = append(setup.Actions, "prepare:"+variant)
 	case "no-results":
 		if scenario == "palette" {
 			m.Update(tea.PasteMsg{Content: "zz-no-fixture-match"})
@@ -646,10 +878,24 @@ func visualPrepare(t *testing.T, scenario, state, variant, theme string, cols, r
 		if scenario != "more" {
 			t.Fatal("last-item requires More")
 		}
-		// Drive the real bounded menu with keys; no focus-index contract.
-		for range m.catalog() {
+		// Derive the last destination from real rows/catalog. Stop before a
+		// wrapping implementation returns to first; never assume clamping.
+		more, err := visualMore(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := more.Destinations[len(more.Destinations)-1].ID
+		for range more.Destinations {
+			observed, err := visualMore(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if observed.FocusedID == target {
+				break
+			}
 			drain(press(m, "down"))
 		}
+		setup.Actions = append(setup.Actions, "prepare:More-last-destination")
 	case "acknowledged":
 		if scenario != "review" {
 			t.Fatal("acknowledged requires review")
@@ -738,6 +984,9 @@ func TestVisualCapture(t *testing.T) {
 	metadata["semantic_outcomes"] = outcomes
 	metadata["semantic_before"] = beforeOutcomes
 	metadata["protocol_keys"] = protocol
+	if setup.Preparation != nil {
+		metadata["preparation"] = setup.Preparation
+	}
 	metadata["expected_view"] = map[string]any{"content": wrapper.view.Content, "alt_screen": wrapper.view.AltScreen}
 	data, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {

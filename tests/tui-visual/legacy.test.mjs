@@ -31,6 +31,15 @@ test('current schema still requires semantic observations',async()=>{
   const d=clone(current);delete d.entry.fixture.semantic_outcomes;
   await assert.rejects(check(d),/missing semantic outcome/i);
 });
+for(const schema of [1,2,3])for(const clients of [{},'',0,false,'clients',42,true])test(`schema ${schema} rejects malformed empty clients ${JSON.stringify(clients)}`,async()=>{
+  const d=clone(current);d.entry.validation_schema=schema;
+  d.entry.state=d.entry.fixture.state='empty';d.entry.fixture.clients=clients;
+  await assert.rejects(check(d),/client.*(shape|array|type)/i);
+});
+for(const clients of [[],null])test(`empty client observations accept ${JSON.stringify(clients)}`,async()=>{
+  const d=clone(current);d.entry.state=d.entry.fixture.state='empty';d.entry.fixture.clients=clients;
+  assert.equal((await check(d)).semantic_level,'observed-model-and-production-view');
+});
 for(const schema of [1,2,3])test(`recorded client observations are checked in schema ${schema}`,async()=>{
   const d=clone(current);d.entry.validation_schema=schema;
   d.entry.state=d.entry.fixture.state='missing';

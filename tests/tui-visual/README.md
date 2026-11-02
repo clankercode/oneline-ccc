@@ -40,9 +40,10 @@ GOMAXPROCS=2 GOTMPDIR="$PWD/.cache/tui-visual/tmp" TMPDIR="$PWD/.cache/tui-visua
 
 The actual guarded helper is exercised by `capture`/`batch` through the PTY.
 It intentionally skips when invoked by an ordinary test run without the guard.
-`run_fault_tests.py` creates eleven focused real captures in disposable local
+`run_fault_tests.py` creates sixteen focused real captures in disposable local
 cache: parity, Unicode, Help first/last, three validation refusals, two empty
-searches and Review last/acknowledged. It runs Python process/verifier faults
+searches, Review last/acknowledged, More first/last and three prepared Dashboard
+states. It runs Python process/verifier faults
 and Node renderer/export/semantic faults against those positive controls.
 Bootstrap must already be installed. Evidence faults otherwise skip without
 `A2_TEST_MANIFEST`; the original process tests still run independently. This
@@ -65,14 +66,18 @@ claiming a capture. Use a new output directory for every run; existing manifests
 are protected against accidental overwrite. All output must stay within this
 worktree's ignored `artifacts/` or `.cache/` directories.
 
-A3 adds **More**, the eighth modal, through the semantic `nav:More` ID. The
-rejected baseline does not have this menu. `--scenario more` supports `baseline`
+A3 adds **More**, the eighth modal, through the semantic `nav:More` ID.
+The historical rejected baseline lacks it; integration base `cb936e6` includes it. `--scenario more` supports `baseline`
 and `last-item` setup (real Down keys through the bounded menu) for integration.
-Both fail closed on the old baseline. The `last-item` outcome guard still requires
-the integrated More model/catalog contract; it cannot be certified on this
-branch. `--batch integrated` requests all 25
+Both fail closed on the old baseline. On the integration checkout, guards inspect
+the actual modal rows and catalog, verify first/last focused destination IDs and
+probe Enter on an isolated model. Setup stops at the last actual destination
+before a wrapping menu can return to first. Shared export checks require the
+focused row in the captured frame and matching Enter destination observations.
+`--batch integrated` requests all 25
 surfaces (375 baseline rows), while `--batch all` preserves the original 24.
-The manifest lists this extension and its pending coverage explicitly. Plan it
+The manifest counts eight known modals and separately records the seven in
+the legacy default batch. Its gaps keep full More matrix coverage open. Plan it
 on either branch without pretending the old app has it:
 
 ```sh
@@ -104,7 +109,9 @@ Additional `--variant` values are deliberately bounded:
 
 | Scenario | Variants beyond `baseline` |
 | --- | --- |
-| Dashboard, palette | `no-results` |
+| Dashboard | `no-results`, `pending-focus`, `filter-match`, `filter-unicode` |
+| Palette | `no-results` |
+| More | `last-item` |
 | Help | `last-page` |
 | Review | `last-page`, `acknowledged` |
 | Budget, compaction, endpoint editors | `invalid` |
@@ -115,6 +122,51 @@ python3 tests/tui-visual/capture.py capture --scenario palette --variant no-resu
 python3 tests/tui-visual/capture.py capture --scenario dashboard --state unicode --color 256 --output artifacts/native-unicode
 python3 tests/tui-visual/capture.py capture --scenario dashboard --color none --ascii --output artifacts/native-no-color
 ```
+
+The three additional Dashboard variants are **prepared fixture states**, not
+proof of a PTY setup journey. `pending-focus` requires `--state parity`: setup
+focuses Codex, calls production Update with Space, Down and Shift+Tab, then
+asserts focused `client:codex`, selected `claude`, a changed Codex management
+draft and an unchanged Claude draft. `filter-match` also requires parity and
+commits `claude` through the production filter editor. `filter-unicode` requires
+`--state unicode` and commits the complete long Unicode fixture name. Both
+assert exactly one match through the real model's matching predicate.
+
+```sh
+python3 tests/tui-visual/capture.py capture --scenario dashboard --state parity --variant pending-focus --sizes 40x12 --output artifacts/prepared-pending
+python3 tests/tui-visual/capture.py capture --scenario dashboard --state parity --variant filter-match --sizes 40x12 --output artifacts/prepared-filter
+python3 tests/tui-visual/capture.py capture --scenario dashboard --state unicode --variant filter-unicode --sizes 40x12 --output artifacts/prepared-unicode-filter
+```
+
+Each exports `preparation.before` and `.after` (focus, selection, matching flags,
+management values and per-client baseline/draft hashes), the direct setup inputs
+and an explicit transport limit. `semantic_before` / `semantic_outcomes` observe
+the separate **real post-setup PTY** pair. Gates reject fabricated draft changes,
+false matches, relabeling, absent preparation and claims of PTY setup transport.
+These guards do not require a new visible compact Draft or active-filter cue:
+production may still omit those cues, and the baseline PNG can expose that defect.
+Source/input hashes and recorded dirtiness describe the captured implementation,
+including any provisional helper/tool materialization; they do not certify a
+later production fix. Compare fresh captures after integrating that fix.
+
+Prepared proof also records actual production `controlRow()` text/flags for
+matching clients and a private unfiltered production-control projection. Its
+saved production View must match the captured View/frame. Focus must be a
+matching production control; focused/selected rows must occur in the frame,
+and excluded client controls must not occur there. Filter-only setup preserves
+selection and every draft, with selected identity checked against the actual
+rendered detail row. Pending setup permits only the Codex management change.
+No control labels or UI rows are synthesized to make the verifier pass.
+
+Prepared results use `observed-prepared-model-and-frame-controls` and explicitly
+say setup is not PTY-delivered. Filter results additionally say the exact query
+is model-observed only and its rendered cue is unproven. A filtered list does
+not independently prove the exact query or a visible active-filter indicator.
+Old prepared captures lacking these production observations now fail closed
+with a recapture-required diagnostic; their files/provenance are never upgraded.
+Other schema-3 scenes and genuine legacy evidence retain their existing levels.
+The focused controls use the retained compact 40x12/80x24 specimens; broader
+geometry and visual acceptance remain open.
 
 First-run loading, actual asynchronous work/cancel/failure, all service outcomes,
 discovery permutations, handoff/return, real apply receipts and the complete
@@ -185,8 +237,10 @@ than given new View proof retroactively. Schema 2 captures retain their View
 proof but are explicitly reported as legacy for distinguishing semantic outcomes.
 Legacy schema 1/2 rows without recorded clients explicitly report client
 observations unavailable; recorded optional clients still undergo state checks.
-Schema 3 requires both client and before/after semantic observations, including
-for an empty-client request. Historical files, source records and hashes are not
+Recorded client observations must be arrays or the helper's Go nil-slice `null`;
+objects and scalar values fail in every schema. Schema 3 requires both client
+and before/after semantic observations, including for an empty-client request.
+Historical files, source records and hashes are not
 rewritten or upgraded.
 
 Focused compatibility tests can use an unchanged original probe without building
