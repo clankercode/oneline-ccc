@@ -24,6 +24,12 @@ modify the operator's Codex configuration during development.
   error handling and real Codex configuration loading without paid inference.
 - Independently review and fix material findings before reporting completion.
 - Document hosting and use honestly: a public one-liner needs an actual hosted URL.
+- Offer optional elevated Windows OpenSSH installation/service/user/public-key
+  setup. Use LocalSubnet sources and Private profile by default; make Public an
+  explicit choice, warn on active Public networks, and preserve classification.
+- Accept pasted/file public keys or explicitly approved GitHub public-key import.
+  Refuse conflicting existing policies; restore authorization and service changes
+  on failure. Verify a real SSH key login and rollback on a disposable Windows runner.
 
 ## Work lanes
 

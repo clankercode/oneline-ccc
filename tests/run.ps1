@@ -99,6 +99,17 @@ function Test-Case([string]$Name, [scriptblock]$Body) {
     catch { $script:failures += $Name + ': ' + $_.Exception.Message; Write-Output ('FAIL ' + $script:failures[-1]) }
 }
 
+Test-Case 'SSH requires interactive choices before Codex mutations' {
+    $homeDirectory = New-Case 'ssh-noninteractive-refusal'
+    $output = Invoke-Installer $homeDirectory @{EnableSshServer = $true} -Failure
+    Assert-True ($output.Contains('SSH server setup requires interactive mode')) 'Wrong SSH refusal reason'
+    Assert-True (@(Get-ChildItem $homeDirectory -Force).Count -eq 0) 'SSH refusal changed Codex files'
+}
+Test-Case 'SSH flag in dry run does not install or download anything' {
+    $homeDirectory = Join-Path $root 'ssh-dry-run-absent'
+    Invoke-Installer $homeDirectory @{EnableSshServer = $true; DryRun = $true} | Out-Null
+    Assert-True (-not (Test-Path $homeDirectory)) 'SSH dry run created a configuration directory'
+}
 Test-Case 'fresh profile and environment authentication' {
     $homeDirectory = New-Case 'fresh'
     Invoke-Installer $homeDirectory | Out-Null

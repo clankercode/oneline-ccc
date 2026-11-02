@@ -1,76 +1,96 @@
-# Independent Windows Codex MVP review
+# Independent Windows Codex and optional SSH review
 
-Reviewed 2026-11-02 against the MVP plan, product brief, and
-ultra-code-standards. Scope: installer, isolated harness, README, and Pages
-workflow. Reviewer changed this report only, apart from isolated cache artifacts.
+Final frozen-source review, 2026-11-02. Reviewed the MVP plan, product brief,
+ultra-code-standards, installers, test helpers, and publication workflow.
+Reviewer changed this report only, apart from isolated cache artifacts.
 
-## Current status
+## Status
 
-**No unresolved Important or Critical findings in the reviewed installer/tests.**
-All material review findings were corrected and independently rechecked where
-portable execution allowed. Native Windows and hosted deployment limits remain
-listed below; they are not observed defects.
+**No unresolved Important or Critical findings in the reviewed frozen source.**
+The material preservation, credential, policy, firewall, and transaction findings
+were corrected. Source can proceed to native CI verification; this does not claim
+native Windows or hosted deployment has passed.
 
-## Resolved findings
+## Independent evidence
 
-- Prior credential-bearing URLs are now rejected by the shared
-  `Get-ValidatedEndpoint` validator before backup or credential mutation.
-  Independently tested query, userinfo, and fragment variants with dummy data:
-  each refused safely, retained exact profile bytes and the old process key,
-  created no backup/temporary files, and did not echo the dummy secret.
-  Evidence: `.cache/review-old-url-final-5a0cac96cdaa4a18a04d21a62ba81608`.
+- SSH harness: **71 passed, zero failed**, including mocked transaction rollback,
+  policy conflicts, applicable firewall filtering, effective profile refusal,
+  marker preservation, and repeat setup. Artifact directory:
+  `.cache/ssh-tests-f162b240becf40caa0f7b25e77d12eaa`.
+- Additional actual-source focused checks accepted the exact generated SSH block
+  and rejected added DenyUsers, duplicate, missing, reversed, and nested markers.
+  Final CRLF-specific edited-block refusal also passed after the line-ending fix.
+- Actual-source effective firewall guard accepted enabled/default-Block policy;
+  disabled, default-Allow, and missing policy were refused.
+- Prior Codex harness independently passed **60/0**, including downloaded-text
+  scriptblock, catalog binding, exact validation errors, unsafe prior URL refusal,
+  preservation, and loopback discovery/redirect handling. Coordinator reports
+  final frozen Codex harness **65/0** with optional SSH guards added.
+- Independent credential failure injection retained/restored old process values.
+  Unsafe prior URL query/userinfo/fragment variants refused without changing
+  profile bytes, process credential, or creating backups/temp files. Dummy data
+  only; no real API keys, operator config, or paid inference were used.
 
-- Credential mutation now snapshots previous User/Process values, prepares the
-  temporary file before mutation, rechecks the profile, and restores credentials
-  on commit failure. Independent early-directory-failure test retained the old
-  process key; an injected failure after mutation restored it. Persistent User
-  rollback was inspected, not natively executed. Evidence:
-  `.cache/review-rollback-0c1e202332a44369b24ab6c53b800c79`.
-- Windows command handling prefers `codex.cmd`, then `codex.exe`, avoiding the
-  npm PowerShell shim. README uses the same commands.
-- Manually edited owned profiles are refused rather than silently overwritten;
-  independent repro retained the edited bytes. Base `config.toml` is untouched.
-- Invalid-input tests now use an absent profile and assert the intended safe
-  error. Malformed-fixture loop variables no longer suffer dynamic-scope
-  shadowing. These are resolved coverage defects, not current issues.
-- `ModelCatalogPath` now binds tier eligibility to exactly one case-sensitive
-  model slug, validates tier array shapes, references root `model_catalog_json`,
-  and preserves the supplied catalog. Explicit operator attestation remains
-  available without a catalog. No capability inference is made from `/models`.
-- An omitted tier now writes root `service_tier = 'default'` to avoid inheriting
-  an unrelated base tier. The focused inherited-tier test passes; nondefault
-  tiers still require exact capability eligibility.
-- The installer prompts for the endpoint; no URL default remains. This report
-  contains no private operator hostname.
+## Resolved material findings
 
-## Validation and limits
+- Codex credentials snapshot and restore previous User/Process values on commit
+  failure; file preparation and concurrency checks precede final commit.
+- Existing credential-bearing URLs are validated before backups. Generated
+  profiles reference environment credentials and use the current separate-file
+  profile contract with root context/compaction/catalog fields.
+- Windows command handling chooses `codex.cmd` or `codex.exe`, avoiding `.ps1`
+  execution-policy shims. Endpoint input is required; no private hostname/default
+  endpoint is bundled.
+- Edited Codex-owned profiles refuse without losing user additions. Invalid-input
+  tests now assert the intended validation failure against an absent profile.
+- Catalog tier binding selects one exact model slug and checks eligibility
+  case-sensitively. An omitted tier explicitly resets inherited policy to default.
+- SSH integration rejects unsupported/empty original accounts before download/UAC
+  and always forwards a validated original account. Optional setup defaults No;
+  explicit noninteractive SSH refuses before Codex mutation. SSH failure leaves
+  working Codex configured and provides a safe warning.
+- SSH refuses Include, unsupported conditional Match policies, and conflicting
+  authentication restrictions. Managed blocks must match exact generated shape;
+  edited/malformed/duplicate blocks refuse, including CRLF input. Marker accounts
+  are normalized before construction.
+- Firewall checks fail closed on disabled/unknown/default-Allow effective profile
+  policy and broader applicable inbound rules before authorization/service start.
+  Rule applicability checks TCP/Any protocol, port 22/Any/ranges, application,
+  service, profile, and remote address, avoiding unrelated browser/service/UDP
+  false positives. Production defaults remain Private plus LocalSubnet; Public
+  requires explicit consent and the helper does not change network categories.
+- Candidate policy and narrow firewall are verified before authentication writes.
+  Rollback restores key/config bytes and ACLs, existing `.ssh` DIRECTORY ACL,
+  startup/running state, and removes invocation-created firewall rules. Incomplete
+  rollback is reported explicitly. Existing unrelated authorization is preserved.
 
-Independent portable PowerShell 7 harness run: **60 passed, zero failed**.
-Artifacts: `.cache/installer-tests-32c718c1f23049c28d4125d64e799eb3`.
-Coverage includes downloaded-text scriptblock invocation, exact invalid-input
-errors, catalog binding, reruns/backups/preservation, and loopback discovery with
-bearer credentials, malformed responses, redirect refusal, and dry-run behavior.
-No real keys, operator configuration, or paid inference were used.
+## Native smoke and deployment review
 
-Current profile structure agrees with the supplied Codex >=0.134.0 contract:
-`llmp.config.toml`, root context/compaction fields, Responses transport, and an
-environment credential reference. Context values are explicitly operator budgets.
-Full provider-supplied catalog validity remains Codex's responsibility; minimal
-fixtures do not prove a complete native catalog loads.
+`tests/ssh-native-smoke.ps1` refuses outside Windows with GITHUB_ACTIONS=true.
+Only that guarded disposable test enables default-Block firewall profiles and
+disables the baseline OpenSSH rule as fixture preparation; production helper
+refuses unsafe operator policy instead of silently changing it.
 
-Native installation currently uses winget without forced user scope, warns about
-possible administrator approval, refreshes machine/user PATH, checks `npm.cmd`,
-and provides actionable failure instructions. Linux execution does not validate
-Windows PowerShell 5.1, actual winget/npm installation, registry persistence, or
-execution policies. These remain validation limits, not observed defects.
+The smoke creates fixture keys and a dedicated account, verifies real loopback
+public-key login, effective authentication policy, service state, and the narrow
+firewall rule. It injects a late Restart-Service failure and asserts exact prior
+key/config bytes and file ACLs, owned rule names, and running state. This tests a
+meaningful failure boundary. Directory ACL restoration exists in the helper;
+the native smoke currently asserts file ACLs rather than separate directory or
+unrelated-child SDDL. That remains a coverage limitation, not an observed defect.
 
-The Pages deploy job depends on both Windows shell verification jobs and stages
-the same checkout's installer after success. Actual Windows CI results and the
-hosted bootstrap must be checked before claiming a working public Windows
-one-liner. Brief inspection of the completed site confirms the same scriptblock
-command, private-key prompt guidance, Responses requirement, and cmd-based launch.
-Desktop/mobile rendering was reported by the coordinator, not independently run
-by this reviewer. Coordinator also reports strict actual Codex parsing and named
-profile debug rendering passed. No unresolved major review finding blocks the
-initial source push. Hosted
-operation still requires successful Windows CI and deployment checks.
+Pages deployment depends on both the Windows shell matrix and real verify-ssh
+job. Both installers are staged. The public-download smoke compares both hosted
+files with the checkout before evaluating scriptblocks under both shell editions.
+The site command and guidance agree with the installers on inspection. Visual
+rendering and actual Codex parser/debug checks were reported by the coordinator.
+
+## Validation limits
+
+Linux PowerShell and mocked Windows cmdlets cannot establish real ACL semantics,
+UAC, registry persistence, capability installation, packet reachability, or native
+PowerShell 5.1 behavior. Those require the guarded Windows CI jobs. Loopback login
+plus firewall inspection does not itself prove access from a separate LAN client.
+GitHub key import is an explicit snapshot/authorization choice, not continuous
+synchronization. No claim of native success or working hosted deployment is made
+before the corresponding CI and public-download checks pass.

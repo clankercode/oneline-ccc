@@ -9,6 +9,8 @@ One-line Windows setup for native Codex using an LLMP proxy base URL, one API ke
 and exact model IDs. Generate valid configuration, expose supported service tiers,
 and configure practical context budgets rather than accepting an undersized client
 fallback. Make this useful on a new Windows machine immediately.
+Also offer optional Windows SSH server installation and public-key access, with
+the local-subnet/Private defaults and explicit choices recorded below.
 
 ## Broader direction — design pending
 
@@ -29,6 +31,12 @@ fallback. Make this useful on a new Windows machine immediately.
 - TUI controls for the service, client selection/installation and current status.
 - Optional utilities mentioned: herdr, tmux, t3, orca and paseo. Research their exact
   identities, supported platforms and installation contracts before choosing them.
+- Offer Windows OpenSSH server setup in both the MVP and full app: install the
+  capability, manage its service, configure explicit firewall scope, and set up
+  users/public-key authentication. The MVP uses local-subnet reach only, defaults
+  to the Private network profile, and can explicitly allow Public. Warn when the
+  current network is Public without changing it automatically. Broader scope may
+  support sibling LAN subnets, Tailscale and WireGuard networks later.
 - Potential maintenance: client updates and reacting to proxy configuration/model
   changes. Whether this needs a daemon remains a design question.
 - User-triggered repair: use a functioning coding agent to diagnose and fix another

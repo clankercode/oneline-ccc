@@ -57,13 +57,24 @@ The separate loopback URL-validation test uses port 9 without contacting it.
 
 ## Validation status
 
-60 cases passed locally with portable PowerShell 7.6.9 and Python `tomllib`.
+65 cases passed locally with portable PowerShell 7.6.9 and Python `tomllib`.
 The final run includes catalogue fixtures, scriptblock bootstrap, missing
 endpoint/authentication checks, and explicit absence assertions for unintended
 legacy profile tables or optional settings. Additional regression cases cover
-unsafe previous-profile URLs and resetting an inherited nondefault tier.
+unsafe previous-profile URLs, resetting an inherited nondefault tier, and real
+native-command shims emitting stderr during version checks.
 `.github/workflows/windows.yml` runs this harness independently using native
-Windows PowerShell 5.1 and PowerShell 7. Those Windows jobs have not been run
-locally; CI results remain pending. Real Codex runtime profile selection and
-strict startup validation are being verified separately by the parent agent;
-this harness checks installer behavior and TOML semantics.
+Windows PowerShell 5.1 and PowerShell 7. The Codex suite, real npm installation,
+profile loading, Pages deployment and hosted-script bootstrap all passed in both
+shells in [the verified core run](https://github.com/clankercode/oneline-ccc/actions/runs/41384021098).
+Local Codex strict startup parsing also passed. These checks use dummy
+credentials and do not make inference requests.
+
+`tests/ssh.ps1` checks optional SSH planning/validation and intercepted service,
+firewall and authorization paths without changing the host. The separate
+`tests/ssh-native-smoke.ps1` is guarded for disposable Windows GitHub runners:
+it creates a test account, installs/configures OpenSSH, generates a fixture key,
+authenticates over loopback, and injects a late failure to test rollback. Never
+run that integration smoke on a workstation; its fixture resources are discarded
+with the CI runner. SSH-specific final CI evidence is recorded in the verification
+report.

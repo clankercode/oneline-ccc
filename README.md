@@ -113,6 +113,29 @@ IDs remain unchanged; setup does not invent tier-suffixed models. When you do no
 select a tier, setup explicitly writes `service_tier = 'default'` so an unrelated
 fast-tier preference in your base configuration is not inherited.
 
+## Optional Windows SSH server
+
+After Codex setup, you can opt into Windows OpenSSH server setup. It asks for
+administrator approval in a separate PowerShell window. Declining leaves the
+Codex setup complete. To request the SSH offer explicitly, use `-EnableSshServer`
+in interactive mode; the helper also supports a direct unattended invocation.
+
+SSH setup installs the Windows capability, configures the service and a TCP 22
+firewall rule, and sets up public-key authentication for the selected local user.
+Choose a pasted public key, a `.pub` file, or a GitHub username whose published
+keys you trust. GitHub import shows fingerprints for approval and is a one-time
+snapshot. Never paste or transfer a private key to the server.
+
+The MVP limits firewall sources to **LocalSubnet**, on the **Private** network
+profile by default. It warns about active Public networks without changing their
+classification. Public-profile access is a separate explicit opt-in, still
+limited to the local subnet. Existing broader rules need review before enabling
+the server. Other trusted subnets and VPN ranges belong to the later utility.
+
+See [Windows SSH setup](docs/windows-ssh.md) for administrator invocation, account
+creation, existing-server behavior, ACLs, and recovery instructions. Optional SSH
+failure does not undo a working Codex profile.
+
 ## Scope and research
 
 The MVP does not install a daemon, update clients in the background, configure

@@ -24,7 +24,8 @@ param(
     [switch]$DryRun,
     [switch]$InstallNode,
     [switch]$SkipPersistCredential,
-    [switch]$DiscoverModels
+    [switch]$DiscoverModels,
+    [switch]$EnableSshServer
 )
 
 $ErrorActionPreference = 'Stop'
@@ -215,7 +216,43 @@ function Install-NativeCodex {
     if (-not (Get-CodexCommand)) { throw 'Codex installed but was not found on PATH. Reopen PowerShell.' }
 }
 
+function Invoke-SshServerSetup {
+    if ($env:USERNAME -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,19}$') {
+        throw 'SSH server setup requires an explicit supported local account. Run the SSH helper separately with -UserName; the elevated account will not be selected automatically.'
+    }
+    $cacheDirectory = Join-Path $env:LOCALAPPDATA 'oneline-ccc'
+    [IO.Directory]::CreateDirectory($cacheDirectory) | Out-Null
+    $sshScript = Join-Path $cacheDirectory ('setup-ssh-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri 'https://clankercode.github.io/oneline-ccc/setup-ssh-server.ps1' -OutFile $sshScript | Out-Null
+        $windowsIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        try {
+            $principal = New-Object Security.Principal.WindowsPrincipal($windowsIdentity)
+            $isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        }
+        finally { $windowsIdentity.Dispose() }
+        $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $sshScript + '"'
+        # The helper receives the original account even if UAC uses another admin.
+        $arguments += ' -UserName "' + $env:USERNAME + '"'
+        $processOptions = @{
+            FilePath = (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
+            ArgumentList = $arguments; Wait = $true; PassThru = $true
+        }
+        if (-not $isAdministrator) { $processOptions.Verb = 'RunAs' }
+        $process = Start-Process @processOptions
+        try {
+            if ($process.ExitCode -ne 0) { throw 'SSH server setup did not complete. Codex remains configured; run the SSH helper separately to retry.' }
+        } finally { $process.Dispose() }
+    } finally {
+        if (Test-Path -LiteralPath $sshScript) { [IO.File]::Delete($sshScript) }
+    }
+}
+
 try {
+    if ($EnableSshServer -and $NonInteractive -and -not $DryRun) {
+        throw 'SSH server setup requires interactive mode for user, key and firewall choices. Run the SSH helper directly for unattended setup.'
+    }
+    if ($EnableSshServer -and $env:OS -ne 'Windows_NT' -and -not $DryRun) { throw 'SSH server setup requires Windows.' }
     $BaseUrl = Read-RequiredText $BaseUrl 'LLMP OpenAI-compatible base URL (include /v1 if required)'
     $endpoint = Get-ValidatedEndpoint $BaseUrl
     $BaseUrl = $endpoint.AbsoluteUri.TrimEnd('/')
@@ -367,6 +404,17 @@ requires_openai_auth = false
     }
     else { Write-Output 'LLMP profile configured. Start with: codex --profile llmp' }
     Write-Output 'The selected context budget does not increase the actual model capacity.'
+    $wantSsh = $EnableSshServer
+    if ($onWindows -and -not $NonInteractive -and -not $wantSsh) {
+        $wantSsh = (Read-Host 'Also set up Windows SSH server for local-subnet access? Administrator approval required [y/N]') -match '^(?i)y(es)?$'
+    }
+    if ($wantSsh) {
+        try { Invoke-SshServerSetup }
+        catch {
+            Write-Warning 'Codex is configured, but optional SSH setup did not complete. Retry using the SSH instructions in the project README.'
+            if ($_.Exception.Message.StartsWith('SSH server setup requires', [StringComparison]::Ordinal)) { Write-Warning $_.Exception.Message }
+        }
+    }
 } catch {
     # Never emit exception payloads from dependencies, URLs, files or credentials.
     Write-Verbose ('Setup failure type: ' + $_.Exception.GetType().FullName + '; line: ' + $_.InvocationInfo.ScriptLineNumber)
@@ -375,7 +423,7 @@ requires_openai_auth = false
         'Managed block', 'An existing LLMP', 'Existing inline', 'BaseUrl must',
         'ContextWindow must', 'AutoCompactTokenLimit must', 'ServiceTier requires',
         'Native install requires', 'API key', 'Install Node.js', 'Node.js installation',
-        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Config changed', 'Model discovery failed', 'Model catalog invalid'
+        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Config changed', 'Model discovery failed', 'Model catalog invalid', 'SSH server setup requires'
     )
     $message = 'Setup failed. Check configuration directory permissions and dependency availability; no diagnostic payload was printed.'
     foreach ($prefix in $safeMessages) {
