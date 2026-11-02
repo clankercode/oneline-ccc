@@ -288,7 +288,7 @@ function New-SetupFixture([string]$Name) {
     return @{
         Root = $directory; ProgramData = $programData; Profile = $profile; Windows = $windows
         Events = (New-Object 'System.Collections.Generic.List[string]')
-        Rules = @{}; UserExists = $true; Enabled = $true; Capability = 'Installed'
+        Rules = @{}; UserExists = $true; ProfileExists = $true; Enabled = $true; Capability = 'Installed'
         PublicNetwork = $false; FailNative = $false; BadEffective = $false
         FailFirewall = $false; FailService = $false; Acls = @{}
         Service = [pscustomobject]@{Status = 'Stopped'; StartType = 'Manual'}
@@ -330,7 +330,7 @@ function Invoke-MockedSetup([hashtable]$State, [switch]$Public, [switch]$Create,
         if ($ClassName -eq 'Win32_Service') {
             $mode = switch ($state.Service.StartType) { 'Automatic' {'Auto'} 'Disabled' {'Disabled'} default {'Manual'} }
             [pscustomobject]@{StartMode = $mode}
-        } else { [pscustomobject]@{SID = 'S-1-5-21-111-222-333-1001'; LocalPath = $state.Profile} }
+        } elseif ($state.ProfileExists) { [pscustomobject]@{SID = 'S-1-5-21-111-222-333-1001'; LocalPath = $state.Profile} }
     }
     function Get-WindowsCapability { param([switch]$Online, $Name) [pscustomobject]@{State = $state.Capability} }
     function Add-WindowsCapability { param([switch]$Online, $Name) $state.Events.Add('CapabilityInstall'); $state.Capability = 'Installed'; [pscustomobject]@{RestartNeeded = $false} }
@@ -509,6 +509,32 @@ Test-Case 'explicit new user respects native description limit and standard grou
     $state.UserExists = $false
     Invoke-MockedSetup $state -Create | Out-Null
     Assert-True ($state.Events -contains 'UserCreate' -and $state.Events -contains 'UsersGroupAdd') 'Explicit account creation was not exercised'
+}
+Test-Case 'profile creation respects native MAX_PATH buffer limit' {
+    # Managed stand-in only: never imports userenv.dll or creates a host profile.
+    if (-not ('OnelineSsh.UserProfile' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Text;
+namespace OnelineSsh {
+ public static class UserProfile {
+  public static string FixturePath;
+  public static int Calls;
+  public static int CreateProfile(string sid, string user, StringBuilder path, uint length) {
+   Calls++;
+   if (path.Capacity > 260 || length != (uint)path.Capacity) return unchecked((int)0x800706F7);
+   path.Append(FixturePath);
+   return 0;
+  }
+ }
+}
+'@
+    }
+    $state = New-SetupFixture 'create-profile'
+    $state.ProfileExists = $false
+    [OnelineSsh.UserProfile]::FixturePath = $state.Profile
+    [OnelineSsh.UserProfile]::Calls = 0
+    Invoke-MockedSetup $state | Out-Null
+    Assert-True ([OnelineSsh.UserProfile]::Calls -eq 1) 'Native profile boundary was not exercised'
 }
 Test-Case 'dry-run preserves existing keys, config and ACLs without OS access' {
     $state = New-SetupFixture 'dryrun-no-op'

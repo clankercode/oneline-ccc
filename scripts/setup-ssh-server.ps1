@@ -277,8 +277,10 @@ namespace OnelineSsh {
 }
 '@
         }
-        $buffer = New-Object Text.StringBuilder 1024
-        $result = [OnelineSsh.UserProfile]::CreateProfile($userSid, $UserName, $buffer, 1024)
+        # userenv profile RPC rejects buffers larger than MAX_PATH with 0x800706F7.
+        # See https://pinvoke.net/default.aspx/userenv/CreateProfile.html.
+        $buffer = New-Object Text.StringBuilder 260
+        $result = [OnelineSsh.UserProfile]::CreateProfile($userSid, $UserName, $buffer, [uint32]$buffer.Capacity)
         if ($result -ne 0) { throw "Windows CreateProfile failed (HRESULT $result). Initialize this user's profile manually and rerun." }
         $profilePath = $buffer.ToString()
     } else { $profilePath = $profile.LocalPath }
