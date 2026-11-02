@@ -51,6 +51,14 @@ supports those labels. It never supplies evidence or hides a required action.
 Tier availability and context capacity still need the evidence described in the
 production plan; selected budgets and fixture model names prove neither.
 
+Show the selected default request tier beside the exact model ID, for example
+`gpt-6.1-sol · Standard`, `gpt-6.1-sol · Fast` or
+`gpt-6.1-sol · Ultrafast`. This is a display label, not a model-ID suffix.
+The separate **Tiers** row describes available choices, such as **Up to
+Ultrafast**, independently of the default. The model table uses the same split:
+**Model / default** and **Available tiers**. Unknown eligibility stays **Not
+verified**. Keep evidence/provenance detail out of the tier value itself.
+
 Monochrome keeps the bands, bold headings, labels and focus/selection distinction.
 ANSI-16 and 256-color mappings, `NO_COLOR` and native-terminal contrast remain
 implementation checks. A browser rendering cannot establish those behaviors.

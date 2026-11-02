@@ -35,6 +35,7 @@ select { background: var(--raised); color: var(--text); border: 1px solid var(--
 .topbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; padding: 13px 20px; background: var(--raised); border-bottom: 1px solid var(--line); }
 .fixture { color: var(--muted); font-size: 11px; letter-spacing: .06em; }
 .accent { color: var(--accent); }
+.tier-label { color: var(--accent); font-weight: normal; white-space: nowrap; }
 .muted { color: var(--muted); }
 .good { color: var(--good); }
 .warn { color: var(--warn); }

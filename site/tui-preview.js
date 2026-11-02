@@ -1,12 +1,12 @@
 'use strict';
 
 const clients = [
-  { name: 'Codex', state: 'CONFIGURED', tone: 'good', model: 'gpt-6.1-sol', budget: '500000', tier: 'Ultrafast · fixture attestation', source: 'Local configuration', note: 'Configuration found. Authentication and inference are unverified.', action: 'Explore model choices' },
-  { name: 'Claude Code', state: 'NEEDS SETUP', tone: 'muted', model: 'Not selected', budget: 'Not selected', tier: 'Not selected', source: 'No managed profile', note: 'Choose a gateway and model before reviewing configuration.', action: 'Explore model choices' },
-  { name: 'OpenCode', state: 'DRIFT', tone: 'warn', model: 'glm-5.3', budget: '353000', tier: 'Default', source: 'Native and saved differ', note: 'The context budget changed outside this manager. Review both values before writing.', action: 'Review changes' },
-  { name: 'Pi', state: 'NOT INSTALLED', tone: 'muted', model: 'Not selected', budget: 'Not selected', tier: 'Not selected', source: 'Illustrative detection', note: 'Installation support needs its own verified client adapter.', action: 'Explore model choices' },
-  { name: 'Grok Build', state: 'UNVERIFIED', tone: 'warn', model: 'gpt-6.1-sol', budget: '272000', tier: 'Unverified', source: 'Adapter not verified', note: 'This client remains read-only until its schema and version are verified.', action: 'Explore model choices' },
-  { name: 'Hermes', state: 'CUSTOM', tone: 'muted', model: 'Custom configuration', budget: 'Unknown', tier: 'Unknown', source: 'Operator-owned configuration', note: 'Preserve custom settings. Inspect compatibility before any managed changes.', action: 'Explore model choices' }
+  { name: 'Codex', state: 'CONFIGURED', tone: 'good', model: 'gpt-6.1-sol', budget: '500000', defaultTier: 'Standard', availableTiers: 'Up to Ultrafast', source: 'Local configuration', note: 'Configuration found. Authentication and inference are unverified.', action: 'Explore model choices' },
+  { name: 'Claude Code', state: 'NEEDS SETUP', tone: 'muted', model: 'Not selected', budget: 'Not selected', defaultTier: null, availableTiers: 'Not selected', source: 'No managed profile', note: 'Choose a gateway and model before reviewing configuration.', action: 'Explore model choices' },
+  { name: 'OpenCode', state: 'DRIFT', tone: 'warn', model: 'glm-5.3', budget: '353000', defaultTier: 'Standard', availableTiers: 'Not verified', source: 'Native and saved differ', note: 'The context budget changed outside this manager. Review both values before writing.', action: 'Review changes' },
+  { name: 'Pi', state: 'NOT INSTALLED', tone: 'muted', model: 'Not selected', budget: 'Not selected', defaultTier: null, availableTiers: 'Not selected', source: 'Illustrative detection', note: 'Installation support needs its own verified client adapter.', action: 'Explore model choices' },
+  { name: 'Grok Build', state: 'UNVERIFIED', tone: 'warn', model: 'gpt-6.1-sol', budget: '272000', defaultTier: null, availableTiers: 'Not verified', source: 'Adapter not verified', note: 'This client remains read-only until its schema and version are verified.', action: 'Explore model choices' },
+  { name: 'Hermes', state: 'CUSTOM', tone: 'muted', model: 'Custom configuration', budget: 'Unknown', defaultTier: null, availableTiers: 'Unknown', source: 'Operator-owned configuration', note: 'Preserve custom settings. Inspect compatibility before any managed changes.', action: 'Explore model choices' }
 ];
 const screen = document.getElementById('screen');
 const consoleView = document.getElementById('console');
@@ -16,24 +16,25 @@ let selectedClient = 0;
 
 const title = (heading, subtitle, meta) => `<div class="screen-title"><div><h2>${heading}</h2><p>${subtitle}</p></div><span>${meta}</span></div>`;
 const action = (label, destination, secondary = false) => `<button type="button" class="action${secondary ? ' secondary' : ''}" data-open="${destination}">${label}</button>`;
+const modelLabel = client => `${client.model}${client.defaultTier ? ` <span class="tier-label">· ${client.defaultTier}</span>` : ''}`;
 
 function dashboard() {
   const c = clients[selectedClient];
   return title('Your clients', 'One gateway. Each client keeps its own configuration.', 'Snapshot: illustrative') + `
   <div class="workarea"><div><p class="section-label">CLIENT / CONFIGURATION</p><div class="client-list" aria-label="Select a client">
-  ${clients.map((client, index) => `<button type="button" class="client" data-client="${index}" aria-pressed="${index === selectedClient}"><span class="client-name">${client.name}<small>${client.model}</small></span><span class="state ${client.tone}">${client.state}</span></button>`).join('')}
+  ${clients.map((client, index) => `<button type="button" class="client" data-client="${index}" aria-pressed="${index === selectedClient}"><span class="client-name">${client.name}<small>${modelLabel(client)}</small></span><span class="state ${client.tone}">${client.state}</span></button>`).join('')}
   </div><p class="selected-note">Selected: ${c.name} · ${selectedClient + 1} of ${clients.length}</p><div class="narrow-controls">${action('Previous client', 'previous', true)}${action('Next client', 'next', true)}</div></div>
-  <div class="detail"><p class="section-label">SELECTED CLIENT</p><h3>${c.name} <span class="${c.tone}">/ ${c.state}</span></h3><dl><dt>Gateway</dt><dd>Gateway A</dd><dt>Model</dt><dd>${c.model}</dd><dt>Budget</dt><dd>${c.budget} ${/^\d/.test(c.budget) ? 'tokens' : ''}</dd><dt>Tier</dt><dd>${c.tier}</dd><dt>Source</dt><dd>${c.source}</dd><dt>Auth / API</dt><dd class="muted">Unverified / not tested</dd></dl><div class="notice"><strong>Before you continue</strong><p>${c.note}</p></div><div class="action-row">${action(c.action, c.state === 'DRIFT' ? 'review' : 'models')}</div></div></div>
+  <div class="detail"><p class="section-label">SELECTED CLIENT</p><h3>${c.name} <span class="${c.tone}">/ ${c.state}</span></h3><dl><dt>Gateway</dt><dd>Gateway A</dd><dt>Model</dt><dd>${modelLabel(c)}</dd><dt>Budget</dt><dd>${c.budget} ${/^\d/.test(c.budget) ? 'tokens' : ''}</dd><dt>Tiers</dt><dd>${c.availableTiers}</dd><dt>Source</dt><dd>${c.source}</dd><dt>Auth / API</dt><dd class="muted">Unverified / not tested</dd></dl><div class="notice"><strong>Before you continue</strong><p>${c.note}</p></div><div class="action-row">${action(c.action, c.state === 'DRIFT' ? 'review' : 'models')}</div></div></div>
   <div class="action-row"><span class="muted">Monitor: not installed · optional</span><span class="warn">1 configuration drift</span></div>`;
 }
 
 function models() {
   return title('Models & budgets', 'Keep model identity, context budget and request tier separate.', 'Gateway A / illustrative inventory') + `
-  <div class="table-wrap"><table><thead><tr><th>MODEL ID</th><th>CHOSEN BUDGET</th><th>REQUEST TIER</th><th>CAPACITY EVIDENCE</th></tr></thead><tbody>
-  <tr><td>gpt-6.1-sol</td><td data-label="Budget">500000</td><td data-label="Tier">Ultrafast*</td><td data-label="Capacity" class="warn">Not verified</td></tr>
-  <tr><td>glm-5.3</td><td data-label="Budget">353000</td><td data-label="Tier">Default</td><td data-label="Capacity" class="warn">Not verified</td></tr>
-  <tr><td>glm-5.3-flash</td><td data-label="Budget">272000</td><td data-label="Tier">Default</td><td data-label="Capacity" class="warn">Not verified</td></tr>
-  </tbody></table></div><p class="selected-note">* Tier shown from illustrative operator attestation, not an entitlement check.</p>
+  <div class="table-wrap"><table><thead><tr><th>MODEL / DEFAULT</th><th>CHOSEN BUDGET</th><th>AVAILABLE TIERS</th><th>CAPACITY EVIDENCE</th></tr></thead><tbody>
+  <tr><td>gpt-6.1-sol <span class="tier-label">· Standard</span></td><td data-label="Budget">500000</td><td data-label="Available tiers">Up to Ultrafast</td><td data-label="Capacity" class="warn">Not verified</td></tr>
+  <tr><td>glm-5.3 <span class="tier-label">· Standard</span></td><td data-label="Budget">353000</td><td data-label="Available tiers">Not verified</td><td data-label="Capacity" class="warn">Not verified</td></tr>
+  <tr><td>glm-5.3-flash <span class="tier-label">· Standard</span></td><td data-label="Budget">272000</td><td data-label="Available tiers">Not verified</td><td data-label="Capacity" class="warn">Not verified</td></tr>
+  </tbody></table></div>
   <div class="notice"><strong>Budgets are your limits, not provider capacities.</strong><p>A shared budget must fit every linked model. Model visibility alone does not establish context capacity, protocol support or tier eligibility.</p></div>
   <div class="action-row">${action('Review budget change', 'review')}${action('Back to clients', 'dashboard', true)}</div>`;
 }
