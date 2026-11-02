@@ -35,9 +35,31 @@ foreach ($diagnosticRule in $diagnosticRules) {
     $diagnosticPackageProperty = $diagnosticApplication.PSObject.Properties['Package']
     $diagnosticPackage = $null
     if ($null -ne $diagnosticPackageProperty) { $diagnosticPackage = $diagnosticPackageProperty.Value }
+    $diagnosticCimApplication = @{}
+    foreach ($diagnosticField in @('Package', 'AppPath')) {
+        $diagnosticCimProperty = $diagnosticApplication.CimInstanceProperties[$diagnosticField]
+        if ($null -ne $diagnosticCimProperty) { $diagnosticCimApplication[$diagnosticField] = $diagnosticCimProperty.Value }
+    }
+    $diagnosticCom = @{}
+    try {
+        $diagnosticPolicy = New-Object -ComObject HNetCfg.FwPolicy2
+        try {
+            $diagnosticComRule = $diagnosticPolicy.Rules.Item($diagnosticRule.Name)
+            $diagnosticCom.Lookup = 'Name'
+        } catch {
+            $diagnosticComRule = $diagnosticPolicy.Rules.Item($diagnosticRule.DisplayName)
+            $diagnosticCom.Lookup = 'DisplayName'
+        }
+        foreach ($diagnosticField in @('Name', 'ApplicationName', 'LocalAppPackageId', 'LocalUserOwner', 'LocalUserAuthorizedList', 'ServiceName', 'Profiles', 'Protocol', 'LocalPorts', 'RemoteAddresses')) {
+            try { $diagnosticCom[$diagnosticField] = $diagnosticComRule.$diagnosticField }
+            catch { $diagnosticCom[$diagnosticField] = 'Unavailable: ' + $_.Exception.Message }
+        }
+    } catch { $diagnosticCom.Error = $_.Exception.Message }
     [pscustomobject]@{
-        Rule = @($diagnosticRule | Select-Object Name, Enabled, Direction, Action, Profile, Owner, PolicyStoreSourceType)
-        Application = @($diagnosticApplication | Select-Object Program, Package)
+        Rule = @($diagnosticRule | Select-Object Name, DisplayName, InstanceID, Enabled, Direction, Action, Profile, Owner, PolicyStoreSourceType)
+        Application = @($diagnosticApplication | Select-Object Program, Package, AppPath)
+        CimApplication = $diagnosticCimApplication
+        ComRule = $diagnosticCom
         ApplicationType = @($diagnosticApplication.PSObject.TypeNames)
         ApplicationPropertyNames = @($diagnosticApplication.PSObject.Properties | Select-Object -ExpandProperty Name)
         AdaptedPackagePropertyPresent = ($null -ne $diagnosticPackageProperty)

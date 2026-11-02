@@ -46,5 +46,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
-pathlib.Path(args.ready_file).write_text(str(server.server_port), encoding='ascii')
+ready = pathlib.Path(args.ready_file)
+pending = ready.with_suffix('.pending')
+pending.write_text(str(server.server_port), encoding='ascii')
+pending.replace(ready)
 server.serve_forever()
