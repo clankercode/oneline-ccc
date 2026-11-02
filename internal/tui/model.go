@@ -37,6 +37,7 @@ type model struct {
 	plan                         *core.Plan
 	requested                    core.Desired
 	requestedID                  string
+	reconcileClient              string
 	reviewPage                   int
 	reviewRead                   bool
 	models                       []core.ModelInfo

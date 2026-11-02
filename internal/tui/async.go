@@ -29,6 +29,9 @@ func (m *model) complete(r result) tea.Cmd {
 	}
 	m.busy = ""
 	if r.err != nil {
+		if r.kind == "inspect" {
+			m.reconcileClient = ""
+		}
 		m.status = "Action refused or failed: " + m.public(r.err.Error())
 		if r.kind == "apply" {
 			if receipt, ok := r.value.(core.Receipt); ok && receipt.ID != "" {
@@ -49,11 +52,15 @@ func (m *model) complete(r result) tea.Cmd {
 	case "inspect":
 		m.snapshot = r.value.(core.Snapshot)
 		for _, c := range m.snapshot.Clients {
-			if _, ok := m.drafts[c.ID]; !ok {
+			if _, ok := m.drafts[c.ID]; !ok || m.reconcileClient == c.ID {
 				m.drafts[c.ID] = desiredClient(c)
+				if m.reconcileClient == c.ID {
+					m.reconcileClient = ""
+				}
 			}
 			m.baselines[c.ID] = desiredClient(c)
 		}
+		m.reconcileClient = ""
 		if m.selected == "" && len(m.snapshot.Clients) > 0 {
 			m.selected = m.snapshot.Clients[0].ID
 		}
@@ -82,6 +89,9 @@ func (m *model) complete(r result) tea.Cmd {
 		// then reconciles actual state; failures preserve the previous snapshot.
 		if m.plan != nil {
 			m.drafts[m.plan.ClientID] = m.plan.Desired
+			if receipt.Outcome == "Succeeded" {
+				m.reconcileClient = m.plan.ClientID
+			}
 		}
 		m.plan = nil
 		m.goTo("Dashboard")

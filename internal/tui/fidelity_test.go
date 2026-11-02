@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -29,6 +30,35 @@ func TestFailedApplyKeepsRecoveryReceipt(t *testing.T) {
 				t.Fatal("jobs hides failed receipt")
 			}
 		})
+	}
+}
+
+type canonicalApplyBackend struct{ *fakeBackend }
+
+func (b canonicalApplyBackend) Apply(ctx context.Context, id, revision string) (core.Receipt, error) {
+	r, err := b.fakeBackend.Apply(ctx, id, revision)
+	if err == nil {
+		b.snapshot.Clients[0].Profile.Catalog = "/fixture/generated-catalog.json"
+	}
+	return r, err
+}
+func TestSuccessfulApplyReconcilesCanonicalValuesOnlyForAppliedClient(t *testing.T) {
+	f := fixture()
+	m := New(canonicalApplyBackend{f}, Options{NoColor: true}).(*model)
+	run(t, m, m.Init())
+	other := m.drafts["pi"]
+	other.Profile.Model = "retained-other-draft"
+	m.drafts["pi"] = other
+	activate(t, m, "client:codex")
+	activate(t, m, "enabled")
+	run(t, m, activate(t, m, "plan"))
+	readReview(t, m)
+	run(t, m, activate(t, m, "review:apply"))
+	if m.drafts["codex"] != m.baselines["codex"] {
+		t.Fatal("successful apply left generated metadata as a dirty draft")
+	}
+	if m.drafts["pi"] != other {
+		t.Fatal("successful apply discarded another client's draft")
 	}
 }
 func TestWideDashboardHasAdjacentListAndDetail(t *testing.T) {
