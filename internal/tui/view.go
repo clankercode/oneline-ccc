@@ -60,7 +60,17 @@ func (m *model) View() tea.View {
 	if m.editor != nil {
 		footer = []string{"Type / paste  Enter save  Esc cancel", "Left/Right caret; text keys stay here"}
 		if m.editor.field == "key" {
-			footer = []string{"Type / paste  Tab/Shift+Tab options", "Space toggle  Enter act  Esc cancel"}
+			footer = []string{"Tab/Shift+Tab options  Esc cancel", ""}
+			switch m.editor.focus {
+			case 0:
+				footer = []string{"Type/paste  Left/Right caret", "Tab options  Enter focus Save  Esc cancel"}
+			case 1:
+				footer[1] = "Space/Enter toggle persistence"
+			case 2:
+				footer[1] = "Enter save key"
+			case 3:
+				footer[1] = "Enter drop unsaved key"
+			}
 		}
 	}
 	if m.modal == "palette" {

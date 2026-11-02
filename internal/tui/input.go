@@ -117,11 +117,15 @@ func (m *model) activate(c control) tea.Cmd {
 	p := m.draft().Profile
 	switch {
 	case strings.HasPrefix(id, "discovered:"):
-		i, err := strconv.Atoi(strings.TrimPrefix(id, "discovered:"))
-		if err == nil && i >= 0 && i < len(m.models) {
-			p.Model = m.models[i].ID
-			m.changeProfile(p)
+		for _, info := range m.models {
+			if discoveredControlID(info) == id {
+				p.Model = info.ID
+				m.changeProfile(p)
+				return nil
+			}
 		}
+		m.status = "Advertised model is no longer listed; discover again or choose a model"
+		m.focusID("discover")
 	case strings.HasPrefix(id, "model:"):
 		p.Model = strings.TrimPrefix(id, "model:")
 		m.changeProfile(p)

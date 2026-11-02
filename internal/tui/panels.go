@@ -31,6 +31,13 @@ func (m *model) reviewPages() [][]string {
 	}
 	return pages
 }
+
+// Use one bound for Help movement, resize and rendering.
+func (m *model) helpPagination() (size, last int) {
+	size = max(1, m.height-8)
+	last = max(0, (len(m.catalog())-1)/size)
+	return
+}
 func (m *model) modalRows() []row {
 	var rs []row
 	text := func(s string) { rs = append(rs, row{text: m.public(s)}) }
@@ -46,10 +53,9 @@ func (m *model) modalRows() []row {
 		}
 	case "help":
 		cs := m.catalog()
-		count := max(1, m.height-8)
-		pages := (len(cs) + count - 1) / count
-		page := min(m.modalFocus, max(0, pages-1))
-		text(fmt.Sprintf("Shortcut help | Page %d of %d", page+1, pages))
+		count, last := m.helpPagination()
+		page := max(0, min(m.modalFocus, last))
+		text(fmt.Sprintf("Shortcut help | Page %d of %d", page+1, last+1))
 		for _, c := range cs[page*count : min((page+1)*count, len(cs))] {
 			if c.key != "" {
 				text(c.key + "  " + c.label)

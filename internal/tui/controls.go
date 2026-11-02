@@ -4,11 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/clankercode/oneline-ccc/internal/core"
 )
 
 var errUnavailable = errors.New("backend did not provide a command")
 
 type control struct{ id, label, reason string }
+
+// Quoted fields preserve exact model IDs and provenance without delimiter
+// collisions. Inventory order and advertised capacity are not identities.
+func discoveredControlID(info core.ModelInfo) string {
+	return fmt.Sprintf("discovered:%q:%q", info.Source, info.ID)
+}
 
 func (m *model) controls() []control {
 	cs := []control{{"nav:Dashboard", "Dashboard", ""}, {"nav:Models", "Models", ""}, {"nav:Review", "Review", ""}, {"nav:Jobs", "Jobs", ""}, {"nav:More", "More", ""}}
@@ -51,8 +59,8 @@ func (m *model) controls() []control {
 		for _, id := range []string{"gpt-6.1-sol", "glm-5.3", "glm-5.3-flash"} {
 			add("model:"+id, choice(d.Profile.Model == id)+" Model "+id, why)
 		}
-		for i, info := range m.models {
-			add(fmt.Sprintf("discovered:%d", i), "Advertised model "+info.ID+" | "+info.Source, why)
+		for _, info := range m.models {
+			add(discoveredControlID(info), "Advertised model "+info.ID+" | "+info.Source, why)
 		}
 		for _, b := range []int64{272000, 353000, 500000} {
 			add(fmt.Sprintf("budget:%d", b), choice(d.Profile.Budget == b)+fmt.Sprintf(" Budget %d", b), why)

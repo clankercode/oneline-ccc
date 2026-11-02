@@ -11,6 +11,13 @@ type location struct {
 	focus, scroll int
 }
 
+// A Back frame belongs to one visit. The per-screen cache below serves normal
+// revisits and must never overwrite an earlier visit still on the Back stack.
+type navigationFrame struct {
+	screen   string
+	location location
+}
+
 func (m *model) location() location { return location{m.focused().id, m.focus, m.scroll} }
 func (m *model) restore(p location) {
 	m.focus = max(0, min(p.focus, len(m.controls())-1))
@@ -37,7 +44,7 @@ func (m *model) goTo(screen string) {
 		return
 	}
 	m.remember()
-	m.history = append(m.history, m.screen)
+	m.history = append(m.history, navigationFrame{m.screen, m.locations[m.screen]})
 	m.enter(screen)
 }
 func (m *model) back() {
@@ -47,8 +54,11 @@ func (m *model) back() {
 	m.remember()
 	target := "Dashboard"
 	if n := len(m.history); n > 0 {
-		target = m.history[n-1]
+		frame := m.history[n-1]
 		m.history = m.history[:n-1]
+		m.screen, m.editor = frame.screen, nil
+		m.restore(frame.location)
+		return
 	} else if m.screen == "Review" {
 		target = "Models"
 	}
@@ -138,6 +148,7 @@ func (m *model) moveRegion(step int) {
 				break
 			}
 		}
+		// Missing anchors stay in the destination region at its first control.
 		m.focus = first
 		m.scroll = -1
 		return

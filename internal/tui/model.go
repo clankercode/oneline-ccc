@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -35,7 +36,7 @@ type model struct {
 	savedFocus, modalFocus       int
 	savedScroll                  int
 	locations                    map[string]location
-	history                      []string
+	history                      []navigationFrame
 	regionFocus                  map[string]string
 	savedControlID               string
 	query, filter                string
@@ -73,6 +74,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.width = max(1, v.Width)
 		m.height = max(1, v.Height)
+		if m.modal == "help" {
+			_, last := m.helpPagination()
+			m.modalFocus = max(0, min(m.modalFocus, last))
+		}
 	case result:
 		return m, m.complete(v)
 	case exportResult:
@@ -169,6 +174,11 @@ func (m *model) focusID(id string) {
 			m.focus = i
 			return
 		}
+	}
+	// A vanished advertised identity must not fall through to a replacement row
+	// at its former index. This applies to refresh, Back, editors and dialogs.
+	if strings.HasPrefix(id, "discovered:") {
+		m.focusID("discover")
 	}
 }
 

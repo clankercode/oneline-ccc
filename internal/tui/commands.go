@@ -52,10 +52,12 @@ func (m *model) modalKey(k tea.KeyPressMsg) tea.Cmd {
 			m.goTo(target)
 		}
 	case "help":
+		_, last := m.helpPagination()
+		m.modalFocus = max(0, min(m.modalFocus, last))
 		if key == "enter" || key == "?" {
 			m.closeModal()
 		} else if key == "pgdown" || key == "down" || key == "tab" {
-			m.modalFocus++
+			m.modalFocus = min(last, m.modalFocus+1)
 		} else if key == "pgup" || key == "up" || key == "shift+tab" {
 			m.modalFocus = max(0, m.modalFocus-1)
 		}

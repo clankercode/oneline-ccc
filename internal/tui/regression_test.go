@@ -13,7 +13,7 @@ func TestDiscoveryVisibleWithoutAssertingCapacityOrTiers(t *testing.T) {
 	m, _ := loaded(t)
 	activate(t, m, "client:codex")
 	run(t, m, activate(t, m, "discover"))
-	activate(t, m, "discovered:0")
+	activate(t, m, discoveredControlID(m.models[0]))
 	if m.draft().Profile.Model != "exact-模型" || m.draft().Profile.Budget != 500000 || m.draft().Profile.CapacityConfirmed || m.draft().Profile.TiersConfirmed {
 		t.Fatal("discovery inferred capabilities or lost exact ID")
 	}
