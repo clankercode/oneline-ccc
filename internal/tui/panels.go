@@ -48,11 +48,12 @@ func (m *model) modalRows() []row {
 	case "help":
 		pages, _ := m.helpPages()
 		page := max(0, min(m.modalFocus, len(pages)-1))
-		text(fmt.Sprintf("Shortcut help | Page %d of %d", page+1, len(pages)))
+		rs = append(rs, row{text: m.heading(fmt.Sprintf("Shortcut help | Page %d of %d", page+1, len(pages)))})
 		for _, line := range pages[page] {
-			text(line)
+			// helpPages sanitizes source text before applying Help styles.
+			rs = append(rs, row{text: line})
 		}
-		rs = append(rs, row{text: "> Close help (Enter / Esc)", focus: true})
+		rs = append(rs, row{text: helpClose, focus: true})
 	case "palette":
 		text("Search: " + m.query)
 		cs := m.paletteCommands()

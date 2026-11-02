@@ -41,10 +41,20 @@ func TestHelpEveryPageIsReadable(t *testing.T) {
 				}
 				press(m, "down")
 			}
-			// Every catalog binding must occur in the complete readable pages,
-			// including descriptions that wrap across terminal rows.
+			// Help retains every keyed command; destination-only catalog entries
+			// belong in Commands. Generic activation wording describes actual
+			// focused-control behavior rather than promising Configure everywhere.
 			joined := strings.Join(strings.Fields(strings.Join(all, " ")), " ")
 			for _, c := range m.catalog() {
+				if c.key == "" {
+					continue
+				}
+				if !strings.Contains(joined, c.key) {
+					t.Fatalf("missing readable key %q", c.key)
+				}
+				if c.id == "configure" || c.id == "enabled" || c.id == "select" {
+					continue
+				}
 				if !strings.Contains(joined, strings.Join(strings.Fields(c.label), " ")) {
 					t.Fatalf("missing readable binding %q", c.label)
 				}
