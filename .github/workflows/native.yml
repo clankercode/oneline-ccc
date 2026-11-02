@@ -1,0 +1,104 @@
+name: Native application gates
+
+on:
+  push:
+    branches: [main, feat/native-app]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    env:
+      GOMAXPROCS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare isolated scratch paths
+        shell: bash
+        run: |
+          mkdir -p .cache/go-tmp .cache/go-build
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          root=Path.cwd()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              for name,part in [('TMPDIR','go-tmp'),('GOTMPDIR','go-tmp'),('GOCACHE','go-build')]:
+                  f.write(name+'='+str(root/'.cache'/part)+'\n')
+              f.write('ONELINE_CODEX_TEST_CATALOG='+str(root/'.cache'/'native-catalog.json')+'\n')
+          PY
+      - name: Install pinned native Codex fixture
+        run: npm install --prefix .cache/native-codex --no-audit --no-fund @openai/codex@0.166.0
+      - name: Select fixture binary and public metadata
+        shell: bash
+        run: |
+          python tests/native-codex-path.py .cache/native-codex
+          go run ./tests/native-catalog .cache/native-catalog.json
+      - name: Native tests and static checks
+        shell: bash
+        run: |
+          go test -p 2 -count=1 ./...
+          go vet -p 2 ./...
+      - name: Race tests
+        if: runner.os != 'Windows'
+        shell: bash
+        run: go test -race -p 2 -count=1 ./...
+      - name: Build and inspect redirected CLI output
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go build -trimpath -o .cache/oneline-ccc ./cmd/oneline-ccc
+          .cache/oneline-ccc version
+          .cache/oneline-ccc --help
+
+  builds:
+    name: Static build (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, darwin, windows]
+        arch: [amd64, arm64]
+    env:
+      GOMAXPROCS: '2'
+      CGO_ENABLED: '0'
+      GOOS: ${{ matrix.os }}
+      GOARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.1'
+      - name: Build standalone executable
+        shell: bash
+        run: |
+          mkdir -p artifacts .cache/go-tmp
+          export TMPDIR="$PWD/.cache/go-tmp" GOTMPDIR="$PWD/.cache/go-tmp"
+          suffix=''
+          if [ "$GOOS" = windows ]; then suffix='.exe'; fi
+          go build -trimpath -ldflags '-s -w' -o "artifacts/oneline-ccc-$GOOS-$GOARCH$suffix" ./cmd/oneline-ccc
+          sha256sum artifacts/* > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-development-${{ matrix.os }}-${{ matrix.arch }}
+          path: artifacts/
+          retention-days: 14
