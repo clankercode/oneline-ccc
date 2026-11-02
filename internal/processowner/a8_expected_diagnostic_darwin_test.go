@@ -2,7 +2,25 @@
 
 package processowner
 
-import "testing"
+import (
+	"flag"
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	for _, arg := range os.Args {
+		if arg == "owned-cleanup-fixture" {
+			// Helpers speak a small stdout protocol; keep their test runner quiet.
+			os.Exit(m.Run())
+		}
+	}
+	// Successful nested subtests otherwise discard their buffered t.Log output.
+	if err := flag.Set("test.v", "true"); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 // This isolated diagnostic branch intentionally fails only the Darwin race
 // gate, so the existing non-verbose CI job retains native characterization logs.
