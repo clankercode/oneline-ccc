@@ -120,15 +120,11 @@ func (m *model) screenRows() []row {
 	case "Service":
 		return m.serviceRows()
 	case "Repair":
-		text("Manual repair brief only; no automatic agent execution.")
-		if m.repair != "" {
-			text(m.repair)
-		}
+		return m.repairRows()
 	case "SSH":
 		return m.sshRows()
 	case "Utilities":
-		text("Utility install/update is unavailable: no verified installer.")
-		text("No broader adapters are promised by this build.")
+		return m.utilitiesRows()
 	case "Settings":
 		return m.settingsRows()
 	}
