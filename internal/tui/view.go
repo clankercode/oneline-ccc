@@ -107,7 +107,6 @@ func (m *model) controlRow(c control, index int) row {
 }
 func (m *model) screenRows() []row {
 	var rs []row
-	text := func(s string) { rs = append(rs, row{text: m.public(s)}) }
 	switch m.screen {
 	case "Models":
 		return m.modelsRows()

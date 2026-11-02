@@ -1,11 +1,9 @@
 package tui
 
-import "runtime"
-
 func (m *model) sshRows() []row {
 	status := "Availability / not verified"
-	if runtime.GOOS != "windows" {
-		status = "Unavailable / Windows command only"
+	if m.sshReason() != "" {
+		status = "Unavailable / helper not ready"
 	}
 	if m.busy == "ssh" {
 		status = "Handoff pending / outcome awaited"
@@ -27,8 +25,8 @@ func (m *model) sshRows() []row {
 		facts = append(facts, m.detailRows(fact[0], fact[1], width)...)
 	}
 	facts = append(facts, row{}, row{text: m.note("A helper exit does not verify SSH access. Windows setup-script success is separate from this native handoff.")})
-	if runtime.GOOS != "windows" {
-		facts = append(facts, row{}, row{text: m.note("SSH setup handoff is available only through the explicit Windows command")})
+	if reason := m.sshReason(); reason != "" {
+		facts = append(facts, row{}, row{text: m.note(reason)})
 	} else {
 		facts = append(facts, row{}, row{text: m.note("The backend checks for a configured Windows helper on request; availability is not yet verified.")})
 	}

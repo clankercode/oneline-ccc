@@ -9,6 +9,21 @@ import (
 
 type backendWithoutSSHAvailability struct{ core.Backend }
 
+func TestSSHPageUsesBackendAvailabilityWithoutPreparingWork(t *testing.T) {
+	for _, available := range []bool{false, true} {
+		m, f := loaded(t)
+		f.sshAvailable = available
+		m.goTo("SSH")
+		view := m.View().Content
+		if strings.Contains(view, "Unavailable /") == available {
+			t.Fatalf("page and backend availability disagree: available=%v", available)
+		}
+		if f.commandAction != "" || f.serviceCalls != 0 {
+			t.Fatal("availability rendering prepared external work")
+		}
+	}
+}
+
 func TestBackendWithoutSSHAvailabilityKeepsHandoffUnavailable(t *testing.T) {
 	f := fixture()
 	f.sshAvailable = true
