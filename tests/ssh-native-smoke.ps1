@@ -97,19 +97,34 @@ $oldConfig = [Convert]::ToBase64String([IO.File]::ReadAllBytes($config))
 $oldKeyAcl = (Get-Acl $authorized).Sddl
 $oldConfigAcl = (Get-Acl $config).Sddl
 $oldRuleNames = @(Get-NetFirewallRule -Name 'Oneline-CCC-SSH-*' | Select-Object -ExpandProperty Name | Sort-Object)
-$script:restartCalls = 0
+if (Get-Variable -Name OnelineCccSshNativeRollbackState -Scope Global -ErrorAction SilentlyContinue) { throw 'Rollback fixture state already exists' }
+$global:OnelineCccSshNativeRollbackState = @{RestartCalls = 0}
 function Restart-Service {
     [CmdletBinding()]param([string]$Name)
-    $script:restartCalls++
-    if ($script:restartCalls -eq 1) { throw 'Forced fixture service failure' }
+    $global:OnelineCccSshNativeRollbackState.RestartCalls++
+    if ($global:OnelineCccSshNativeRollbackState.RestartCalls -eq 1) { throw 'Forced fixture service failure' }
     Microsoft.PowerShell.Management\Restart-Service -Name $Name
 }
 $refused = $false
+$failureMessage = $null
+$failureType = $null
 try {
     & (Join-Path $repository 'scripts/setup-ssh-server.ps1') -UserName onelinefixture -PublicKeyFile ($secondKey + '.pub') -NonInteractive
-} catch { $refused = $true }
-finally { Remove-Item Function:Restart-Service }
-if (-not $refused -or $script:restartCalls -lt 1) { throw 'Late-failure regression did not reach the intended service boundary' }
+} catch {
+    $refused = $true
+    $failureMessage = $_.Exception.Message
+    $failureType = $_.Exception.GetType().FullName
+} finally {
+    $restartCalls = $global:OnelineCccSshNativeRollbackState.RestartCalls
+    Remove-Item Function:Restart-Service
+    Remove-Variable -Name OnelineCccSshNativeRollbackState -Scope Global
+}
+if (-not $refused -or $restartCalls -lt 1 -or $failureMessage -cne 'Forced fixture service failure') {
+    $failureLine = ([string]$failureMessage -split '\r?\n')[0]
+    if ($failureLine.Length -gt 240) { $failureLine = $failureLine.Substring(0, 240) }
+    Write-Output ("Rollback boundary diagnostic: calls={0}, exceptionType={1}, firstLine={2}" -f $restartCalls, $failureType, $failureLine)
+    throw 'Late-failure regression did not reach the intended service boundary'
+}
 if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($authorized)) -cne $oldKeys -or (Get-Acl $authorized).Sddl -cne $oldKeyAcl) { throw 'Failed setup retained new authorization or changed key ACLs' }
 if ([Convert]::ToBase64String([IO.File]::ReadAllBytes($config)) -cne $oldConfig -or (Get-Acl $config).Sddl -cne $oldConfigAcl) { throw 'Failed setup did not restore exact config and ACLs' }
 $newRuleNames = @(Get-NetFirewallRule -Name 'Oneline-CCC-SSH-*' | Select-Object -ExpandProperty Name | Sort-Object)
