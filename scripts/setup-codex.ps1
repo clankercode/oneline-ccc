@@ -32,10 +32,13 @@ $ErrorActionPreference = 'Stop'
 $beginMarker = '# BEGIN oneline-ccc LLMP managed configuration'
 $endMarker = '# END oneline-ccc LLMP managed configuration'
 
-function Read-RequiredText([string]$Value, [string]$Prompt) {
+function Read-RequiredText([string]$Value, [string]$Prompt, [string]$DefaultValue) {
     if (-not [string]::IsNullOrWhiteSpace($Value)) { return $Value.Trim() }
+    if ($NonInteractive -and -not [string]::IsNullOrWhiteSpace($DefaultValue)) { return $DefaultValue }
     if ($NonInteractive) { throw 'Required input missing. Supply BaseUrl, Model and ContextWindow explicitly in noninteractive mode.' }
+    if (-not [string]::IsNullOrWhiteSpace($DefaultValue)) { $Prompt += ' [' + $DefaultValue + '; Enter to keep]' }
     $answer = Read-Host $Prompt
+    if ([string]::IsNullOrWhiteSpace($answer) -and -not [string]::IsNullOrWhiteSpace($DefaultValue)) { return $DefaultValue }
     if ([string]::IsNullOrWhiteSpace($answer)) { throw 'Required input was empty.' }
     return $answer.Trim()
 }
@@ -717,7 +720,7 @@ function Test-CodexConfigStagePrivate([string]$Path) {
     return $true
 }
 
-function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtable]$Diagnostics) {
+function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtable]$Diagnostics, [ValidateRange(1,2)][int]$RequiredStops = 2) {
     try {
         $full = [IO.Path]::GetFullPath($Stage)
         $root = [IO.Path]::GetFullPath($ScratchRoot)
@@ -730,7 +733,7 @@ function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtabl
         }
         $allowResidue = $env:OS -eq 'Windows_NT' -and $Diagnostics -and
             $Diagnostics.Protected -and $Diagnostics.Validated -and
-            $Diagnostics.ReapedStops -eq 2 -and $Diagnostics.Snapshot -ceq 'complete'
+            $Diagnostics.ReapedStops -eq $RequiredStops -and $Diagnostics.Snapshot -ceq 'complete'
         $configRemoved = $false
         $clock = [Diagnostics.Stopwatch]::StartNew()
         for ($attempt = 0; ; $attempt++) {
@@ -913,6 +916,116 @@ function Get-CodexDefaultConfig(
     }
 }
 
+
+function Get-ManagedLLMPDefaults([string]$Text) {
+    if (-not (Test-CodexManagedDefault $Text)) { return $null }
+    $result = @{}
+    foreach ($field in @('model', 'service_tier', 'model_catalog_json', 'base_url')) {
+        $match = [regex]::Match($Text, "(?m)^" + $field + " = '([^'\r\n]*)'\r?$")
+        if ($match.Success) { $result[$field] = $match.Groups[1].Value }
+    }
+    foreach ($field in @('model_context_window', 'model_auto_compact_token_limit')) {
+        $match = [regex]::Match($Text, '(?m)^' + $field + ' = ([0-9]+)\r?$')
+        if ($match.Success) { $result[$field] = [long]$match.Groups[1].Value }
+    }
+    if ($result.base_url) { $result.base_url = (Get-ValidatedEndpoint $result.base_url -ExistingProfile).AbsoluteUri.TrimEnd('/') }
+    return $result
+}
+
+function Get-NativeLLMPDefaults([string]$Text, [string]$Executable, [string]$ScratchRoot) {
+    $stage = $null; $connection = $null
+    $diagnostics = @{Children = @(); Stop = 'unknown'; Snapshot = 'unknown'; Transports = @(); Stops = @(); ReapedStops = 0; Protected = $false; Validated = $false}
+    try {
+        $root = [IO.Path]::GetFullPath($ScratchRoot)
+        $stage = Join-Path $root ('codex-default-' + [Guid]::NewGuid().ToString('N'))
+        $null = [IO.Directory]::CreateDirectory($stage)
+        Protect-CodexConfigStage $stage
+        $diagnostics.Protected = $true
+        $path = Join-Path $stage 'config.toml'
+        [IO.File]::WriteAllText($path, $Text, (New-Object Text.UTF8Encoding($false)))
+        $connection = Start-CodexConfigProcess $Executable $stage $root
+        $connection.Diagnostics = $diagnostics
+        Initialize-CodexConfigConnection $connection
+        $read = Invoke-CodexConfigRpc $connection 'config/read' @{includeLayers = $true}
+        $layers = @($read.layers | Where-Object {
+            $_.name.type -eq 'user' -and -not $_.name.profile -and [IO.Path]::GetFullPath($_.name.file) -eq $path
+        })
+        if ($layers.Count -ne 1) { throw 'User layer missing.' }
+        $config = $layers[0].config
+        $result = @{}
+        if ($config.model_provider -ceq 'oneline_llmp') {
+            $provider = $config.model_providers.oneline_llmp
+            if ($provider.base_url -is [string] -and $provider.base_url) {
+                $result.base_url = (Get-ValidatedEndpoint $provider.base_url -ExistingProfile).AbsoluteUri.TrimEnd('/')
+                foreach ($field in @('model', 'service_tier', 'model_catalog_json')) {
+                    if ($config.$field -is [string] -and $config.$field) { $result[$field] = $config.$field }
+                }
+                foreach ($field in @('model_context_window', 'model_auto_compact_token_limit')) {
+                    if ($null -ne $config.$field) { $result[$field] = [long]$config.$field }
+                }
+            }
+        }
+        $diagnostics.Validated = $true
+        return $result
+    } catch { throw 'Existing LLMP defaults could not be read safely. Verify the main configuration and installed Codex; existing files were not changed.' }
+    finally {
+        try { Stop-CodexConfigProcess $connection }
+        finally { if ($stage) { Remove-CodexConfigStage $stage $root $diagnostics 1 } }
+    }
+}
+
+function Get-LLMPInputDefaults([string]$MainText, [string]$ProfileText, [string]$Executable, [string]$ScratchRoot) {
+    if (-not [string]::IsNullOrWhiteSpace($MainText)) {
+        $managed = Get-ManagedLLMPDefaults $MainText
+        if ($managed) { return $managed }
+        if ($DryRun) {
+            Write-Host 'DryRun uses explicit inputs when the main config requires native parsing.'
+            return @{}
+        }
+        if ($Executable) {
+            $current = Get-NativeLLMPDefaults $MainText $Executable $ScratchRoot
+            if ($current.Count -gt 0) { return $current }
+        }
+    }
+    $profile = Get-ManagedLLMPDefaults $ProfileText
+    if ($profile) { return $profile }
+    return @{}
+}
+
+function Get-LLMPUserApiKey {
+    if ($env:OS -eq 'Windows_NT') { return [Environment]::GetEnvironmentVariable('LLMP_API_KEY', 'User') }
+    return $null
+}
+
+function Read-LLMPApiKey([Security.SecureString]$Value, [bool]$Specified) {
+    if ($DryRun -or $Specified) { return $Value }
+    $saved = [Environment]::GetEnvironmentVariable('LLMP_API_KEY', 'Process')
+    if ([string]::IsNullOrWhiteSpace($saved)) { $saved = Get-LLMPUserApiKey }
+    $savedKey = $null
+    if (-not [string]::IsNullOrWhiteSpace($saved)) { $savedKey = ConvertTo-SecureString $saved -AsPlainText -Force }
+    $saved = $null
+    if ($NonInteractive) {
+        if ($savedKey) { return $savedKey }
+        throw 'API key missing. Set LLMP_API_KEY in the environment or supply a SecureString ApiKey.'
+    }
+    $prompt = 'LLMP API key (stored in your Windows user environment)'
+    if ($savedKey) { $prompt = 'LLMP API key [Enter to keep saved key; value hidden]' }
+    $entered = Read-Host $prompt -AsSecureString
+    if ($entered -and $entered.Length -gt 0) { return $entered }
+    if ($savedKey) { return $savedKey }
+    throw 'API key must not be empty.'
+}
+
+function Test-InstallerCatalogPath([string]$Path, [string]$CodexHome) {
+    if (-not $Path) { return $false }
+    $full = [IO.Path]::GetFullPath($Path)
+    $directory = [IO.Path]::GetFullPath((Join-Path $CodexHome '.catalogs'))
+    $comparison = [StringComparison]::Ordinal
+    if ($env:OS -eq 'Windows_NT') { $comparison = [StringComparison]::OrdinalIgnoreCase }
+    return [string]::Equals([IO.Path]::GetDirectoryName($full), $directory, $comparison) -and
+        [IO.Path]::GetFileName($full) -cmatch '^oneline-[0-9a-f]{64}\.json$'
+}
+
 function Publish-CodexConfigFile([hashtable]$File) {
     if ($File.Existed) {
         $File.Backup = $File.Path + '.backup-' + [Guid]::NewGuid().ToString('N')
@@ -986,18 +1099,26 @@ try {
         throw 'SSH server setup requires interactive mode for user, key and firewall choices. Run the SSH helper directly for unattended setup.'
     }
     if ($EnableSshServer -and $env:OS -ne 'Windows_NT' -and -not $DryRun) { throw 'SSH server setup requires Windows.' }
-    $BaseUrl = Read-RequiredText $BaseUrl 'LLMP OpenAI-compatible base URL (include /v1 if required)'
+    $configHome = $env:CODEX_HOME
+    if ([string]::IsNullOrWhiteSpace($configHome)) { $configHome = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
+    $configHome = [IO.Path]::GetFullPath($configHome)
+    $configPath = Join-Path $configHome 'llmp.config.toml'
+    $defaultPath = Join-Path $configHome 'config.toml'
+    $profileSnapshot = Get-ConfigSnapshot $configPath
+    $defaultSnapshot = Get-ConfigSnapshot $defaultPath
+    $existing = $profileSnapshot.Text
+    $defaultExisting = $defaultSnapshot.Text
+    # Refuse foreign/edited/unsafe owned profiles before any staging or prompt.
+    if (-not [string]::IsNullOrWhiteSpace($existing)) { Get-UpdatedConfig $existing $existing | Out-Null }
+    $readExecutable = Get-NativeCodexExecutable
+    if (-not $readExecutable) { $readCommand = Get-CodexCommand; if ($readCommand) { $readExecutable = $readCommand.Source } }
+    $defaults = Get-LLMPInputDefaults $defaultExisting $existing $readExecutable (Join-Path $configHome '.setup-staging')
+    $BaseUrl = Read-RequiredText $BaseUrl 'LLMP OpenAI-compatible base URL (include /v1 if required)' $defaults.base_url
     $endpoint = Get-ValidatedEndpoint $BaseUrl
     $BaseUrl = $endpoint.AbsoluteUri.TrimEnd('/')
-    if (-not $ApiKey -and -not [string]::IsNullOrWhiteSpace($env:LLMP_API_KEY)) {
-        $ApiKey = ConvertTo-SecureString $env:LLMP_API_KEY -AsPlainText -Force
-    }
-    if (-not $DryRun -and -not $ApiKey) {
-        if ($NonInteractive) { throw 'API key missing. Set LLMP_API_KEY in the environment or supply a SecureString ApiKey.' }
-        $ApiKey = Read-Host 'LLMP API key (stored in your Windows user environment)' -AsSecureString
-    }
+    $ApiKey = Read-LLMPApiKey $ApiKey ($PSBoundParameters.ContainsKey('ApiKey'))
     $wantDiscovery = $DiscoverModels
-    if (-not $DryRun -and -not $NonInteractive -and -not $Model -and -not $wantDiscovery) {
+    if (-not $DryRun -and -not $NonInteractive -and -not $Model -and -not $defaults.model -and -not $wantDiscovery) {
         $wantDiscovery = (Read-Host 'List available model IDs from this endpoint? [y/N]') -match '^(?i)y(es)?$'
     }
     if ($wantDiscovery -and -not $DryRun) {
@@ -1009,47 +1130,63 @@ try {
     }
     if (-not $NonInteractive -and [string]::IsNullOrWhiteSpace($Model)) {
         Write-Host 'Choose model: 1) gpt-6.1-sol  2) glm-5.3  3) glm-5.3-flash  4) Exact custom ID'
-        $choice = Read-Host 'Model choice [1-4]'
+        $modelPrompt = 'Model choice [1-4]'
+        if ($defaults.model) { $modelPrompt += ' [Enter to keep ' + $defaults.model + ']' }
+        $choice = Read-Host $modelPrompt
         switch ($choice) {
             '1' { $Model = 'gpt-6.1-sol' }
             '2' { $Model = 'glm-5.3' }
             '3' { $Model = 'glm-5.3-flash' }
             '4' { }
+            '' { if ($defaults.model) { $Model = $defaults.model } else { throw 'Required input: choose a model number from 1 through 4.' } }
             default { throw 'Required input: choose a model number from 1 through 4.' }
         }
     }
-    $Model = Read-RequiredText $Model 'Exact model ID supported by your LLMP endpoint'
-    $generateCatalog = -not $ModelCatalogPath -and $Model -cin @('gpt-6.1-sol','gpt-6-astra')
-    if ($generateCatalog -and -not $PSBoundParameters.ContainsKey('SupportedServiceTiers')) { $SupportedServiceTiers = @('fast','ultrafast') }
+    $Model = Read-RequiredText $Model 'Exact model ID supported by your LLMP endpoint' $defaults.model
+    $sameRoute = $BaseUrl -ceq $defaults.base_url -and $Model -ceq $defaults.model
+    $inheritedCatalog = $sameRoute -and -not $PSBoundParameters.ContainsKey('ModelCatalogPath') -and $defaults.model_catalog_json
+    if ($inheritedCatalog) { $ModelCatalogPath = $defaults.model_catalog_json }
+    $ownedCatalog = $inheritedCatalog -and (Test-InstallerCatalogPath $ModelCatalogPath $configHome)
+    $tierDefault = 'default'
+    if ($sameRoute -and $defaults.service_tier) { $tierDefault = $defaults.service_tier }
+    $generateCatalog = (-not $ModelCatalogPath -or $ownedCatalog) -and $Model -cin @('gpt-6.1-sol','gpt-6-astra')
+    if ($generateCatalog -and -not $ModelCatalogPath -and -not $PSBoundParameters.ContainsKey('SupportedServiceTiers')) { $SupportedServiceTiers = @('fast','ultrafast') }
     if ($ModelCatalogPath) {
         try {
             $ModelCatalogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ModelCatalogPath)
             $catalogTiers = @(Get-CatalogTiers $ModelCatalogPath $Model)
         } catch { throw 'Model catalog invalid: verify the path, models array, exact selected slug and tier field shapes.' }
-        if ($PSBoundParameters.ContainsKey('SupportedServiceTiers')) {
+        if ($PSBoundParameters.ContainsKey('SupportedServiceTiers') -and -not $ownedCatalog) {
             $confirmedRequests = @($SupportedServiceTiers | ForEach-Object { if ($_ -ceq 'fast') { 'priority' } else { $_ } })
             $excluded = @($catalogTiers | ForEach-Object { if ($_ -ceq 'fast') { 'priority' } else { $_ } } | Where-Object { $confirmedRequests -cnotcontains $_ })
             if ($excluded.Count -gt 0) {
                 throw 'Model catalog invalid: supplied catalog advertises tiers excluded by explicit SupportedServiceTiers. Supply a restricted catalog or confirm every advertised tier; no configuration was published.'
             }
         }
-        $SupportedServiceTiers = $catalogTiers
+        if (-not $ownedCatalog -or -not $PSBoundParameters.ContainsKey('SupportedServiceTiers')) { $SupportedServiceTiers = $catalogTiers }
         if ($SupportedServiceTiers.Count -gt 0) { Write-Host ('Catalog eligible tiers: ' + ($SupportedServiceTiers -join ', ')) }
+    }
+    if ($sameRoute -and -not $ModelCatalogPath -and -not $PSBoundParameters.ContainsKey('SupportedServiceTiers') -and $tierDefault -cne 'default' -and $SupportedServiceTiers -cnotcontains $tierDefault) {
+        $SupportedServiceTiers += $tierDefault
     }
     if (-not $NonInteractive -and -not $ServiceTier) {
         Write-Host ('Supported service tiers: ' + ((@('default') + $SupportedServiceTiers | Select-Object -Unique) -join ', ') + '. Fast uses the priority request tier.')
-        $ServiceTier = (Read-Host 'Service tier (Enter for default)').Trim()
-        if ($ServiceTier -and $SupportedServiceTiers.Count -eq 0 -and -not $ModelCatalogPath) {
+        $ServiceTier = (Read-Host ('Service tier [Enter to keep ' + $tierDefault + ']')).Trim()
+        if ($ServiceTier -and $ServiceTier -cne 'default' -and $SupportedServiceTiers.Count -eq 0 -and -not $ModelCatalogPath) {
             $advertised = Read-Host 'Advertised eligible tiers for this exact model, comma separated (operator attestation)'
             $SupportedServiceTiers = @($advertised.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         }
     }
+    if (-not $ServiceTier) { $ServiceTier = $tierDefault }
     if ($ContextWindow -eq 0) {
-        $contextInput = Read-RequiredText '' 'Context budget in tokens (for example 272000, 353000 or 500000; confirm model capacity)'
+        $contextInput = Read-RequiredText '' 'Context budget in tokens (for example 272000, 353000 or 500000; confirm model capacity)' ([string]$defaults.model_context_window)
         if (-not [long]::TryParse($contextInput, [ref]$ContextWindow)) { throw 'ContextWindow must be an integer.' }
     }
     if ($ContextWindow -lt 1024 -or $ContextWindow -gt 2147483647) { throw 'ContextWindow must be between 1024 and 2147483647 tokens.' }
-    if ($AutoCompactTokenLimit -eq 0) { $AutoCompactTokenLimit = [long][Math]::Floor($ContextWindow * 0.9) }
+    if ($AutoCompactTokenLimit -eq 0) {
+        if ($ContextWindow -eq $defaults.model_context_window -and $null -ne $defaults.model_auto_compact_token_limit) { $AutoCompactTokenLimit = $defaults.model_auto_compact_token_limit }
+        else { $AutoCompactTokenLimit = [long][Math]::Floor($ContextWindow * 0.9) }
+    }
     if ($AutoCompactTokenLimit -lt 1 -or $AutoCompactTokenLimit -ge $ContextWindow) {
         throw 'AutoCompactTokenLimit must be positive and below ContextWindow.'
     }
@@ -1063,15 +1200,6 @@ try {
     if (-not $ServiceTier) { $ServiceTier = 'default' }
     $enableUltrafast = $eligibleRequests -ccontains 'ultrafast'
     $block = New-LLMPConfigBlock $BaseUrl $Model $ContextWindow $AutoCompactTokenLimit $ServiceTier $ModelCatalogPath $enableUltrafast
-    $configHome = $env:CODEX_HOME
-    if ([string]::IsNullOrWhiteSpace($configHome)) { $configHome = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
-    $configHome = [IO.Path]::GetFullPath($configHome)
-    $configPath = Join-Path $configHome 'llmp.config.toml'
-    $defaultPath = Join-Path $configHome 'config.toml'
-    $profileSnapshot = Get-ConfigSnapshot $configPath
-    $defaultSnapshot = Get-ConfigSnapshot $defaultPath
-    $existing = $profileSnapshot.Text
-    $defaultExisting = $defaultSnapshot.Text
     $updated = Get-UpdatedConfig $existing $block
     if ($DryRun) { Write-Output $block; return }
     $onWindows = $env:OS -eq 'Windows_NT'
@@ -1215,7 +1343,7 @@ try {
         'Managed block', 'An existing LLMP', 'Existing inline', 'BaseUrl must',
         'ContextWindow must', 'AutoCompactTokenLimit must', 'ServiceTier requires',
         'Native install requires', 'API key', 'Install Node.js', 'Node.js installation',
-        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Codex native executable', 'Codex bare command', 'Config rollback failed', 'Default Codex configuration', 'Config changed', 'Model discovery failed', 'Model catalog invalid', 'Model catalog generation', 'Official model catalog', 'Confirmed model catalog', 'Immutable model catalog', 'SSH server setup requires'
+        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Codex native executable', 'Codex bare command', 'Config rollback failed', 'Default Codex configuration', 'Config changed', 'Existing LLMP defaults could not be read safely', 'Model discovery failed', 'Model catalog invalid', 'Model catalog generation', 'Official model catalog', 'Confirmed model catalog', 'Immutable model catalog', 'SSH server setup requires'
     )
     $message = 'Setup failed. Check configuration directory permissions and dependency availability; no diagnostic payload was printed.'
     foreach ($prefix in $safeMessages) {

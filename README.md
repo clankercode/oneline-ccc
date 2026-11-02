@@ -87,6 +87,35 @@ approval. If winget is unavailable, install [Node.js LTS](https://nodejs.org/),
 reopen PowerShell, and rerun setup. Existing Codex versions below 0.134.0 must be
 upgraded before using the separate profile.
 
+## Rerunning setup
+
+Press Enter to keep the current LLMP URL, model, service tier and context budget.
+The active `oneline_llmp` configuration supplies defaults; otherwise setup uses
+its saved LLMP profile. Other providers' model/context/tier values are not
+imported. Explicit command arguments take precedence. A custom compaction
+threshold is retained while context stays the same; changing context recomputes
+90% unless you explicitly set a threshold.
+
+The key prompt accepts Enter to keep a saved key without displaying it. Setup
+checks `LLMP_API_KEY` in the current process, then the Windows user environment,
+so a PowerShell session without the saved variable can still reuse it. A typed
+or explicitly supplied key replaces it. Noninteractive reruns reuse known values
+and refuse missing required inputs.
+
+Unchanged reruns of installer-generated configuration do not create redundant
+backups. Changes still update
+the managed LLMP fields in main and named configurations, preserving unrelated
+settings and exact originals in backups. Switching endpoint/model does not
+inherit the previous route's tier/catalog. Installer-generated catalogs refresh
+against the selected native Codex release; external catalogs remain external.
+
+Dry-run never writes files. Exact generated configuration can supply its defaults;
+for arbitrary main TOML that needs native parsing, supply inputs explicitly in
+dry-run mode. Normal setup uses private native staging to read that TOML safely.
+
+To include the SSH offer in a rerun, add `-EnableSshServer`. You can also run the
+SSH helper independently; it does not need or change the Codex URL/key.
+
 ## Model discovery and service tiers
 
 Optional model discovery lists IDs from your base URL's `/models` route. It sends
