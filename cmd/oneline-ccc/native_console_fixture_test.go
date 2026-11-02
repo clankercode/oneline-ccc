@@ -18,9 +18,11 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/clankercode/oneline-ccc/internal/core"
+	"github.com/clankercode/oneline-ccc/internal/tui"
 )
 
 const nativeConsoleKey = "a7-dummy-only-never-display-8b21"
@@ -223,7 +225,7 @@ func TestNativeConsoleFixture(t *testing.T) {
 func nativeConsoleEnv(root, scenario, noColor string) []string {
 	return []string{
 		"ONELINE_A7_FIXTURE=" + scenario, "ONELINE_A7_ROOT=" + root,
-		"NO_COLOR=" + noColor, "TERM=xterm-256color", "COLORTERM=truecolor", "GOMAXPROCS=2",
+		"NO_COLOR=" + noColor, "TERM=xterm-256color", "COLORTERM=truecolor", "GOMAXPROCS=1",
 		"HOME=" + filepath.Join(root, "home"), "USERPROFILE=" + filepath.Join(root, "home"),
 		"APPDATA=" + filepath.Join(root, "config"), "LOCALAPPDATA=" + filepath.Join(root, "config"),
 		"XDG_CONFIG_HOME=" + filepath.Join(root, "config"), "XDG_CACHE_HOME=" + filepath.Join(root, "cache"),
@@ -446,7 +448,7 @@ func nativeConsoleJourney(t *testing.T, p *nativeConsoleDriver, scenario string)
 	if err := p.host.resize(40, 12); err != nil {
 		t.Fatal(err)
 	}
-	p.await(t, from, "> "+endpoint[len(endpoint)-37:]+"|")
+	p.await(t, from, "\n"+nativeConsoleEndpointRow(40, endpoint, len(endpoint))+"\n")
 	from = len(p.transcript)
 	p.screen.resize(120, 40)
 	if err := p.host.resize(120, 40); err != nil {
@@ -471,6 +473,136 @@ func nativeConsoleFrameHas(frame string, wants ...string) bool {
 		}
 	}
 	return true
+}
+
+// Independent ASCII editor geometry: components.go documents symmetric shell
+// insets of one column below 60 columns, two otherwise. The focus prefix uses
+// two body columns and the caret uses one. Never derive this from observed text.
+func nativeConsoleEndpointRow(width int, value string, caret int) string {
+	inset := 1
+	if width >= 60 {
+		inset = 2
+	}
+	capacity := max(0, width-2*inset-len("> ")-len("|"))
+	start := max(0, caret-capacity)
+	end := min(len(value), caret+capacity-(caret-start))
+	row := strings.Repeat(" ", inset) + "> " + value[start:caret] + "|" + value[caret:end]
+	return row + strings.Repeat(" ", max(0, width-len(row)))
+}
+
+// This source regression drives the public production model separately from
+// the native byte driver. It distinguishes a stale viewport oracle from input
+// loss and keeps complete-value/draft checks after returning to a wide window.
+func TestNativeConsoleEndpointViewport(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		t.Run(fmt.Sprintf("NoColor=%t", noColor), func(t *testing.T) {
+			profile := core.Defaults()
+			profile.BaseURL = "https://a7-fixture.invalid/v1"
+			b := &nativeConsoleBackend{fakeEngine: &fakeEngine{snapshot: core.Snapshot{
+				Clients: []core.Client{{ID: "codex", Name: "Codex", Installed: true, Supported: true, Profile: profile}},
+			}}, scenario: "plain"}
+			m := tui.New(b, tui.Options{ASCII: true, NoColor: noColor, ReducedMotion: true})
+			send := func(msg tea.Msg) {
+				t.Helper()
+				var cmd tea.Cmd
+				m, cmd = m.Update(msg)
+				if cmd != nil {
+					t.Fatal("unexpected external work during editor navigation")
+				}
+			}
+			key := func(code rune, text string, mod tea.KeyMod) {
+				t.Helper()
+				send(tea.KeyPressMsg{Code: code, Text: text, Mod: mod})
+			}
+			send(m.Init()())
+			send(tea.WindowSizeMsg{Width: 120, Height: 40})
+			key('p', "", tea.ModCtrl)
+			key('G', "Gateway", 0)
+			key(tea.KeyEnter, "", 0)
+			key(tea.KeyEnter, "", 0)
+			key('u', "", tea.ModCtrl)
+			value := "https://a7-resize-retains-editor-draft.invalid/v1"
+			for _, r := range value {
+				key(r, string(r), 0)
+			}
+			assertRow := func(width, height, caret int) {
+				t.Helper()
+				send(tea.WindowSizeMsg{Width: width, Height: height})
+				frame := ansi.Strip(m.View().Content)
+				want := "\n" + nativeConsoleEndpointRow(width, value, caret) + "\n"
+				if !nativeConsoleFrameHas(frame, "Editing endpoint", want) {
+					t.Fatalf("%dx%d caret=%d expected %q in production frame:\n%s", width, height, caret, want, frame)
+				}
+			}
+			assertRow(120, 40, len(value))
+			for _, size := range [][2]int{{40, 12}, {59, 20}, {60, 20}, {120, 40}} {
+				assertRow(size[0], size[1], len(value))
+			}
+			key(tea.KeyLeft, "", 0)
+			assertRow(40, 12, len(value)-1)
+			assertRow(120, 40, len(value)-1)
+			key(tea.KeyEnd, "", 0)
+			key('x', "x", 0)
+			value += "x"
+			assertRow(120, 40, len(value))
+			key(tea.KeyEnter, "", 0)
+			if !strings.Contains(ansi.Strip(m.View().Content), "Draft updated; review before applying") {
+				t.Fatal("editor did not commit the draft")
+			}
+			key(tea.KeyEnter, "", 0)
+			assertRow(120, 40, len(value))
+			if b.inspect != 1 || b.forbidden.Load() != 0 || b.launches.Load() != 0 || b.snapshot.Clients[0].Profile != profile {
+				t.Fatal("viewport journey changed backend state or performed external work")
+			}
+		})
+	}
+}
+
+func TestNativeConsoleEndpointViewportReplay(t *testing.T) {
+	// Exact final clear/redraw from both interactive NO_COLOR cases in hosted
+	// Windows job 41537608013. The two retained VT tails have identical redraws.
+	const redraw = "\x1b[2J\x1b[H oneline-ccc / Gateway / Edit endpoint  \r\n" +
+		" Dashboard Models Review Jobs [More]    \r\n" +
+		" Inspected local settings; drafts re... \r\n" +
+		" Editing endpoint | Esc keeps the       \r\n" +
+		" previous draft\x1b[K\r\n" +
+		" Local-only endpoint. Public views use  \r\n" +
+		" Gateway A.\x1b[K\r\n" +
+		" > ize-retains-editor-draft.invalid/v1| \r\n" +
+		" Enter commits this field to the draft  \r\n" +
+		" 1-6/7 PgUp/Dn\x1b[K\r\n" +
+		" Type / paste  Enter save  Esc cancel   \r\n" +
+		" Left/Right caret; text keys stay here  "
+	value := "https://a7-resize-retains-editor-draft.invalid/v1"
+	row := nativeConsoleEndpointRow(40, value, len(value))
+	if row != " > ize-retains-editor-draft.invalid/v1| " || len(row) != 40 {
+		t.Fatalf("incorrect independent 40-column viewport: %q", row)
+	}
+	for _, chunk := range []int{len(redraw), 1} {
+		s := newNativeConsoleScreen(120, 40)
+		s.resize(40, 12)
+		for start := 0; start < len(redraw); start += chunk {
+			s.feed([]byte(redraw[start:min(len(redraw), start+chunk)]))
+		}
+		want := "\n" + row + "\n"
+		frame := s.text()
+		if s.err != nil || !nativeConsoleFrameHas(frame, want) {
+			t.Fatalf("chunk=%d: recorded native redraw mismatch: %v\n%s", chunk, s.err, frame)
+		}
+		for _, tc := range []struct{ name, replacement string }{
+			{"old-terminal-width", " > esize-retains-editor-draft.invalid/v1|"},
+			{"dropped-character", strings.Replace(row, "ize", "ze", 1) + " "},
+			{"altered-character", strings.Replace(row, "draft", "drXft", 1)},
+			{"missing-caret", strings.Replace(row, "|", " ", 1)},
+			{"misplaced-caret", strings.Replace(row, "v1|", "v|1", 1)},
+			{"shifted-column", " " + row[:len(row)-1]},
+		} {
+			bad := strings.Replace(frame, row, tc.replacement, 1)
+			if nativeConsoleFrameHas(bad, want) {
+				t.Errorf("chunk=%d: %s corruption accepted", chunk, tc.name)
+			}
+		}
+	}
 }
 
 func nativeConsoleOutputError(raw []byte) error {
