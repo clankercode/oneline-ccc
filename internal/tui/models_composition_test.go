@@ -254,3 +254,22 @@ func TestModelsTinyHeaderRetainsUnicodeClientIdentity(t *testing.T) {
 	}
 	assertFrame(t, m)
 }
+
+func TestModelsNoClientDoesNotInventCurrentValues(t *testing.T) {
+	m, f := loaded(t)
+	m.snapshot.Clients = nil
+	m.selected = ""
+	m.goTo("Models")
+	for _, size := range [][2]int{{120, 40}, {40, 12}} {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		frame := ansi.Strip(m.View().Content)
+		if strings.Contains(frame, "0 tokens") || strings.Contains(frame, "Standard") {
+			t.Fatal("missing client rendered a fabricated current profile")
+		}
+		assertFrame(t, m)
+	}
+	activate(t, m, "field:model")
+	if f.planCalls+f.applyCalls != 0 || m.editor != nil {
+		t.Fatal("empty client allowed configuration effects")
+	}
+}

@@ -62,6 +62,18 @@ func (m *model) modelsControls(why string, d core.Desired) []control {
 	if m.modelsForm().chooser != "" {
 		cs = append(cs, control{"models:close", "Back to field; keep draft", ""})
 	}
+	if _, ok := m.client(); !ok {
+		for i := range cs {
+			switch cs[i].id {
+			case "field:model":
+				cs[i].label = "Model ID: No client selected"
+			case "field:budget":
+				cs[i].label = "Context budget: No client selected"
+			case "field:tier":
+				cs[i].label = "Default request tier: No client selected"
+			}
+		}
+	}
 	return cs
 }
 
@@ -209,7 +221,8 @@ func (m *model) modelsRows() []row {
 				c.label = "[-] Advanced / custom settings"
 			}
 		}
-		if m.height <= 12 {
+		_, hasClient := m.client()
+		if m.height <= 12 && hasClient {
 			switch id {
 			case "field:model":
 				c.label = "Model: " + m.draft().Profile.Model + " [Choose]"
