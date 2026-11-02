@@ -1,5 +1,9 @@
 # TUI screen flows and visual direction
 
+The [navigation and color pass](tui-visual-system.md) adds a styled browser
+specimen and clarifies how headings, selection, status and focus should differ.
+The text wireframes below describe layout and behavior, not the final styling.
+
 Planning baseline: 2026-11-02. These are annotated wireframes, not screenshots or implemented views. [Production contracts and acceptance](../plans/tui-production-plan.md) govern behavior; [stack evidence](../research/tui-stack.md) governs framework claims.
 
 ## Direction: a calm operator console

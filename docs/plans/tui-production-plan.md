@@ -4,6 +4,10 @@ Planning baseline: 2026-11-02. No Go implementation, installation or deployment 
 Authority: [broader brief](broader-utility-brief.md), [product brief](../product-brief.md), [existing research](../research/existing-projects.md), [Windows evidence](../verification/windows-mvp.md).
 Companions: [screen flows](../design/tui-screen-flows.md), [stack evidence and IGC decisions](../research/tui-stack.md).
 
+Visual follow-up: [navigation and color pass](../design/tui-visual-system.md).
+Carry its hierarchy, selection and non-color cues into T1/T4; its browser
+specimen is a design aid, not evidence of a running Go TUI.
+
 ## Goal, scope and evidence labels
 
 Deliver one-line Windows/macOS/Linux setup of a self-contained Go utility that makes existing coding clients usable with a custom gateway, preserves their settings, and explains current status and recoverable failures. Offer an optional background monitor during first run; ordinary use must work without it.

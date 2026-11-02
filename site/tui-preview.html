@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore the navigation and color direction for the oneline-ccc terminal interface. Illustrative data; no configuration changes.">
+  <title>oneline-ccc · TUI preview</title>
+  <link rel="stylesheet" href="tui-preview.css">
+  <script defer src="tui-preview.js"></script>
+</head>
+<body>
+  <a class="skip" href="#console">Skip to terminal preview</a>
+  <main>
+    <header class="page-heading">
+      <div><a class="wordmark" href="./">oneline-ccc <span>/ interface notes</span></a><h1>A little color. A clearer console.</h1></div>
+      <a href="https://github.com/clankercode/oneline-ccc/blob/main/docs/design/tui-visual-system.md">Design notes ↗</a>
+    </header>
+    <p class="intro">A small pass on navigation, selection and emphasis. <strong>Interactive design preview</strong> with illustrative data. The Go app is not implemented; this page changes no configuration.</p>
+    <div class="preview-controls" aria-label="Preview appearance">
+      <label>Appearance <select id="theme"><option value="dark">Dark</option><option value="light">Light</option><option value="mono">Monochrome</option></select></label>
+      <label>Layout <select id="layout"><option value="wide">Wide</option><option value="compact">Compact</option><option value="narrow">Narrow</option></select></label>
+      <span class="control-note">Browser approximation of terminal layouts</span>
+    </div>
+    <section id="console" class="console" data-layout="wide" aria-label="Terminal design preview" tabindex="-1">
+      <div class="topbar"><strong>oneline<span class="accent">-ccc</span></strong><span>Gateway A <span class="muted">/ this account</span></span><span class="fixture">ILLUSTRATIVE DATA</span></div>
+      <nav class="section-nav" aria-label="Console sections">
+        <button type="button" data-screen="dashboard" aria-current="page"><span>01</span> Dashboard</button>
+        <button type="button" data-screen="models"><span>02</span> Models</button>
+        <button type="button" data-screen="review"><span>03</span> Review</button>
+        <button type="button" data-screen="jobs"><span>04</span> Jobs</button>
+      </nav>
+      <div id="screen" class="screen"></div>
+      <footer class="keybar"><span><kbd>Tab</kbd> move <kbd>Enter</kbd> open <span id="arrow-hint"><kbd>↑ ↓</kbd> choose client</span></span><span class="muted">Local design preview · no live operations</span></footer>
+    </section>
+    <p id="announcement" class="sr-only" role="status" aria-live="polite"></p>
+    <div class="notes"><p><strong>Find your place.</strong> The blue section band marks where you are. A quieter row fill marks the selected client; the outline marks keyboard focus.</p><p><strong>Read the next action.</strong> Bold headings and labeled status colors separate state, evidence and action. Monochrome keeps the same structure.</p></div>
+    <p class="boundary">Screen switching and client selection work here. Apply is deliberately unavailable in this specimen. Native keyboard behavior, terminal sizes and client management remain implementation work.</p>
+  </main>
+  <noscript><p class="intro">Enable JavaScript to switch the illustrative screens. No app or client configuration runs on this page.</p></noscript>
+</body>
+</html>
