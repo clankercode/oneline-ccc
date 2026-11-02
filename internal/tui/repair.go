@@ -32,7 +32,9 @@ func (m *model) repairRows() []row {
 	if !wide {
 		left = append(append(left, row{}), scope...)
 	}
-	left = append(left, row{}, row{text: m.heading("Review before sharing")}, row{text: m.note("Inspect the exact public-safe text. Share only the non-secret context your helper needs.")}, row{text: m.note("Export writes to terminal scrollback. Review suggestions before ordinary Apply.")})
+	left = append(left, row{})
+	left = append(left, m.manualNoticeRows("Review before sharing", "Inspect the exact public-safe text. Share only the non-secret context your helper needs.", leftWidth)...)
+	left = append(left, row{text: m.note("Export writes to terminal scrollback. Review suggestions before ordinary Apply.")})
 	right := []row{{text: m.heading("Exact brief / redacted")}}
 	switch {
 	case m.busy == "repair":
@@ -67,6 +69,15 @@ func (m *model) repairRows() []row {
 		rs = append(rs, row{text: m.fill(l.text, leftWidth, surfaceBase) + m.note(separator) + r.text, focus: l.focus || r.focus})
 	}
 	return rs
+}
+
+// Wrap before filling: notice text must remain available at narrow widths.
+func (m *model) manualNoticeRows(title, message string, width int) []row {
+	rows := m.column([]row{{text: m.heading(title)}, {text: m.note(message)}}, width)
+	for i := range rows {
+		rows[i].text = m.fill(rows[i].text, width, surfaceRaised)
+	}
+	return rows
 }
 
 // Keep the production control's label, identity, reason and focus. Disabled

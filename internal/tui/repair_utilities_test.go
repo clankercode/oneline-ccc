@@ -109,3 +109,16 @@ func TestRepairUtilitiesRetainControlReasonsAndReturnState(t *testing.T) {
 		})
 	}
 }
+
+func TestUtilitiesCompactInitialFrameKeepsReturnReachable(t *testing.T) {
+	for _, size := range [][2]int{{60, 20}, {40, 12}} {
+		m, _ := loaded(t)
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m.goTo("Utilities")
+		m.focusID("unavailable")
+		if !strings.Contains(ansi.Strip(m.View().Content), "  Back") {
+			t.Fatalf("Back is hidden in initial %dx%d frame", size[0], size[1])
+		}
+		assertFrame(t, m)
+	}
+}
