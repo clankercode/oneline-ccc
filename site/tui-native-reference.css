@@ -1,0 +1,125 @@
+@import url('./tui-preview.css');
+
+/* Reference mode: the approved tokens and cell-sized type remain authoritative. */
+#reference-controls { gap: 12px 20px; }
+#reference-controls select { max-width: 230px; }
+#native-reference { container-type: inline-size; }
+#native-reference button { position: relative; }
+#native-reference button, #native-reference input, #native-reference h2 { scroll-margin: 10px; }
+#native-reference .topbar { padding-block: 12px; }
+#reference-nav { padding-top: 6px; }
+#reference-nav button { padding-inline: 22px 12px; }
+#reference-nav a { display: block; text-decoration: none; color: var(--muted); border-bottom: 3px solid transparent; padding: 8px 12px 11px; }
+#reference-nav a span { font-size: 13px; }
+#reference-nav a:hover { color: var(--text); background: var(--raised); }
+#native-reference .context-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 20px; padding: 10px 24px; color: var(--muted); border-bottom: 1px solid var(--line); }
+#native-reference .context-line strong { color: var(--text); }
+#native-reference .screen { min-height: 470px; padding-top: 20px; }
+#native-reference .screen-title { margin-bottom: 22px; }
+#native-reference .screen-title h2 { color: var(--text); }
+#native-reference .screen-title p { max-width: 70ch; }
+#native-reference .workarea { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; }
+#native-reference .detail { padding-left: 28px; }
+#native-reference .section-label { margin-bottom: 12px; }
+#native-reference h3 { margin: 0 0 14px; font-size: inherit; }
+#native-reference p { margin-top: 0; }
+#native-reference dl { grid-template-columns: 14ch minmax(0, 1fr); gap: 9px 16px; }
+#native-reference dd { overflow-wrap: anywhere; }
+#native-reference .notice { margin-block: 22px 0; }
+#native-reference .notice p { margin: 5px 0 0; }
+#native-reference .notice.info { border-color: var(--accent); }
+#native-reference .notice.info strong { color: var(--accent); }
+#native-reference .notice.error { border-color: var(--bad); }
+#native-reference .notice.error strong { color: var(--bad); }
+#native-reference .action-row { gap: 10px; }
+#native-reference .action { min-height: 36px; text-align: left; padding: 7px 12px 7px 22px; }
+#native-reference .action[aria-disabled="true"] { color: var(--muted); border-color: var(--line); background: var(--raised); cursor: not-allowed; }
+#native-reference .action:focus-visible, #native-reference .setting:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+#native-reference .focus-marker { display: none; }
+#native-reference button:focus-visible > .focus-marker { display: block; position: absolute; left: 6px; top: 7px; font-weight: bold; }
+#native-reference .setting:focus-visible > .focus-marker, #native-reference .destination-row:focus-visible > .focus-marker { top: 10px; }
+#native-reference .key-actions button:focus-visible > .focus-marker { top: 4px; }
+#native-reference .focus-anchor { display: inline-block; }
+#native-reference .disabled-reason { color: var(--muted); margin: 10px 0 0; }
+#native-reference .status-band { display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 12px 16px; background: var(--raised); margin-bottom: 22px; border-left: 3px solid var(--accent); }
+#native-reference .status-band strong { font-weight: bold; }
+#native-reference .choice-list { display: grid; gap: 4px; }
+#native-reference .choice { padding: 10px 12px; border-left: 3px solid transparent; }
+#native-reference .choice.selected { background: var(--select); border-left-color: var(--accent); }
+#native-reference .choice small { display: block; color: var(--muted); margin-top: 4px; }
+#native-reference .choice strong { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; }
+#native-reference .choice strong span { font-weight: normal; color: var(--muted); }
+#native-reference .steps { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+#native-reference .steps li { display: grid; grid-template-columns: 3ch minmax(0, 1fr); gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); counter-increment: step; }
+#native-reference .steps li::before { content: '0' counter(step); color: var(--muted); }
+#native-reference .steps small { display: block; color: var(--muted); margin-top: 4px; }
+#native-reference .brief { margin: 0; padding: 14px 16px; border-left: 3px solid var(--accent); background: var(--raised); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+#native-reference .utility-table td { font-weight: normal; }
+#native-reference .utility-table td:first-child { font-weight: bold; }
+#native-reference .utility-table small { display: block; margin-top: 4px; color: var(--muted); }
+#native-reference .utility-table caption { text-align: left; color: var(--muted); margin-bottom: 12px; }
+#native-reference .setting-group + .setting-group { margin-top: 24px; }
+#native-reference .setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 18px; width: 100%; text-align: left; padding: 10px 12px 10px 24px; color: var(--text); border: 0; border-bottom: 1px solid var(--line); background: transparent; }
+#native-reference .setting:hover { background: var(--raised); }
+#native-reference .setting small { grid-column: 1/-1; color: var(--muted); }
+#native-reference .setting-value { color: var(--accent); }
+#native-reference .destination-list { display: grid; gap: 4px; }
+#native-reference .destination-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 20px; padding: 10px 12px 10px 24px; text-align: left; color: var(--text); background: transparent; border: 0; border-left: 3px solid transparent; }
+#native-reference .destination-row.selected { background: var(--select); border-left-color: var(--accent); }
+#native-reference .destination-row small { grid-column: 1/-1; color: var(--muted); }
+#native-reference .destination-row > span:not(.focus-marker) { color: var(--muted); }
+#native-reference .destination-row:hover { background: var(--raised); }
+#native-reference .layer-body { max-width: 84ch; }
+#native-reference .layer-body .summary-line { margin-top: 20px; }
+#native-reference .layer-kicker { color: var(--accent); font-weight: bold; margin-bottom: 14px; }
+#native-reference .editor-form { max-width: 78ch; }
+#native-reference .editor-form label { display: block; font-weight: bold; margin-bottom: 10px; }
+#native-reference .editor-form input[type="text"] { width: 100%; padding: 11px 12px; }
+#native-reference input::placeholder { color: var(--muted); opacity: 1; }
+#native-reference .editor-form .check-label { display: flex; margin-top: 20px; }
+#native-reference .editor-hint { color: var(--muted); margin-top: 10px; }
+#native-reference .hidden-field { width: 100%; text-align: left; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); padding: 11px 12px; }
+#native-reference .editor-error { color: var(--bad); margin-top: 12px; }
+#native-reference .palette-search { width: 100%; margin-bottom: 10px; }
+#native-reference .palette-results { display: grid; grid-auto-rows: minmax(63px, max-content); align-content: start; max-height: 252px; overflow: auto; margin-top: 15px; }
+#native-reference .palette-option { background: transparent; border: 0; border-left: 3px solid transparent; color: var(--text); padding: 10px 12px 10px 22px; text-align: left; }
+#native-reference .palette-option[aria-selected="true"] { background: var(--select); border-left-color: var(--accent); font-weight: bold; }
+#native-reference .palette-option small { display: block; font-weight: normal; color: var(--muted); }
+#native-reference .empty-state { padding: 18px 0; }
+#native-reference .empty-state strong { display: block; margin-bottom: 8px; }
+#native-reference .keybar { position: static; }
+#native-reference .key-actions button { padding-left: 22px; }
+#native-reference .keybar span { overflow-wrap: anywhere; }
+#native-reference[data-layout="compact"] .workarea, #native-reference[data-layout="narrow"] .workarea { grid-template-columns: 1fr; gap: 22px; }
+#native-reference[data-layout="compact"] .detail, #native-reference[data-layout="narrow"] .detail { padding: 20px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+#native-reference[data-layout="narrow"] .context-line { padding-inline: 16px; }
+#native-reference[data-layout="narrow"] dl { grid-template-columns: 1fr; gap: 3px; }
+#native-reference[data-layout="narrow"] dd { margin-bottom: 9px; }
+#native-reference[data-layout="narrow"] #reference-nav > * { flex: 1 0 30%; }
+#native-reference[data-layout="narrow"] #reference-nav a { padding-inline: 8px; }
+#native-reference[data-layout="narrow"] #reference-nav a span { display: none; }
+#native-reference[data-layout="narrow"] .setting { grid-template-columns: 1fr; }
+#native-reference[data-layout="narrow"] .utility-table caption { display: block; width: 100%; }
+#native-reference[data-layout="narrow"] .screen { min-height: 0; }
+@container (max-width: 740px) {
+  #native-reference .workarea { grid-template-columns: 1fr; gap: 22px; }
+  #native-reference .detail { border-left: 0; border-top: 1px solid var(--line); padding: 20px 0 0; }
+  #native-reference .context-line { padding-inline: 16px; }
+  #native-reference dl { grid-template-columns: 1fr; gap: 3px; }
+  #native-reference dd { margin-bottom: 9px; }
+}
+@media (max-width: 540px) {
+  #reference-controls { align-items: start; gap: 12px; }
+  #reference-controls label { display: grid; gap: 5px; flex: 1 0 40%; }
+  #reference-controls select { width: 100%; max-width: none; }
+  #reference-controls label:last-child { flex-basis: 100%; }
+  #reference-nav > * { flex: 1 0 30%; }
+  #reference-nav a { padding-inline: 8px; }
+  #reference-nav a span { display: none; }
+  #native-reference .topbar { padding-inline: 16px; }
+  #native-reference .topbar #scope { display: none; }
+  #native-reference .summary-line { gap: 8px; }
+  #native-reference .shortcut-list { grid-template-columns: 1fr; }
+  #native-reference .setting { grid-template-columns: 1fr; }
+  #native-reference .utility-table caption { display: block; width: 100%; }
+}

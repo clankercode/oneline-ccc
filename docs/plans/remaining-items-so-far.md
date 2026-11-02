@@ -62,6 +62,7 @@ for shipped capabilities; older plans retain their original planning baselines.
 | [TUI visual system](../design/tui-visual-system.md) | Approved color, hierarchy, focus and non-color cues |
 | [Interactive mockup](https://clankercode.github.io/oneline-ccc/tui-preview.html) and [versioned preview source](../../site/tui-preview.html) | Approved visual reference to compare against actual native renders; record the source revision because the live page can change |
 | [Preview styles](../../site/tui-preview.css), [views](../../site/tui-views.mjs) and [dialogs](../../site/tui-dialogs.mjs) | Mockup layout, emphasis, screen composition and overlay references for the native fidelity review |
+| [Secondary-screen references](https://clankercode.github.io/oneline-ccc/tui-native-reference.html), [versioned source](../../site/tui-native-reference.html) and [verification boundary](../verification/tui-native-references.md) | Design targets for six secondary screens, eight layers and seven editors; browser targets remain separate from native acceptance |
 | [Preview verification](../verification/tui-usability.md) | Historical browser-only checks; does not close native visual or interaction acceptance |
 | [Native screen and navigation inventory](../review/native-tui-screen-inventory.md) | Source-backed inventory of 10 screens, 7 modal variants, 7 editors, current control inconsistencies and missing mockup counterparts; no visual PASS claimed |
 | [Stack and identity research](../research/tui-stack.md) | Framework choices, model metadata and client/utility identity evidence |
@@ -196,14 +197,15 @@ include it as an eighth modal surface in the updated capture/reference matrix,
 including first/last/reverse selection and Escape focus return. The original
 seven-variant count describes the baseline, not a limit on review coverage.
 
-The existing browser has four screen counterparts: **Dashboard, Models, Review
-and Jobs**. **Gateway, Service, Repair, SSH, Utilities and Settings** still need
-comparable rendered references. Browser inline fields do not cover the seven
-native editor bodies; quit, SSH and monitor confirmations also lack counterparts.
+The approved original browser has four screen counterparts: **Dashboard, Models,
+Review and Jobs**. The added [reference companion](../verification/tui-native-references.md)
+supplies **Gateway, Service, Repair, SSH, Utilities and Settings**, eight layers
+and seven editor targets. Those targets still require comparisons with the exact
+integrated native app; creating a reference does not close a native coverage row.
 Extend partial references for native discovery/attestations, review pagination
 and acknowledgment, real jobs/cancellation/recovery and terminal handoff/return.
-Mockup gaps remain open work; do not simplify the approved references to match a
-weaker native implementation.
+Any remaining mockup gap stays open; do not simplify the approved references to
+match a weaker native implementation.
 
 For every base screen, capture **120x40, 100x30, 80x24, 60x20 and 40x12** terminal
 cell sizes in dark, light and monochrome modes. Include overlay/state variants in
@@ -329,6 +331,10 @@ that the fixes are absent or that the rejected experience is now approved.
   journeys. Changing pages must not silently omit text. A capture named
   `help-last-page` that visibly says **Page 6 of 7** is failed evidence; prove the
   final rendered page and its content after real input, including boundary keys.
+  Show useful, clearly grouped bindings immediately: the current first narrow
+  page lists Dashboard/Models/Review/Jobs names without shortcut information.
+  Distinguish Help's key explanations from command search's destination catalog,
+  and give keys, descriptions and text-entry rules readable visual hierarchy.
 - [ ] **Carry the redesign through every page body and layer.** Shared-shell and
   Dashboard improvements alone leave Models as a flat radio/control dump with
   exposed Advanced rows and leave secondary bodies, editors and overlays below
@@ -439,6 +445,11 @@ that the fixes are absent or that the rejected experience is now approved.
     plus an explicitly requested live gateway session. Refresh older
     planning/compatibility documents and publish an accurate
     client/version/platform support matrix.
+    Publish the reviewed companion-browser Pages gate once a credential with
+    GitHub `workflow` scope is available. The current OAuth credential rejected
+    that workflow change; source/docs can be published separately and the same
+    focused gate remains runnable locally. Preserve the reviewed change on local
+    branch `wip/reference-ci-wiring` until it can be published and observed in CI.
 
 18. [ ] **P0 — bring every native TUI screen and interaction up to the approved
     preview's standard.** Address the explicit visual rejection, inconsistent
