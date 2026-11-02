@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -67,6 +69,12 @@ func TestModelsCompositionAndCompactContext(t *testing.T) {
 					t.Fatalf("missing model/draft hierarchy: %s", frame)
 				}
 			}
+			if size[0] == 40 && !strings.Contains(frame, "Review draft") {
+				t.Fatal("tiny form lost visible Review route")
+			}
+			if size[0] == 80 && (!strings.Contains(frame, "Applied") || !strings.Contains(frame, "Draft")) {
+				t.Fatal("stacked form hides applied/draft comparison")
+			}
 			for _, id := range []string{"enabled", "field:model", "field:budget", "field:tier", "models:advanced", "plan", "back"} {
 				m.focusID(id)
 				m.scroll = -1
@@ -76,6 +84,30 @@ func TestModelsCompositionAndCompactContext(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestModelsSelectorEveryTabStopVisible(t *testing.T) {
+	for _, size := range [][2]int{{120, 40}, {40, 12}} {
+		for _, field := range []string{"model", "budget", "tier"} {
+			m, _ := loaded(t)
+			activate(t, m, "client:codex")
+			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			activate(t, m, "field:"+field)
+			before := m.draft()
+			for range m.controls() {
+				assertFrame(t, m)
+				id := m.focused().id
+				press(m, "tab")
+				assertFrame(t, m)
+				press(m, "shift+tab")
+				wantFocus(t, m, id)
+				press(m, "tab")
+			}
+			if m.draft() != before {
+				t.Fatal("selector navigation changed draft")
+			}
+		}
 	}
 }
 
@@ -105,46 +137,6 @@ func TestModelsAdvancedEditorAndDiscoveryIdentity(t *testing.T) {
 	}
 	press(m, "esc")
 	wantFocus(t, m, "field:model")
-}
-
-// The former flat-radio journey must now enter each deliberate disclosure.
-// All actions here use real keyboard input, including exact Review/Apply.
-func TestModelsKeyboardJourneyWithDisclosures(t *testing.T) {
-	m, f := loaded(t)
-	tabTo(t, m, "client:codex")
-	press(m, " ")
-	press(m, "enter")
-	for _, choice := range [][2]string{{"field:model", "model:glm-5.3-flash"}, {"field:budget", "budget:272000"}} {
-		tabTo(t, m, choice[0])
-		press(m, "enter")
-		tabTo(t, m, choice[1])
-		press(m, "enter")
-		wantFocus(t, m, choice[0])
-	}
-	tabTo(t, m, "models:advanced")
-	press(m, "enter")
-	for _, id := range []string{"capacity", "tiers"} {
-		tabTo(t, m, id)
-		press(m, " ")
-	}
-	tabTo(t, m, "plan")
-	run(t, m, press(m, "enter"))
-	wantFocus(t, m, "review:back")
-	press(m, "enter")
-	if m.screen != "Models" || m.draft().Profile.Model != "glm-5.3-flash" || m.draft().Profile.Budget != 272000 {
-		t.Fatal("Review Back lost choices")
-	}
-	tabTo(t, m, "plan")
-	run(t, m, press(m, "enter"))
-	tabTo(t, m, "review:read")
-	for !m.reviewRead {
-		press(m, "enter")
-	}
-	tabTo(t, m, "review:apply")
-	run(t, m, press(m, "enter"))
-	if f.applyCalls != 1 || m.dirty() {
-		t.Fatal("disclosed keyboard journey did not reconcile applied state")
-	}
 }
 
 func TestModelsDisclosureStateFollowsClientAndBack(t *testing.T) {
@@ -197,5 +189,57 @@ func TestModelsFieldValuesDoNotClip(t *testing.T) {
 			t.Fatal("field value or action clipped before wrapping")
 		}
 		assertFrame(t, m)
+	}
+}
+
+func TestModelsDiscoveryEmptyAndErrorStayUnverified(t *testing.T) {
+	for _, err := range []error{nil, errors.New("fixture inventory unavailable")} {
+		m, _ := loaded(t)
+		activate(t, m, "client:codex")
+		activate(t, m, "field:model")
+		m.focusID("discover")
+		before := m.draft()
+		run(t, m, m.begin("discover", func(context.Context) (any, error) { return []core.ModelInfo{}, err }))
+		wantFocus(t, m, "discover")
+		frame := ansi.Strip(m.View().Content)
+		if m.draft() != before || !strings.Contains(frame, "No advertised inventory") || strings.Contains(frame, "Up to Ultrafast") {
+			t.Fatal("absent inventory invented support or changed the draft")
+		}
+		if err != nil && !strings.Contains(frame, "fixture inventory unavailable") {
+			t.Fatal("inventory failure hidden")
+		}
+		press(m, "esc")
+		wantFocus(t, m, "field:model")
+	}
+}
+
+func TestModelsCustomBudgetKeepsValidationAndPickerReturn(t *testing.T) {
+	m, _ := loaded(t)
+	activate(t, m, "client:codex")
+	activate(t, m, "field:budget")
+	activate(t, m, "advanced:budget")
+	press(m, "ctrl+u")
+	m.Update(tea.PasteMsg{Content: "-1"})
+	before := m.draft()
+	press(m, "enter")
+	if m.editor == nil || m.draft() != before {
+		t.Fatal("invalid budget escaped validation")
+	}
+	press(m, "ctrl+u")
+	m.Update(tea.PasteMsg{Content: "123456"})
+	press(m, "enter")
+	wantFocus(t, m, "advanced:budget")
+	if m.draft().Profile.Budget != 123456 || m.draft().Profile.Compact != 111110 || m.draft().Profile.CapacityConfirmed || m.draft().Profile.TiersConfirmed {
+		t.Fatal("custom budget lost exact value, compaction, or invalidation")
+	}
+	press(m, "esc")
+	wantFocus(t, m, "field:budget")
+	activate(t, m, "field:budget")
+	if !strings.Contains(m.View().Content, "Current budget: 123456 tokens") {
+		t.Fatal("picker hides custom budget")
+	}
+	press(m, "esc")
+	if m.draft().Profile.Budget != 123456 {
+		t.Fatal("picker cancellation lost custom budget")
 	}
 }

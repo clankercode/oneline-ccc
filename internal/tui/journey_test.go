@@ -25,9 +25,21 @@ func TestKeyboardOnlyJourneyAndReviewBack(t *testing.T) {
 		t.Fatal("selection and staging coupled")
 	}
 	press(m, "enter")
-	for _, id := range []string{"model:glm-5.3-flash", "budget:272000", "capacity", "tiers"} {
+	// Each field owns its choice list; Advanced is a deliberate disclosure.
+	for _, choice := range [][2]string{{"field:model", "model:glm-5.3-flash"}, {"field:budget", "budget:272000"}} {
+		tabTo(t, m, choice[0])
+		press(m, "enter")
+		tabTo(t, m, choice[1])
+		press(m, "enter")
+	}
+	tabTo(t, m, "models:advanced")
+	press(m, "enter")
+	for _, id := range []string{"capacity", "tiers"} {
 		tabTo(t, m, id)
 		press(m, "enter")
+	}
+	if d := m.draft(); !d.Enabled || d.Profile.Model != "glm-5.3-flash" || d.Profile.Budget != 272000 || !d.Profile.CapacityConfirmed || !d.Profile.TiersConfirmed {
+		t.Fatal("keyboard choices did not retain enablement, model, budget and route attestations")
 	}
 	tabTo(t, m, "plan")
 	run(t, m, press(m, "enter"))

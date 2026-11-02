@@ -90,7 +90,7 @@ func (m *model) modelsVisible(c control) bool {
 	}
 	panel := m.modelsPanel()
 	if panel != "" && panel != "advanced" {
-		return modelsLeafPanel(c.id) == panel || c.id == "models:close" || c.id == "field:"+panel ||
+		return modelsLeafPanel(c.id) == panel || c.id == "models:close" || (m.modelsForm().chooser == "" && c.id == "field:"+panel) ||
 			(panel == "model" && (c.id == "advanced:model" || c.id == "discover")) || (panel == "budget" && c.id == "advanced:budget")
 	}
 	if modelsLeafPanel(c.id) != "" {
@@ -235,9 +235,19 @@ func (m *model) modelsRows() []row {
 		if panel == "model" {
 			rs = append(rs, row{text: m.note("Suggested IDs / availability unverified")})
 		}
+		if panel == "budget" {
+			rs = append(rs, row{text: fmt.Sprintf("Current budget: %d tokens", m.draft().Profile.Budget)})
+		}
 		for _, c := range cs {
 			if m.modelsVisible(c) && !strings.HasPrefix(c.id, "field:") && !strings.HasPrefix(c.id, "nav:") && c.id != "help" && c.id != "palette" {
 				rs = append(rs, render(c.id, width)...)
+				if strings.HasPrefix(c.id, "discovered:") {
+					for _, info := range m.models {
+						if discoveredControlID(info) == c.id && info.Context > 0 {
+							rs = append(rs, row{text: m.note(fmt.Sprintf("  Advertised context: %d / not verified", info.Context))})
+						}
+					}
+				}
 			}
 		}
 		if panel == "model" {
@@ -249,9 +259,6 @@ func (m *model) modelsRows() []row {
 				evidence = "Discovering inventory; existing choices remain unverified."
 			}
 			rs = append(rs, row{}, row{text: m.note(evidence)})
-			for _, info := range m.models {
-				rs = append(rs, row{text: m.note(fmt.Sprintf("Source: %s / %s / advertised context %d", m.public(info.Source), m.public(info.ID), info.Context))})
-			}
 		}
 		if panel == "tier" {
 			rs = append(rs, row{}, row{text: "Model / default: " + m.modelDefault(m.draft().Profile.Model, m.draft().Profile.Tier)}, row{text: m.note("Available tiers: " + tierAvailability(m.draft().Profile.TiersConfirmed))}, row{text: m.note("Fast / Ultrafast require explicit route confirmation in Advanced.")})
@@ -270,7 +277,10 @@ func (m *model) modelsRows() []row {
 	var left, right []row
 	compact := m.height <= 12
 	if !compact {
-		left = append(left, row{text: m.heading("MANAGEMENT PREFERENCE")}, row{})
+		left = append(left, row{text: m.heading("MANAGEMENT PREFERENCE")})
+		if wide {
+			left = append(left, row{})
+		}
 		if ok && m.editable() != "" {
 			installed := "Installed"
 			if !client.Installed {
@@ -285,18 +295,44 @@ func (m *model) modelsRows() []row {
 		if why := m.editable(); why != "" {
 			message = why
 		}
-		left = append(left, row{text: m.note(m.public(message))}, row{})
+		left = append(left, row{text: m.note(m.public(message))})
+		if wide {
+			left = append(left, row{})
+		}
 	}
 	for _, id := range []string{"field:model", "field:budget", "field:tier"} {
 		left = append(left, render(id, leftWidth)...)
-		if !compact {
+		if wide {
 			left = append(left, row{})
 		}
 	}
 	if !compact {
-		left = append(left, row{text: m.note("Available tiers: " + tierAvailability(d.Profile.TiersConfirmed))}, row{text: m.note("Budget is a choice; capacity is not verified.")}, row{})
+		capacity := "Budget is a choice; capacity is not verified."
+		if d.Enabled && !d.Profile.CapacityConfirmed {
+			capacity = "Confirm route capacity in Advanced before review."
+		}
+		left = append(left, row{text: m.note("Available tiers: " + tierAvailability(d.Profile.TiersConfirmed))}, row{text: m.note(capacity)})
+		if wide {
+			left = append(left, row{})
+		}
 	}
-	left = append(left, render("models:advanced", leftWidth)...)
+	pairedActions := compact && m.editable() == ""
+	if pairedActions {
+		// Five body rows at 40x12: four fields and a visible Review route.
+		c, i := controlAt("models:advanced")
+		c.label = "Advanced [+]"
+		if m.modelsForm().advanced || panel == "advanced" {
+			c.label = "Advanced [-]"
+		}
+		l := m.column([]row{m.controlRow(c, i)}, 16)[0]
+		c, i = controlAt("plan")
+		c.label = "Review draft"
+		r := m.controlRow(c, i)
+		r.text = m.fill(r.text, width-17, surfacePrimary)
+		left = append(left, row{text: l.text + " " + r.text, focus: l.focus || r.focus})
+	} else {
+		left = append(left, render("models:advanced", leftWidth)...)
+	}
 	if m.modelsForm().advanced || panel == "advanced" {
 		left = append(left, row{text: m.heading("CUSTOM SETTINGS / ROUTE ATTESTATIONS")})
 		for _, id := range []string{"capacity", "tiers", "advanced:model", "advanced:budget", "advanced:compact", "advanced:endpoint", "advanced:credential", "discover"} {
@@ -319,12 +355,25 @@ func (m *model) modelsRows() []row {
 	}
 	right = append(right, row{}, row{text: m.heading("Review before applying")}, row{text: m.note("Only this client's draft. No settings written here.")}, row{})
 	if !wide {
-		// Put useful actions before the secondary summary in a short viewport.
 		var actions []row
 		for _, id := range []string{"plan", "discard", "back", "help", "palette"} {
+			if pairedActions && id == "plan" {
+				continue
+			}
 			actions = append(actions, render(id, width)...)
 		}
-		return append(append(append(left, row{}), actions...), append([]row{{}}, right...)...)
+		if compact {
+			return append(append(append(left, row{}), actions...), append([]row{{}}, right...)...)
+		}
+		// Keep applied/draft comparison beside the fields in reading order.
+		summary := []row{{text: m.heading("DRAFT / NOT YET APPLIED")}}
+		if ok {
+			summary = append(summary, m.detailRows("Applied", m.modelDefault(client.Profile.Model, client.Profile.Tier), width)...)
+			summary = append(summary, m.detailRows("Draft", m.modelDefault(d.Profile.Model, d.Profile.Tier), width)...)
+		} else {
+			summary = append(summary, row{text: "No client selected; return to Dashboard."})
+		}
+		return append(append(append(left, row{}), summary...), actions...)
 	}
 	for _, id := range []string{"plan", "discard", "back", "help", "palette"} {
 		right = append(right, render(id, rightWidth)...)
@@ -343,7 +392,7 @@ func (m *model) modelsRows() []row {
 		if m.options.ASCII {
 			separator = " | "
 		}
-		rs = append(rs, row{text: m.fill(l.text, leftWidth, surfaceBase) + m.note(separator) + r.text, focus: l.focus || r.focus})
+		rs = append(rs, row{text: m.fill(l.text, leftWidth, surfaceBase) + m.fill(m.note(separator), 3, surfaceBase) + m.fill(r.text, rightWidth, surfaceBase), focus: l.focus || r.focus})
 	}
 	return rs
 }
