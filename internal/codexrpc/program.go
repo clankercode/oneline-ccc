@@ -114,9 +114,9 @@ func Version(ctx context.Context, p Program, stage string) (version string, resu
 		return "", errors.New("Codex version process ownership failed")
 	}
 	defer func() {
-		if owner.Close() != nil {
+		if cleanupErr := owner.Close(); cleanupErr != nil {
 			version = ""
-			result = errors.Join(result, errors.New("cannot clean up owned Codex version processes"))
+			result = errors.Join(result, ownedCleanupFailure("cannot clean up owned Codex version processes", cleanupErr))
 		}
 	}()
 	if err = owner.Start(); err != nil {

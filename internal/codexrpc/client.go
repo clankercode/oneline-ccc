@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/clankercode/oneline-ccc/internal/processowner"
@@ -24,6 +25,28 @@ type Client struct {
 	input  io.WriteCloser
 	output <-chan []byte
 	next   int
+}
+
+// Retain only the numeric native cause for hermetic cleanup diagnostics. Native
+// errors can include paths or child text; neither formatting nor unwrapping this
+// error may expose those details through the public configuration API.
+type cleanupFailure struct {
+	message string
+	errno   syscall.Errno
+}
+
+func (e *cleanupFailure) Error() string { return e.message }
+func (e *cleanupFailure) Unwrap() error {
+	if e.errno == 0 {
+		return nil
+	}
+	return e.errno
+}
+
+func ownedCleanupFailure(message string, cause error) error {
+	var errno syscall.Errno
+	_ = errors.As(cause, &errno)
+	return &cleanupFailure{message: message, errno: errno}
 }
 
 func ConfigEnvironment(stage string) []string {
@@ -64,8 +87,8 @@ func Run(parent context.Context, program Program, stage string, action func(*Cli
 		return errors.New("cannot establish configuration process ownership")
 	}
 	if err = owner.Start(); err != nil {
-		if owner.Close() != nil {
-			return errors.New("cannot start or clean up the selected Codex executable")
+		if cleanupErr := owner.Close(); cleanupErr != nil {
+			return ownedCleanupFailure("cannot start or clean up the selected Codex executable", cleanupErr)
 		}
 		return errors.New("cannot start the selected Codex executable")
 	}
@@ -95,7 +118,7 @@ func Run(parent context.Context, program Program, stage string, action func(*Cli
 		case <-done:
 		case <-time.After(time.Second):
 			if terminateErr := owner.Terminate(); terminateErr != nil && !errors.Is(terminateErr, os.ErrProcessDone) {
-				result = errors.Join(result, errors.New("cannot terminate owned Codex configuration processes"))
+				result = errors.Join(result, ownedCleanupFailure("cannot terminate owned Codex configuration processes", terminateErr))
 				_ = command.Process.Kill()
 			}
 			<-done
@@ -103,8 +126,8 @@ func Run(parent context.Context, program Program, stage string, action func(*Cli
 		// Even a clean direct-process exit can leave descendants holding CWD or
 		// handles in the stage. Complete owned-tree cleanup before the adapter
 		// is allowed to remove it, and report failure without native path text.
-		if owner.Close() != nil {
-			result = errors.Join(result, errors.New("cannot clean up owned Codex configuration processes"))
+		if cleanupErr := owner.Close(); cleanupErr != nil {
+			result = errors.Join(result, ownedCleanupFailure("cannot clean up owned Codex configuration processes", cleanupErr))
 		}
 		cancel()
 		_ = output.Close()

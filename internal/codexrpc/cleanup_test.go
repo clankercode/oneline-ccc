@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -150,6 +151,11 @@ func TestRPCOwnsHelpersBeforeReturningAndStageRemoval(t *testing.T) {
 				}
 				return nil
 			})
+			if err != nil {
+				var errno syscall.Errno
+				found := errors.As(err, &errno)
+				t.Logf("owned cleanup diagnostic: native_errno_present=%t native_errno=%d", found, errno)
+			}
 			if address == "" || (outcome == "success") != (err == nil) {
 				t.Fatalf("outcome=%s action error=%v helper ready=%t", outcome, err, address != "")
 			}
@@ -158,6 +164,31 @@ func TestRPCOwnsHelpersBeforeReturningAndStageRemoval(t *testing.T) {
 				t.Fatalf("owned helper still locks stage: %v", err)
 			}
 		})
+	}
+}
+
+func TestOwnedCleanupFailurePreservesOnlyErrno(t *testing.T) {
+	const message = "cannot clean up owned Codex configuration processes"
+	for _, errno := range []syscall.Errno{syscall.EPERM, syscall.ESRCH, syscall.EINVAL} {
+		t.Run(fmt.Sprint(uintptr(errno)), func(t *testing.T) {
+			cause := &os.PathError{Op: "private-fixture-operation", Path: "private-fixture-path", Err: errno}
+			err := ownedCleanupFailure(message, cause)
+			if err.Error() != message || strings.Contains(fmt.Sprintf("%+v %#v", err, err), "private-fixture") {
+				t.Fatal("cleanup diagnostic exposed native text")
+			}
+			var got syscall.Errno
+			if !errors.As(errors.Join(errors.New("validation refused"), err), &got) || got != errno {
+				t.Fatalf("cleanup diagnostic lost native errno: got=%d want=%d", got, errno)
+			}
+			var pathError *os.PathError
+			if errors.As(err, &pathError) {
+				t.Fatal("cleanup diagnostic retained native path")
+			}
+		})
+	}
+	err := ownedCleanupFailure(message, errors.New("private-fixture-cause"))
+	if err.Error() != message || errors.Unwrap(err) != nil {
+		t.Fatal("non-errno cleanup cause was exposed")
 	}
 }
 
