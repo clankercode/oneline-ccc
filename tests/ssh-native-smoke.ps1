@@ -40,6 +40,20 @@ foreach ($diagnosticRule in $diagnosticRules) {
         $diagnosticCimProperty = $diagnosticApplication.CimInstanceProperties[$diagnosticField]
         if ($null -ne $diagnosticCimProperty) { $diagnosticCimApplication[$diagnosticField] = $diagnosticCimProperty.Value }
     }
+    $diagnosticCimRule = @{}
+    foreach ($diagnosticField in @('Package', 'LocalAppPackageId', 'AppPkgId', 'EnforcementStatus', 'PrimaryStatus', 'Status', 'StatusCode', 'PolicyStoreSource', 'Platform')) {
+        $diagnosticCimProperty = $diagnosticRule.CimInstanceProperties[$diagnosticField]
+        if ($null -ne $diagnosticCimProperty) { $diagnosticCimRule[$diagnosticField] = $diagnosticCimProperty.Value }
+    }
+    $diagnosticAppIso = @{}
+    try {
+        $diagnosticAppIsoPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\RestrictedServices\AppIso\FirewallRules'
+        $diagnosticAppIsoEntry = Get-ItemProperty -LiteralPath $diagnosticAppIsoPath -Name $diagnosticRule.Name -ErrorAction Stop
+        $diagnosticAppIsoValue = [string]$diagnosticAppIsoEntry.PSObject.Properties[$diagnosticRule.Name].Value
+        $diagnosticAppIso.ValueName = $diagnosticRule.Name
+        # Read only this exact rule value; print its applicability fields, not the registry tree.
+        $diagnosticAppIso.Fields = @($diagnosticAppIsoValue -split '\|' | Where-Object { $_ -match '^(AppPkgId|App|Svc|LUOwn|Action|Active|Dir|Profile|Protocol|LPort|RPort|RA4|RA6)=' })
+    } catch { $diagnosticAppIso.Error = $_.Exception.Message }
     $diagnosticCom = @{}
     try {
         $diagnosticPolicy = New-Object -ComObject HNetCfg.FwPolicy2
@@ -56,7 +70,9 @@ foreach ($diagnosticRule in $diagnosticRules) {
         }
     } catch { $diagnosticCom.Error = $_.Exception.Message }
     [pscustomobject]@{
-        Rule = @($diagnosticRule | Select-Object Name, DisplayName, InstanceID, Enabled, Direction, Action, Profile, Owner, PolicyStoreSourceType)
+        Rule = @($diagnosticRule | Select-Object Name, DisplayName, InstanceID, Enabled, Direction, Action, Profile, Owner, PolicyStoreSourceType, EnforcementStatus, PrimaryStatus, Status, StatusCode, PolicyStoreSource, Platform)
+        CimRule = $diagnosticCimRule
+        AppIsoRegistry = $diagnosticAppIso
         Application = @($diagnosticApplication | Select-Object Program, Package, AppPath)
         CimApplication = $diagnosticCimApplication
         ComRule = $diagnosticCom
