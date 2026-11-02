@@ -150,12 +150,147 @@ function Assert-CodexVersion {
         $versionOutput = (& $codexCommand.Source --version 2>$null | Out-String)
         $versionExitCode = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousErrorAction }
-    if ($versionExitCode -ne 0 -or $versionOutput -notmatch '(\d+\.\d+\.\d+)') {
+    if ($versionExitCode -ne 0 -or $versionOutput -notmatch '(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)') {
         throw 'Codex installed but its version could not be verified. Install current @openai/codex using npm.'
     }
-    if ([version]$Matches[1] -lt [version]'0.134.0') {
+    if ([version]($Matches[1].Split('-')[0]) -lt [version]'0.134.0') {
         throw 'Codex installed is older than 0.134.0. Upgrade using npm install --global @openai/codex, then rerun.'
     }
+    return $Matches[1]
+}
+
+# Standalone PowerShell 5.1-compatible helpers; caller owns configuration pointers.
+# Only invoke the preset builder after the operator confirms the route's tiers.
+function Get-OfficialCodexCatalogText([string]$Version) {
+    if ($Version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+        throw 'Model catalog requires the exact installed Codex semantic version.'
+    }
+    $maximumBytes = 1048576
+    $request = $null; $response = $null; $stream = $null; $memory = $null
+    $previousProtocols = [Net.ServicePointManager]::SecurityProtocol
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = $previousProtocols -bor [Net.SecurityProtocolType]::Tls12
+        $url = 'https://raw.githubusercontent.com/openai/codex/rust-v' + $Version + '/codex-rs/models-manager/models.json'
+        $request = [Net.HttpWebRequest]::Create($url)
+        $request.AllowAutoRedirect = $false
+        $request.UseDefaultCredentials = $false
+        $request.Credentials = $null
+        $request.Timeout = 20000
+        $request.ReadWriteTimeout = 20000
+        $request.UserAgent = 'oneline-ccc-catalog'
+        $response = $request.GetResponse()
+        if ($response.StatusCode -ne [Net.HttpStatusCode]::OK -or $response.ContentLength -gt $maximumBytes) { throw 'Invalid response.' }
+        $stream = $response.GetResponseStream()
+        $memory = New-Object IO.MemoryStream
+        $buffer = New-Object byte[] 8192
+        while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            if ($memory.Length + $count -gt $maximumBytes) { throw 'Response limit.' }
+            $memory.Write($buffer, 0, $count)
+        }
+        $encoding = New-Object Text.UTF8Encoding($false, $true)
+        return $encoding.GetString($memory.ToArray())
+    } catch {
+        throw 'Official model catalog download failed. Supply a complete version-matched ModelCatalogPath instead; no model metadata was guessed.'
+    } finally {
+        if ($stream) { $stream.Dispose() }
+        if ($memory) { $memory.Dispose() }
+        if ($response) { $response.Dispose() }
+        [Net.ServicePointManager]::SecurityProtocol = $previousProtocols
+    }
+}
+
+function ConvertTo-ConfirmedCodexCatalog(
+    [string]$CatalogJson, [string]$Model, [string[]]$SupportedTiers
+) {
+    try {
+        if ($Model -cnotin @('gpt-6.1-sol', 'gpt-6-astra')) { throw 'Unsupported preset.' }
+        $catalog = $CatalogJson | ConvertFrom-Json
+        if ($catalog.models -isnot [Array]) { throw 'Missing models.' }
+        $selectedModels = @($catalog.models | Where-Object { $_.slug -is [string] -and $_.slug -ceq $Model })
+        if ($selectedModels.Count -ne 1) { throw 'Exact native model entry missing or duplicated.' }
+        $entry = $selectedModels[0]
+        if ($entry.service_tiers -isnot [Array] -or $entry.visibility -cne 'list' -or $entry.supported_in_api -ne $true) {
+            throw 'Unexpected native preset metadata.'
+        }
+        $normalized = @()
+        foreach ($tier in $SupportedTiers) {
+            if ($tier -ceq 'default') { continue }
+            switch -CaseSensitive ($tier) {
+                'fast' { $id = 'priority' }
+                'priority' { $id = 'priority' }
+                'ultrafast' { $id = 'ultrafast' }
+                default { throw 'Unsupported confirmed preset tier.' }
+            }
+            if ($normalized -cnotcontains $id) { $normalized += $id }
+        }
+        $serviceTiers = @(); $legacyTiers = @()
+        foreach ($id in $normalized) {
+            if ($id -ceq 'priority') {
+                $upstream = @($entry.service_tiers | Where-Object { $_.id -ceq 'priority' })
+                if ($upstream.Count -ne 1 -or $upstream[0].name -isnot [string] -or $upstream[0].description -isnot [string]) {
+                    throw 'Native priority metadata missing.'
+                }
+                $serviceTiers += $upstream[0]
+                $legacyTiers += 'fast'
+            } else {
+                $serviceTiers += [pscustomobject]@{
+                    id = 'ultrafast'; name = 'Ultrafast'
+                    description = 'Lower latency, increased usage; requires an eligible plan'
+                }
+                $legacyTiers += 'ultrafast'
+            }
+        }
+        # Preserve the complete upstream model, including all instructions/tools.
+        # Only the selected, confirmed route is advertised; no GLM metadata invented.
+        $entry.service_tiers = @($serviceTiers)
+        $entry.additional_speed_tiers = @($legacyTiers)
+        $entry | Add-Member -NotePropertyName default_service_tier -NotePropertyValue $null -Force
+        $catalog.models = @($entry)
+        return ($catalog | ConvertTo-Json -Depth 100 -Compress)
+    } catch {
+        throw 'Confirmed model catalog could not be built. Use an exact eligible Codex preset, explicit confirmed tiers, and its complete version-matched native catalog.'
+    }
+}
+
+function Get-CatalogSha256([byte[]]$Bytes) {
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($algorithm.ComputeHash($Bytes)).Replace('-', '').ToLowerInvariant() }
+    finally { $algorithm.Dispose() }
+}
+
+function Save-ImmutableCodexCatalog([string]$CodexHome, [string]$CatalogJson) {
+    $temporary = $null
+    try {
+        $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($CatalogJson)
+        $hash = Get-CatalogSha256 $bytes
+        $directory = Join-Path ([IO.Path]::GetFullPath($CodexHome)) '.catalogs'
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+        if (([IO.File]::GetAttributes($directory) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Cache link refused.' }
+        $path = Join-Path $directory ('oneline-' + $hash + '.json')
+        if (-not [IO.File]::Exists($path)) {
+            $temporary = Join-Path $directory ('.catalog-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+            $file = [IO.FileStream]::new($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try { $file.Write($bytes, 0, $bytes.Length); $file.Flush() }
+            finally { $file.Dispose() }
+            try { [IO.File]::Move($temporary, $path) }
+            catch [IO.IOException] { if (-not [IO.File]::Exists($path)) { throw } }
+        }
+        if (([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            (Get-CatalogSha256 ([IO.File]::ReadAllBytes($path))) -cne $hash) { throw 'Cache verification failed.' }
+        return $path
+    } catch {
+        throw 'Immutable model catalog cache could not be written or verified. Existing cached files were not overwritten.'
+    } finally {
+        if ($temporary -and [IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+    }
+}
+
+function New-ConfirmedLLMPCodexCatalog(
+    [string]$CodexVersion, [string]$Model, [string[]]$SupportedTiers, [string]$CodexHome
+) {
+    $upstream = Get-OfficialCodexCatalogText $CodexVersion
+    $json = ConvertTo-ConfirmedCodexCatalog $upstream $Model $SupportedTiers
+    return Save-ImmutableCodexCatalog $CodexHome $json
 }
 
 function Get-CatalogTiers([string]$Path, [string]$Slug) {
@@ -300,7 +435,7 @@ function Test-CodexManagedDefault([string]$Text) {
     $shape = '\A# BEGIN oneline-ccc LLMP managed configuration\r?\n' +
         "model_provider = 'oneline_llmp'\r?\nmodel = '[^'\r\n]*'\r?\n" +
         'model_context_window = [0-9]+\r?\nmodel_auto_compact_token_limit = [0-9]+\r?\n' +
-        "(?:service_tier = '[^'\r\n]*'\r?\n)?(?:model_catalog_json = '[^'\r\n]*'\r?\n)?\r?\n" +
+        "(?:service_tier = '[^'\r\n]*'\r?\n)?(?:model_catalog_json = '[^'\r\n]*'\r?\n)?(?:features\.ultrafast_mode = true\r?\n)?\r?\n" +
         "\[model_providers\.oneline_llmp\]\r?\nname = 'LLMP \(oneline-ccc\)'\r?\n" +
         "base_url = '[^'\r\n]*'\r?\nwire_api = 'responses'\r?\nenv_key = 'LLMP_API_KEY'\r?\n" +
         'requires_openai_auth = false\r?\n\r?\n# END oneline-ccc LLMP managed configuration\r?\n?\z'
@@ -376,11 +511,11 @@ function Start-CodexConfigProcess([string]$Executable, [string]$Stage, [string]$
     }
 }
 
-# Diagnostic only: targeted parent-PID queries, no command lines or process killing.
+# Snapshot only verified descendant edges; no command lines or broad process scan.
 function Get-CodexConfigDescendants([int]$RootProcessId, [hashtable]$Diagnostics, [datetime]$RootStarted) {
     $items = @()
     if ($env:OS -ne 'Windows_NT') { return $items }
-    $Diagnostics.Snapshot = 'complete'
+    if ($Diagnostics.Snapshot -cne 'partial') { $Diagnostics.Snapshot = 'complete' }
     $pending = New-Object 'System.Collections.Generic.Queue[object]'
     $pending.Enqueue(@{Id = $RootProcessId; Started = $RootStarted; Depth = 0})
     $seen = New-Object 'System.Collections.Generic.HashSet[int]'
@@ -392,7 +527,7 @@ function Get-CodexConfigDescendants([int]$RootProcessId, [hashtable]$Diagnostics
         try {
             $parent = [Diagnostics.Process]::GetProcessById($owner.Id)
             $null = $parent.Handle
-            if ($parent.HasExited -or $parent.StartTime.ToUniversalTime() -ne $owner.Started) { continue }
+            if ($parent.HasExited -or $parent.StartTime.ToUniversalTime() -ne $owner.Started) { $Diagnostics.Snapshot = 'partial'; continue }
             $children = @(Get-CimInstance Win32_Process -Filter ('ParentProcessId=' + $owner.Id) -Property ProcessId,Name -OperationTimeoutSec 1 -ErrorAction Stop)
             foreach ($child in $children) {
                 if ($items.Count -ge 32) { $Diagnostics.Snapshot = 'partial'; break }
@@ -401,12 +536,10 @@ function Get-CodexConfigDescendants([int]$RootProcessId, [hashtable]$Diagnostics
                     $observed = [Diagnostics.Process]::GetProcessById([int]$child.ProcessId)
                     $null = $observed.Handle
                     if ($clock.ElapsedMilliseconds -ge 2000) { $Diagnostics.Snapshot = 'partial'; break }
-                    # Pin the child before confirming the relationship again, so
-                    # PID reuse between enumeration and opening cannot grant ownership.
                     $verified = @(Get-CimInstance Win32_Process -Filter ('ProcessId=' + $observed.Id + ' AND ParentProcessId=' + $owner.Id) -Property ProcessId -OperationTimeoutSec 1 -ErrorAction Stop)
-                    if ($verified.Count -ne 1) { continue }
+                    if ($verified.Count -ne 1) { $Diagnostics.Snapshot = 'partial'; continue }
                     $started = $observed.StartTime.ToUniversalTime()
-                    if ($started -lt $owner.Started -or -not $seen.Add($observed.Id)) { continue }
+                    if ($started -lt $owner.Started -or -not $seen.Add($observed.Id)) { $Diagnostics.Snapshot = 'partial'; continue }
                     $kind = 'other'
                     switch -Regex ($child.Name) {
                         '^codex(?:\.exe)?$' { $kind = 'codex' }
@@ -421,7 +554,7 @@ function Get-CodexConfigDescendants([int]$RootProcessId, [hashtable]$Diagnostics
                     $record = @{Id = $observed.Id; Started = $started; Kind = $kind; Depth = $owner.Depth + 1}
                     $items += $record
                     $pending.Enqueue($record)
-                } catch { } finally { if ($observed) { $observed.Dispose() } }
+                } catch { $Diagnostics.Snapshot = 'partial' } finally { if ($observed) { $observed.Dispose() } }
             }
         } catch { $Diagnostics.Snapshot = 'partial'; break }
         finally { if ($parent) { $parent.Dispose() } }
@@ -484,6 +617,7 @@ function Stop-CodexConfigProcess($Connection) {
             } finally { if ($owned) { $owned.Dispose() } }
         }
         if ($childFailure) { throw 'Codex configuration child processes could not be stopped.' }
+        if ($Connection.Diagnostics) { $Connection.Diagnostics.ReapedStops++ }
 
     } finally {
         # Framework Process.Dispose does not close redirected streams.
@@ -574,6 +708,16 @@ function Remove-CodexConfigStageTree([string]$Path, [string]$StageRoot) {
     }
 }
 
+function Test-CodexConfigStagePrivate([string]$Path) {
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    if (-not $acl.AreAccessRulesProtected) { return $false }
+    $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $allowed) { return $false }
+    }
+    return $true
+}
+
 function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtable]$Diagnostics) {
     try {
         $full = [IO.Path]::GetFullPath($Stage)
@@ -585,20 +729,52 @@ function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtabl
             [IO.Path]::GetFileName($full) -cnotmatch '^codex-default-[0-9a-f]{32}$') {
             throw 'Invalid staging directory.'
         }
-        for ($attempt = 0; $attempt -lt 5; $attempt++) {
+        $allowResidue = $env:OS -eq 'Windows_NT' -and $Diagnostics -and
+            $Diagnostics.Protected -and $Diagnostics.Validated -and
+            $Diagnostics.ReapedStops -eq 2 -and $Diagnostics.Snapshot -ceq 'complete'
+        $configRemoved = $false
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        for ($attempt = 0; ; $attempt++) {
             try {
                 try { $attributes = [IO.File]::GetAttributes($full) }
                 catch [IO.FileNotFoundException] { return }
                 catch [IO.DirectoryNotFoundException] { return }
-                # The stage root itself must remain the real directory we created.
                 if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                     throw 'Staging directory was replaced.'
+                }
+                if ($allowResidue -and -not $configRemoved) {
+                    $config = Join-Path $full 'config.toml'
+                    try {
+                        $configAttributes = [IO.File]::GetAttributes($config)
+                        if (($configAttributes -band ([IO.FileAttributes]::ReparsePoint -bor [IO.FileAttributes]::Directory)) -ne 0) {
+                            throw 'Staging configuration was replaced.'
+                        }
+                        Remove-CodexConfigStageTree $config $full
+                    } catch [IO.FileNotFoundException] { }
+                    catch [IO.DirectoryNotFoundException] { }
+                    $configRemoved = $true
                 }
                 Remove-CodexConfigStageTree $full $full
                 return
             } catch {
-                if ($attempt -eq 4) { throw }
-                Start-Sleep -Milliseconds (100 * [Math]::Pow(2, $attempt))
+                $cause = $_.Exception.GetBaseException()
+                $code = $cause.HResult -band 65535
+                $sharing = $cause -is [IO.IOException] -and $code -in @(32,33)
+                $remaining = 10000 - [int]$clock.ElapsedMilliseconds
+                if ($sharing -and $remaining -gt 0) {
+                    Start-Sleep -Milliseconds ([Math]::Min($remaining, [Math]::Min(1000, 100 * [Math]::Pow(2, [Math]::Min($attempt, 4)))))
+                    continue
+                }
+                if ($sharing -and $allowResidue -and $configRemoved) {
+                    # Recheck the directory and copied config at the warning boundary.
+                    $attributes = [IO.File]::GetAttributes($full)
+                    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                        ([IO.File]::Exists((Join-Path $full 'config.toml')) -or [IO.Directory]::Exists((Join-Path $full 'config.toml')))) { throw 'Unsafe staging residue.' }
+                    if (-not (Test-CodexConfigStagePrivate $full)) { throw 'Staging protection changed.' }
+                    Write-Warning 'Native temporary files remain in protected staging storage; validated configuration is ready.' -WarningAction Continue
+                    return
+                }
+                throw
             }
         }
     } catch {
@@ -617,37 +793,6 @@ function Remove-CodexConfigStage([string]$Stage, [string]$ScratchRoot, [hashtabl
         $entry = $cause.Data['CodexCleanupEntry']
         if ($entry -cmatch '^(arg0-lock|arg0-alias|arg0-executable|skills|config|log|database|stage-root|directory-arg0|directory-skills|directory-other|other-file)$') {
             $category += '; entry=' + $entry
-        }
-        $cwd = 'unknown'
-        try {
-            $current = [IO.Path]::GetFullPath([Environment]::CurrentDirectory)
-            $comparison = [StringComparison]::OrdinalIgnoreCase
-            $cwd = 'outside'
-            if ([string]::Equals($current, $full, $comparison)) { $cwd = 'stage' }
-            elseif ($current.StartsWith($full + [IO.Path]::DirectorySeparatorChar, $comparison)) { $cwd = 'inside' }
-        } catch { }
-        $category += '; parent-cwd=' + $cwd
-        if ($Diagnostics) {
-            $live = 0
-            $kinds = @()
-            foreach ($child in $Diagnostics.Children) {
-                $observed = $null
-                try {
-                    $observed = [Diagnostics.Process]::GetProcessById($child.Id)
-                    if (-not $observed.HasExited -and $observed.StartTime.ToUniversalTime() -eq $child.Started) {
-                        $live++
-                        if ($child.Kind -cin @('codex','powershell','cmd','node','git','rg','conhost','openconsole','other')) { $kinds += $child.Kind }
-                    }
-                } catch { } finally { if ($observed) { $observed.Dispose() } }
-            }
-            $category += '; live-descendants=' + $live
-            if ($Diagnostics.Snapshot -cin @('complete','partial','unknown')) { $category += '; child-snapshot=' + $Diagnostics.Snapshot }
-            if ($kinds.Count) { $category += '; child-kinds=' + (($kinds | Sort-Object -Unique) -join ',') }
-            if ($Diagnostics.Stop -cin @('graceful','killed')) { $category += '; stop=' + $Diagnostics.Stop }
-            $transports = @($Diagnostics.Transports | Where-Object { $_ -cin @('native','node','cmd','other') })
-            if ($transports.Count) { $category += '; transport=' + ($transports -join ',') }
-            $stops = @($Diagnostics.Stops | Where-Object { $_ -cin @('graceful','killed') })
-            if ($stops.Count) { $category += '; stops=' + ($stops -join ',') }
         }
         throw ('Default Codex configuration staging cleanup failed (' + $category + '). Existing configuration was not changed.')
     }
@@ -679,7 +824,7 @@ function Get-CodexDefaultConfig(
 ) {
     $stage = $null
     $connection = $null
-    $diagnostics = @{Children = @(); Stop = 'unknown'; Snapshot = 'unknown'; Transports = @(); Stops = @()}
+    $diagnostics = @{Children = @(); Stop = 'unknown'; Snapshot = 'unknown'; Transports = @(); Stops = @(); ReapedStops = 0; Protected = $false; Validated = $false}
     try {
         if ([string]::IsNullOrWhiteSpace($Existing) -or (Test-CodexManagedDefault $Existing)) {
             return $Generated
@@ -697,6 +842,9 @@ function Get-CodexDefaultConfig(
             if ($Settings.ContainsKey($key)) { $value = $Settings[$key] }
             $edits += @{keyPath = $key; value = $value; mergeStrategy = 'replace'}
         }
+        if ($Settings.features -and $Settings.features.ultrafast_mode -eq $true) {
+            $edits += @{keyPath = 'features.ultrafast_mode'; value = $true; mergeStrategy = 'replace'}
+        }
         foreach ($key in @('name', 'base_url', 'wire_api', 'env_key', 'requires_openai_auth')) {
             if (-not $provider.Contains($key) -or $null -eq $provider[$key]) { throw 'Provider missing.' }
             $edits += @{keyPath = ('model_providers.oneline_llmp.' + $key); value = $provider[$key]; mergeStrategy = 'replace'}
@@ -706,6 +854,7 @@ function Get-CodexDefaultConfig(
         $stage = Join-Path $root ('codex-default-' + [Guid]::NewGuid().ToString('N'))
         $null = [IO.Directory]::CreateDirectory($stage)
         Protect-CodexConfigStage $stage
+        $diagnostics.Protected = $true
         $path = Join-Path $stage 'config.toml'
         [IO.File]::WriteAllText($path, $Existing, (New-Object Text.UTF8Encoding($false)))
         $connection = Start-CodexConfigProcess $CodexExecutable $stage $root
@@ -755,7 +904,9 @@ function Get-CodexDefaultConfig(
                 throw 'Effective config mismatch.'
             }
         }
-        return [IO.File]::ReadAllText($path)
+        $merged = [IO.File]::ReadAllText($path)
+        $diagnostics.Validated = $true
+        return $merged
     } catch { throw 'Default Codex configuration could not be merged safely. Existing configuration was not changed.' }
     finally {
         try { Stop-CodexConfigProcess $connection }
@@ -768,6 +919,35 @@ function Publish-CodexConfigFile([hashtable]$File) {
         $File.Backup = $File.Path + '.backup-' + [Guid]::NewGuid().ToString('N')
         [IO.File]::Replace($File.Temp, $File.Path, $File.Backup)
     } else { [IO.File]::Move($File.Temp, $File.Path) }
+}
+
+function New-LLMPConfigBlock(
+    [string]$BaseUrl, [string]$Model, [long]$ContextWindow, [long]$AutoCompactTokenLimit,
+    [string]$ServiceTier, [string]$ModelCatalogPath, [bool]$EnableUltrafast
+) {
+    $providerUrl = ConvertTo-TomlString $BaseUrl
+    $modelValue = ConvertTo-TomlString $Model
+    $tierLine = ''
+    if ($ServiceTier) { $tierLine = 'service_tier = ' + (ConvertTo-TomlString $ServiceTier) + "`n" }
+    if ($ModelCatalogPath) { $tierLine += 'model_catalog_json = ' + (ConvertTo-TomlString $ModelCatalogPath) + "`n" }
+    if ($EnableUltrafast) { $tierLine += "features.ultrafast_mode = true`n" }
+    $block = @"
+$beginMarker
+model_provider = 'oneline_llmp'
+model = $modelValue
+model_context_window = $ContextWindow
+model_auto_compact_token_limit = $AutoCompactTokenLimit
+$tierLine
+[model_providers.oneline_llmp]
+name = 'LLMP (oneline-ccc)'
+base_url = $providerUrl
+wire_api = 'responses'
+env_key = 'LLMP_API_KEY'
+requires_openai_auth = false
+
+"@
+    $block += "`n" + $endMarker
+    return $block
 }
 
 function Invoke-SshServerSetup {
@@ -840,6 +1020,8 @@ try {
         }
     }
     $Model = Read-RequiredText $Model 'Exact model ID supported by your LLMP endpoint'
+    $generateCatalog = -not $ModelCatalogPath -and $Model -cin @('gpt-6.1-sol','gpt-6-astra')
+    if ($generateCatalog -and -not $PSBoundParameters.ContainsKey('SupportedServiceTiers')) { $SupportedServiceTiers = @('fast','ultrafast') }
     if ($ModelCatalogPath) {
         try {
             $ModelCatalogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ModelCatalogPath)
@@ -848,7 +1030,8 @@ try {
         if ($SupportedServiceTiers.Count -gt 0) { Write-Host ('Catalog eligible tiers: ' + ($SupportedServiceTiers -join ', ')) }
     }
     if (-not $NonInteractive -and -not $ServiceTier) {
-        $ServiceTier = (Read-Host 'Optional service tier (Enter to omit; use only an advertised tier)').Trim()
+        Write-Host ('Supported service tiers: ' + ((@('default') + $SupportedServiceTiers | Select-Object -Unique) -join ', ') + '. Fast uses the priority request tier.')
+        $ServiceTier = (Read-Host 'Service tier (Enter for default)').Trim()
         if ($ServiceTier -and $SupportedServiceTiers.Count -eq 0 -and -not $ModelCatalogPath) {
             $advertised = Read-Host 'Advertised eligible tiers for this exact model, comma separated (operator attestation)'
             $SupportedServiceTiers = @($advertised.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -863,33 +1046,16 @@ try {
     if ($AutoCompactTokenLimit -lt 1 -or $AutoCompactTokenLimit -ge $ContextWindow) {
         throw 'AutoCompactTokenLimit must be positive and below ContextWindow.'
     }
-    if ($ServiceTier -and $SupportedServiceTiers -cnotcontains $ServiceTier) {
+    if ($ServiceTier -ceq 'fast') { $ServiceTier = 'priority' }
+    $eligibleRequests = @($SupportedServiceTiers | ForEach-Object { if ($_ -ceq 'fast') { 'priority' } else { $_ } })
+    if ($ServiceTier -and $ServiceTier -cne 'default' -and $eligibleRequests -cnotcontains $ServiceTier) {
         throw 'ServiceTier requires explicit matching SupportedServiceTiers capability input for the selected model.'
     }
     # Explicitly reset a base config's tier instead of inheriting a tier intended
     # for another provider/model. 'default' is the standard request-tier reset.
     if (-not $ServiceTier) { $ServiceTier = 'default' }
-    $providerUrl = ConvertTo-TomlString $BaseUrl
-    $modelValue = ConvertTo-TomlString $Model
-    $tierLine = ''
-    if ($ServiceTier) { $tierLine = 'service_tier = ' + (ConvertTo-TomlString $ServiceTier) + "`n" }
-    if ($ModelCatalogPath) { $tierLine += 'model_catalog_json = ' + (ConvertTo-TomlString $ModelCatalogPath) + "`n" }
-    $block = @"
-$beginMarker
-model_provider = 'oneline_llmp'
-model = $modelValue
-model_context_window = $ContextWindow
-model_auto_compact_token_limit = $AutoCompactTokenLimit
-$tierLine
-[model_providers.oneline_llmp]
-name = 'LLMP (oneline-ccc)'
-base_url = $providerUrl
-wire_api = 'responses'
-env_key = 'LLMP_API_KEY'
-requires_openai_auth = false
-
-"@
-    $block += "`n" + $endMarker
+    $enableUltrafast = $eligibleRequests -ccontains 'ultrafast'
+    $block = New-LLMPConfigBlock $BaseUrl $Model $ContextWindow $AutoCompactTokenLimit $ServiceTier $ModelCatalogPath $enableUltrafast
     $configHome = $env:CODEX_HOME
     if ([string]::IsNullOrWhiteSpace($configHome)) { $configHome = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex' }
     $configHome = [IO.Path]::GetFullPath($configHome)
@@ -905,7 +1071,13 @@ requires_openai_auth = false
     if (-not $onWindows -and -not $SkipInstall) { throw 'Native install requires Windows. Use -SkipInstall with isolated CODEX_HOME for testing.' }
     if ($ApiKey.Length -eq 0) { throw 'API key must not be empty.' }
     if (-not $SkipInstall) { Install-NativeCodex }
-    Assert-CodexVersion
+    $codexVersion = Assert-CodexVersion
+    if ($generateCatalog) {
+        if (-not $codexVersion) { throw 'Model catalog generation requires installed Codex. Install Codex or supply ModelCatalogPath.' }
+        $ModelCatalogPath = New-ConfirmedLLMPCodexCatalog $codexVersion $Model $SupportedServiceTiers $configHome
+        $block = New-LLMPConfigBlock $BaseUrl $Model $ContextWindow $AutoCompactTokenLimit $ServiceTier $ModelCatalogPath $enableUltrafast
+        $updated = Get-UpdatedConfig $existing $block
+    }
     $nativeExecutable = Get-NativeCodexExecutable
     if (Test-CodexManagedDefault $defaultExisting) { Get-UpdatedConfig $defaultExisting $block | Out-Null }
     $settings = @{
@@ -917,6 +1089,7 @@ requires_openai_auth = false
         }}
     }
     if ($ModelCatalogPath) { $settings.model_catalog_json = $ModelCatalogPath }
+    if ($enableUltrafast) { $settings.features = @{ultrafast_mode = $true} }
     $command = Get-CodexCommand
     $mergeExecutable = ''
     if ($command) { $mergeExecutable = $command.Source }
@@ -1032,7 +1205,7 @@ requires_openai_auth = false
         'Managed block', 'An existing LLMP', 'Existing inline', 'BaseUrl must',
         'ContextWindow must', 'AutoCompactTokenLimit must', 'ServiceTier requires',
         'Native install requires', 'API key', 'Install Node.js', 'Node.js installation',
-        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Codex native executable', 'Codex bare command', 'Config rollback failed', 'Default Codex configuration', 'Config changed', 'Model discovery failed', 'Model catalog invalid', 'SSH server setup requires'
+        'npm is unavailable', 'Codex npm installation', 'Codex installed', 'Codex native executable', 'Codex bare command', 'Config rollback failed', 'Default Codex configuration', 'Config changed', 'Model discovery failed', 'Model catalog invalid', 'Model catalog generation', 'Official model catalog', 'Confirmed model catalog', 'Immutable model catalog', 'SSH server setup requires'
     )
     $message = 'Setup failed. Check configuration directory permissions and dependency availability; no diagnostic payload was printed.'
     foreach ($prefix in $safeMessages) {

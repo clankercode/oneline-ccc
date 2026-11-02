@@ -17,9 +17,9 @@ Existing-project research is available before the broader design conversation.
 
 ## Local evidence
 
-- Coordinator's final integrated Codex run: **72 passed, 0 failed**, portable PowerShell
-  7.6.9 with Python `tomllib`. This followed the last installer changes; a prior
-  concurrent run mixed versions and was discarded, then repeated on frozen code.
+- Coordinator's final integrated Codex run: **76 passed, 0 failed**, portable PowerShell
+  7.6.9 with Python `tomllib`. This includes four new complete-catalog tests; the same tests fail against
+  the preceding checkpoint because catalog generation is absent there.
   The final run covers rich TOML/comment preservation, exact backups, and four
   injected second-file failure states with config, credential and PATH rollback.
 - Actual Codex CLI 0.165.0 loaded LLMP using bare `codex debug prompt-input`,
@@ -47,8 +47,10 @@ corrected to `main` and the failed deployment jobs rerun successfully.
 
 Optional SSH adds a separate Windows integration gate for capability, service,
 firewall, account, effective authentication policy, actual loopback key login,
-and injected late-failure restoration. That feature's final CI result is recorded
-after the expanded workflow completes. Its disposable runner disables only the known broad default OpenSSH rule
+and injected late-failure restoration. The [dedicated native SSH run](https://github.com/clankercode/oneline-ccc/actions/runs/41392708855)
+passed: actual non-admin loopback public-key login, effective SYSTEM policy
+validation, and injected late service-restart failure with exact configuration,
+key, ACL, firewall and service restoration. Its disposable runner disables only the known broad default OpenSSH rule
 before setup and requires enabled firewall profiles with default inbound Block.
 Other app rules stay intact. The production helper refuses broad or ambiguous
 app/firewall rules requiring operator review.
@@ -60,6 +62,14 @@ Responses streaming/tool behavior, the selected model's capacity and gateway tie
 eligibility require an authorized deployment test. Optional supplied catalogs
 need to be complete and compatible with the target Codex version; installer
 fixtures exercise metadata checks, not every native catalog field.
+
+Native configuration validation uses private temporary staging storage. The
+installer stops and reaps its owned native processes and removes the copied
+configuration. On Windows, an incidental native temporary-file sharing lock may
+leave protected auxiliary files after bounded cleanup retries; setup reports a
+warning only after confirming the copied configuration is gone, process tracking
+is complete, and the staging directory remains private. Other cleanup failures
+remain fatal.
 
 Windows runners already include Node.js. The winget Node installation branch is
 reviewed but is not exercised by that installation smoke test. Windows user

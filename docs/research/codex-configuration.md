@@ -108,9 +108,29 @@ Verified client-facing shape example (illustrative values, not advertised accoun
 
 This is a **partial app-server Model object**, not catalog JSON. The catalog's documented names are `service_tiers`, `additional_speed_tiers`, `default_service_tier`, but the generated app-server schema alone does not prove identical deserialization rules for those catalog fields. In particular, do not put tier objects into a field expecting a string array or copy camelCase picker objects into a snake_case catalog. The app-server schema does not expose catalog context fields. [S6, S10]
 
+## Verified `/ultrafast` command behavior
+
+A fresh native Codex 0.166.0 home enables `fast_mode` and `ultrafast_mode`
+by default. A complete matching catalog containing the selected model with
+`{"id":"ultrafast","name":"Ultrafast","description":"Lower latency"}` in
+`service_tiers` exposes `/ultrafast`. The TUI derives the slash command from the
+lowercased tier **name**, and sends its **id**. Setting only root
+`service_tier` or legacy `additional_speed_tiers` does not supply this metadata.
+A dummy-key native TUI test toggled `/ultrafast` between default and ultrafast;
+no inference request was made.
+
+The complete release catalog and implementation were checked at
+[`rust-v0.166.0`](https://github.com/openai/codex/tree/rust-v0.166.0):
+`codex-rs/models-manager/models.json`, `codex-rs/protocol/src/openai_models.rs`,
+`codex-rs/tui/src/chatwidget/service_tiers.rs`, and
+`codex-rs/features/src/lib.rs`. The bundled Sol entry advertises priority;
+Ultrafast is an operator-confirmed gateway capability added to that complete
+entry. This verifies client eligibility and command behavior, not gateway
+entitlement or inference performance.
+
 ## Validation scope and deployment checks
 
-Completed: fetched cited official pages, inspected config schema field definitions, generated 0.165.0 app-server schemas, parsed this document's TOML/JSON examples, and exercised named-profile context parsing in an isolated home. No full catalog was schema-validated, no Windows runtime was exercised, and no backend compatibility claim is made.
+Completed: fetched cited official pages, inspected config schema field definitions, generated 0.165.0 app-server schemas, parsed this document's TOML/JSON examples, and exercised named-profile context parsing in an isolated home. The later 0.166.0 catalog/TUI verification above extends that initial research. Windows installer validation is recorded separately in [the MVP verification report](../verification/windows-mvp.md); no backend compatibility claim is made.
 
 Before distributing a real catalog: match the desktop-bundled/CLI version; parse the complete catalog against matching Rust types; start a fresh client; inspect `model/list` for expected advertised tiers; then verify streaming, local tool results, follow-up replay, route attribution and error handling with an authorized test credential. Catalog metadata and request routing must agree. [S5, S6, S10]
 

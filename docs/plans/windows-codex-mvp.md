@@ -59,3 +59,22 @@ research, existing-project comparison and static setup page are implemented.
 Portable PowerShell tests and actual Codex strict parsing/profile loading pass.
 Native Windows verification and public download checks are publication gates;
 their final results belong in the release verification report.
+
+## Workflow continuation (2026-11-02)
+
+The operator requested `ultra-code-workflows` during MVP finalization. Continue
+with its SDD controller loop: exact file ownership, on-disk briefs and reports,
+independent task review, fresh whole-source final review, tested commits, Windows
+publication gates, and an executable try-it command. The in-flight checkout is
+retained to avoid disrupting active workers; subsequent app work uses isolated
+feature worktrees. No Workflow tool is available, so native subagent tools and
+file artifacts provide the workflow. Do not invent RED evidence for completed
+historical work. New catalog tests were run against the preceding checkpoint
+and fail because its catalog helpers are absent.
+
+Task 1 finishes automatic complete, version-matched Sol tier metadata and safe
+native staging cleanup. Task 2 publishes the frozen reviewed result, waits for
+Windows PowerShell 5.1/7 and real SSH checks, verifies public script bytes, and
+notifies the operator with `attn`. Broader TUI work remains a subsequent design
+phase. Finalization ledger and review copies will be committed alongside this
+plan after verification.

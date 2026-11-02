@@ -31,7 +31,7 @@ function New-Case([string]$Name) {
     return $directory
 }
 function Get-Profile([string]$HomeDirectory) { return Join-Path $HomeDirectory 'llmp.config.toml' }
-function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit, [switch]$UseVersionFixture) {
+function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [switch]$Failure, [switch]$Bootstrap, [switch]$NoCredential, [hashtable]$EnvironmentOverrides = @{}, [switch]$FaultAfterFirstCommit, [switch]$UseVersionFixture, [string]$OfficialCatalogFixture) {
     $arguments = @{
         BaseUrl = 'https://fixture.invalid/v1/'; Model = 'fixture-model'
         ContextWindow = 353000; AutoCompactTokenLimit = 300000
@@ -49,6 +49,21 @@ function Invoke-Installer([string]$HomeDirectory, [hashtable]$Overrides = @{}, [
     $escapedArguments = $argumentsPath.Replace("'", "''")
     $invocation = "& '$escapedInstaller' @options"
     if ($Bootstrap) { $invocation = "& ([ScriptBlock]::Create([IO.File]::ReadAllText('$escapedInstaller'))) @options" }
+    if ($OfficialCatalogFixture) {
+        $invocation = @"
+`$source = [IO.File]::ReadAllText('$escapedInstaller')
+`$tokens = `$null; `$parseErrors = `$null
+`$ast = [Management.Automation.Language.Parser]::ParseInput(`$source, [ref]`$tokens, [ref]`$parseErrors)
+`$download = @(`$ast.FindAll({ param(`$node)
+    `$node -is [Management.Automation.Language.FunctionDefinitionAst] -and `$node.Name -ceq 'Get-OfficialCodexCatalogText'
+}, `$false))
+if (`$parseErrors.Count -ne 0 -or `$download.Count -ne 1) { throw 'Catalog download fixture seam changed' }
+`$body = `$download[0].Body.Extent
+`$replacement = '{ return [IO.File]::ReadAllText(`$env:CODEX_OFFICIAL_CATALOG_FIXTURE) }'
+`$source = `$source.Remove(`$body.StartOffset, `$body.EndOffset - `$body.StartOffset).Insert(`$body.StartOffset, `$replacement)
+& ([ScriptBlock]::Create(`$source)) @options
+"@
+    }
     if ($UseVersionFixture) {
         # Resolve the executable explicitly in an isolated copy. Keep the real
         # version probe, native stderr handling, exit check and parser intact.
@@ -113,6 +128,7 @@ Write-Output `$_.Exception.Message; exit 1 }
     $start.RedirectStandardError = $true
     $start.EnvironmentVariables['CODEX_HOME'] = $HomeDirectory
     $start.EnvironmentVariables['LLMP_API_KEY'] = $dummyKey
+    if ($OfficialCatalogFixture) { $start.EnvironmentVariables['CODEX_OFFICIAL_CATALOG_FIXTURE'] = $OfficialCatalogFixture }
     if ($NoCredential) { $start.EnvironmentVariables['LLMP_API_KEY'] = '' }
     foreach ($name in $EnvironmentOverrides.Keys) { $start.EnvironmentVariables[$name] = [string]$EnvironmentOverrides[$name] }
     foreach ($name in @('TEMP', 'TMP', 'TMPDIR')) { $start.EnvironmentVariables[$name] = $root }
@@ -448,7 +464,7 @@ Test-Case 'dry run has no filesystem mutations' {
 Test-Case 'explicit service tier is a root field' {
     $homeDirectory = New-Case 'tier'
     Invoke-Installer $homeDirectory @{ServiceTier = 'fast'; SupportedServiceTiers = @('fast')} | Out-Null
-    Verify-Toml (Get-Profile $homeDirectory) @{service_tier = 'fast'}
+    Verify-Toml (Get-Profile $homeDirectory) @{service_tier = 'priority'}
 }
 Test-Case 'loopback HTTP is accepted without a network request' {
     $homeDirectory = New-Case 'loopback'
@@ -465,24 +481,148 @@ function New-Catalog([string]$Name, $Models) {
     Write-Utf8 $catalog (@{models = @($Models)} | ConvertTo-Json -Depth 12)
     return [IO.Path]::GetFullPath($catalog)
 }
+function Initialize-CompleteCatalogFixture {
+    if ($script:completeCatalogFixture) { return }
+    $tokens = $null; $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$tokens, [ref]$parseErrors)
+    Assert-True ($parseErrors.Count -eq 0) 'Catalog tests could not parse installer'
+    foreach ($name in @('Get-OfficialCodexCatalogText', 'ConvertTo-ConfirmedCodexCatalog', 'Get-CatalogSha256', 'Save-ImmutableCodexCatalog', 'Start-CodexConfigProcess', 'Stop-CodexConfigProcess', 'Invoke-CodexConfigRpc', 'Initialize-CodexConfigConnection')) {
+        $definitions = @($ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+        }, $false))
+        Assert-True ($definitions.Count -eq 1) ('Catalog test helper missing or ambiguous: ' + $name)
+        # Import definitions only; the installer entry point must not run here.
+        $definition = $definitions[0].Extent.Text.Replace(('function ' + $name), ('function script:' + $name))
+        . ([ScriptBlock]::Create($definition))
+    }
+    $homeDirectory = New-Case 'catalog-version-probe'
+    $previousHome = $env:CODEX_HOME
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $env:CODEX_HOME = $homeDirectory
+        $ErrorActionPreference = 'Continue'
+        $versionText = (& $nativeCodex --version 2>$null | Out-String)
+        $versionExit = $LASTEXITCODE
+    } finally {
+        $env:CODEX_HOME = $previousHome
+        $ErrorActionPreference = $previousErrorAction
+    }
+    Assert-True ($versionExit -eq 0 -and $versionText -match '(\d+\.\d+\.\d+)') 'Cannot identify installed native catalog version'
+    # Fetch the exact public upstream fixture once. No LLMP request or key is used.
+    $script:completeCatalogFixture = Get-OfficialCodexCatalogText $Matches[1]
+    $script:completeCatalogFixturePath = Join-Path $root 'complete-upstream-catalog.json'
+    Write-Utf8 $script:completeCatalogFixturePath $script:completeCatalogFixture
+}
+Test-Case 'complete native catalog retains upstream metadata and exposes Ultrafast name' {
+    Initialize-CompleteCatalogFixture
+    $homeDirectory = New-Case 'complete-catalog-native'
+    $catalogJson = ConvertTo-ConfirmedCodexCatalog $script:completeCatalogFixture 'gpt-6.1-sol' @('fast', 'ultrafast')
+    $catalog = Save-ImmutableCodexCatalog $homeDirectory $catalogJson
+    $entry = ($catalogJson | ConvertFrom-Json).models[0]
+    $ultrafast = @($entry.service_tiers | Where-Object { $_.id -ceq 'ultrafast' })
+    Assert-True ($ultrafast.Count -eq 1 -and $ultrafast[0].name -ceq 'Ultrafast') 'Catalog lost Ultrafast display name'
+    Assert-True (-not [string]::IsNullOrWhiteSpace($ultrafast[0].description)) 'Catalog lost Ultrafast description'
+    Assert-True (@($entry.service_tiers | Where-Object { $_.id -ceq 'priority' }).Count -eq 1) 'Fast tier was not normalized to native priority'
+    Assert-True ($entry.additional_speed_tiers -ccontains 'fast' -and $entry.additional_speed_tiers -ccontains 'ultrafast') 'Legacy speed tiers were not preserved'
+    $check = @'
+import json, pathlib, sys
+upstream = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+generated = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8-sig"))
+assert len(generated["models"]) == 1, "Unconfirmed models advertised"
+original = next(m for m in upstream["models"] if m["slug"] == "gpt-6.1-sol")
+selected = generated["models"][0]
+changed = {"service_tiers", "additional_speed_tiers", "default_service_tier"}
+assert {k: v for k, v in original.items() if k not in changed} == {k: v for k, v in selected.items() if k not in changed}, "Complete upstream metadata changed"
+assert len(selected) > 10, "Catalog fixture is only a partial model"
+'@
+    $checkPath = Join-Path $root 'verify-complete-catalog.py'
+    Write-Utf8 $checkPath $check
+    & $Python $checkPath $script:completeCatalogFixturePath $catalog
+    Assert-True ($LASTEXITCODE -eq 0) 'Generated catalog did not preserve complete upstream model metadata'
+    # Force the arbitrary-TOML merge path, then validate the native API's actual UI metadata.
+    Write-Utf8 (Join-Path $homeDirectory 'config.toml') "# preserve catalog user settings`n[features]`n"
+    # An explicit complete catalog must bypass automatic downloading entirely.
+    Invoke-Installer $homeDirectory @{Model = 'gpt-6.1-sol'; ModelCatalogPath = $catalog; ServiceTier = 'ultrafast'} -OfficialCatalogFixture (Join-Path $root 'must-not-download.json') | Out-Null
+    foreach ($path in @((Get-Profile $homeDirectory), (Join-Path $homeDirectory 'config.toml'))) {
+        Verify-Toml $path @{model = 'gpt-6.1-sol'; model_catalog_json = $catalog; service_tier = 'ultrafast'; 'features.ultrafast_mode' = $true}
+    }
+    $connection = $null
+    try {
+        $connection = Start-CodexConfigProcess $nativeCodex $homeDirectory $root
+        Initialize-CodexConfigConnection $connection
+        $models = Invoke-CodexConfigRpc $connection 'model/list' @{}
+        $selected = @($models.data | Where-Object { $_.model -ceq 'gpt-6.1-sol' })
+        Assert-True ($selected.Count -eq 1) 'Native model/list did not expose the selected complete model'
+        $nativeTier = @($selected[0].serviceTiers | Where-Object { $_.id -ceq 'ultrafast' })
+        Assert-True ($nativeTier.Count -eq 1 -and $nativeTier[0].name -ceq 'Ultrafast') 'Native model/list lost Ultrafast display name'
+        Assert-True (-not [string]::IsNullOrWhiteSpace($nativeTier[0].description)) 'Native model/list lost Ultrafast description'
+        $effective = Invoke-CodexConfigRpc $connection 'config/read' @{}
+        Assert-True ($effective.config.service_tier -ceq 'ultrafast') 'Native effective tier differs from selected Ultrafast tier'
+        Assert-True ($effective.config.features.ultrafast_mode -eq $true) 'Native effective config did not enable the Ultrafast menu'
+    } finally { Stop-CodexConfigProcess $connection }
+}
+Test-Case 'Sol automatically generates a complete catalog and retains Ultrafast UI metadata' {
+    Initialize-CompleteCatalogFixture
+    $homeDirectory = New-Case 'auto-complete-catalog'
+    Invoke-Installer $homeDirectory @{Model = 'gpt-6.1-sol'; ServiceTier = 'ultrafast'} -OfficialCatalogFixture $script:completeCatalogFixturePath | Out-Null
+    $catalogs = @(Get-ChildItem (Join-Path $homeDirectory '.catalogs') -File -Filter 'oneline-*.json')
+    Assert-True ($catalogs.Count -eq 1) 'Preset setup did not create exactly one complete catalog'
+    $catalog = $catalogs[0].FullName
+    foreach ($path in @((Get-Profile $homeDirectory), (Join-Path $homeDirectory 'config.toml'))) {
+        Verify-Toml $path @{model = 'gpt-6.1-sol'; model_catalog_json = $catalog; service_tier = 'ultrafast'; 'features.ultrafast_mode' = $true}
+    }
+    $entry = ([IO.File]::ReadAllText($catalog) | ConvertFrom-Json).models[0]
+    Assert-True (@($entry.service_tiers | Where-Object { $_.id -ceq 'ultrafast' -and $_.name -ceq 'Ultrafast' }).Count -eq 1) 'Automatic catalog lost Ultrafast name metadata'
+    $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($catalog))
+    Invoke-Installer $homeDirectory @{Model = 'gpt-6.1-sol'; ServiceTier = 'ultrafast'} -OfficialCatalogFixture $script:completeCatalogFixturePath | Out-Null
+    Assert-True (@(Get-ChildItem (Join-Path $homeDirectory '.catalogs') -File).Count -eq 1) 'Automatic catalog rerun created extra cache files'
+    Assert-True ($before -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($catalog))) 'Automatic catalog rerun changed bytes'
+    Assert-True (@(Get-ChildItem $homeDirectory -File -Filter '*.backup-*').Count -eq 0) 'Automatic catalog rerun created redundant config backups'
+}
+Test-Case 'complete catalog restricts advertised tiers to explicit confirmation' {
+    Initialize-CompleteCatalogFixture
+    $limited = ConvertTo-ConfirmedCodexCatalog $script:completeCatalogFixture 'gpt-6.1-sol' @('fast') | ConvertFrom-Json
+    Assert-True (@($limited.models[0].service_tiers | Where-Object { $_.id -ceq 'ultrafast' }).Count -eq 0) 'Unconfirmed Ultrafast tier was advertised'
+    Assert-True ($limited.models[0].additional_speed_tiers -cnotcontains 'ultrafast') 'Unconfirmed legacy Ultrafast tier was advertised'
+    Assert-True (@($limited.models[0].service_tiers | Where-Object { $_.id -ceq 'priority' }).Count -eq 1) 'Confirmed priority tier disappeared'
+    foreach ($model in @('glm-5.3', 'GPT-6.1-SOL')) {
+        $refused = $false
+        try { ConvertTo-ConfirmedCodexCatalog $script:completeCatalogFixture $model @('ultrafast') | Out-Null }
+        catch { $refused = $true }
+        Assert-True $refused 'Builder invented native metadata for an unsupported or mismatched model'
+    }
+}
+Test-Case 'complete catalog cache is idempotent and refuses tampered contents' {
+    Initialize-CompleteCatalogFixture
+    $homeDirectory = New-Case 'complete-catalog-cache'
+    $json = ConvertTo-ConfirmedCodexCatalog $script:completeCatalogFixture 'gpt-6.1-sol' @('ultrafast')
+    $path = Save-ImmutableCodexCatalog $homeDirectory $json
+    Assert-True ($path -ceq (Save-ImmutableCodexCatalog $homeDirectory $json)) 'Catalog cache rerun changed its content-addressed path'
+    Assert-True (@(Get-ChildItem (Split-Path $path) -File).Count -eq 1) 'Catalog cache rerun left redundant files'
+    Write-Utf8 $path 'fixture tampered catalog'
+    $refused = $false
+    try { Save-ImmutableCodexCatalog $homeDirectory $json | Out-Null } catch { $refused = $true }
+    Assert-True $refused 'Catalog cache accepted tampered content'
+    Assert-True ([IO.File]::ReadAllText($path) -ceq 'fixture tampered catalog') 'Catalog cache overwrote tampered content'
+}
 Test-Case 'native catalog is preserved and referenced at root with exact model tier' {
     $catalog = New-Catalog 'native' @(@{slug = 'fixture-model'; service_tiers = @(@{id = 'fast'})})
     $original = [IO.File]::ReadAllText($catalog)
     $homeDirectory = New-Case 'catalog-valid'
     Invoke-Installer $homeDirectory @{ModelCatalogPath = $catalog; ServiceTier = 'fast'} | Out-Null
-    Verify-Toml (Get-Profile $homeDirectory) @{model_catalog_json = $catalog; service_tier = 'fast'}
+    Verify-Toml (Get-Profile $homeDirectory) @{model_catalog_json = $catalog; service_tier = 'priority'}
     Assert-True ([IO.File]::ReadAllText($catalog) -ceq $original) 'Catalog source changed'
     Invoke-Installer $homeDirectory @{ModelCatalogPath = $catalog; ServiceTier = 'fast'} | Out-Null
     $before = @(Get-ChildItem $homeDirectory -File).Count
     Invoke-Installer $homeDirectory @{ModelCatalogPath = $catalog; ServiceTier = 'fast'} | Out-Null
     Assert-True (@(Get-ChildItem $homeDirectory -File).Count -eq $before) 'Catalog profile rerun was not idempotent'
-    Verify-Toml (Join-Path $homeDirectory 'config.toml') @{model_catalog_json = $catalog; service_tier = 'fast'}
+    Verify-Toml (Join-Path $homeDirectory 'config.toml') @{model_catalog_json = $catalog; service_tier = 'priority'}
 }
 Test-Case 'legacy catalog speed tiers are supported' {
     $catalog = New-Catalog 'legacy' @(@{slug = 'fixture-model'; additional_speed_tiers = @('fast')})
     $homeDirectory = New-Case 'catalog-legacy'
     Invoke-Installer $homeDirectory @{ModelCatalogPath = $catalog; ServiceTier = 'fast'} | Out-Null
-    Verify-Toml (Get-Profile $homeDirectory) @{model_catalog_json = $catalog; service_tier = 'fast'}
+    Verify-Toml (Get-Profile $homeDirectory) @{model_catalog_json = $catalog; service_tier = 'priority'}
 }
 $catalogFailures = @{
     'missing-model' = @(@{slug = 'other-model'; service_tiers = @(@{id = 'fast'})})

@@ -100,8 +100,16 @@ catalog remains in place and must be available when Codex starts. Setup checks
 the selected model and tier metadata; Codex validates the complete catalog.
 An OpenAI-compatible `/models` response is **not** a Codex-native catalog.
 
-Without a catalog, tiers are a manual override. Supply only the tiers your gateway
-advertises for the exact selected model, for example:
+For the LLMP `gpt-6.1-sol` preset, setup supplies Fast and Ultrafast metadata,
+including the exact `/ultrafast` command name. It downloads the complete official
+catalog matching the installed Codex release, retains the selected model's native
+metadata, and stores a local content-addressed catalog. This preset reflects the
+operator-confirmed LLMP route; it does not discover subscription entitlement.
+Explicit `-SupportedServiceTiers` restricts the advertised tiers, and an explicit
+`-ModelCatalogPath` takes precedence. GLM capabilities are not inferred from Sol.
+
+For other models without a supplied catalog, tiers are a manual override. Supply
+only the tiers your gateway advertises for the exact selected model, for example:
 
 ```powershell
 .\setup-codex.ps1 -BaseUrl 'https://gateway.example.com/v1' -Model 'EXACT-MODEL-ID' -ContextWindow 500000 -ServiceTier fast -SupportedServiceTiers fast

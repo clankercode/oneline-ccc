@@ -282,3 +282,36 @@ explicitly removes runner AllowGroups restrictions; that operation is not in
 production helper code. Existing access lists cannot silently be broadened by
 this new refusal path. Shared managed-profile recognizer extraction in the same
 diff preserves the previous exact grammar on inspection.
+
+## Pending private auxiliary-residue design delta
+
+Operator permits nonfatal residual auxiliary files only after bounded sharing
+retries, private GUID root/no reparse proof, actual staged config removal,
+successful owned-process shutdown, and complete aggregate snapshot/live-zero
+proof. ACL, reparse, sensitive-config deletion, process-stop, or uncertainty
+failures remain fatal. This upcoming delta is not covered by previous clearance.
+
+Early implementation requirement sent to author: snapshot incompleteness must
+be sticky across both app-server processes; later complete scans cannot erase
+earlier partial results. Child enumeration/open/identity failures must not be
+silently treated as a complete snapshot when that flag authorizes cleanup.
+Awaiting concrete delta for focused review; no production change by reviewer.
+
+## Current auxiliary-residue fallback review
+
+Concrete delta now inspected. Warning eligibility requires Windows, private-stage
+protection, validated merged configuration, two successful reap operations, and
+sticky complete snapshots. Copied `config.toml` is deleted first and rechecked
+absent; GUID-root/no-reparse and private DACL are checked at warning boundary.
+Only IO sharing/lock violations can become nonfatal after bounded retries.
+ACL, reparse, config-delete, and process-stop failures do not qualify.
+
+### Current Important: silent discovery failures can still report complete
+
+The collector's inner child catch and parent/edge mismatch exits can omit unknown
+descendants without marking Snapshot partial. This flag previously described
+diagnostic quality; it now authorizes nonfatal residue, so uncertainty must be
+fatal to that fallback. Shared partial state is now sticky, but every uncertain
+discovery branch must set it. Author and coordinator notified; no other concrete
+fallback blocker found in this focused pass. Catalog final-delta coordination
+with Jason is pending his response.
