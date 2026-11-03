@@ -40,7 +40,10 @@ export function closeBrowserResource(resource, label = 'late browser resource cl
 export async function browserCaptureScratch(root) {
   const common = execFileSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
   const base = join(dirname(common), '.cache', 'browser');
-  if (Buffer.byteLength(join(base, 'run-XXXXXX')) > 64) throw new Error('Browser socket path is too long; use a shorter checkout path');
+  // The pinned Linux browser adds this 45-byte suffix. sun_path has 108
+  // bytes including its NUL; at most 107 pathname bytes are safe.
+  const socket = join(base, 'run-XXXXXX', 'org.chromium.Chromium.XXXXXX', 'SingletonSocket');
+  if (Buffer.byteLength(socket) >= 108) throw new Error('Browser socket path is too long; use a shorter checkout path');
   await mkdir(base, { recursive: true, mode: 0o700 });
   return mkdtemp(join(base, 'run-'));
 }

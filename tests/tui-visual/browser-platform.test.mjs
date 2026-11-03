@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as lifecycle from './browser-lifecycle.mjs';
+import vm from 'node:vm';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -11,10 +12,33 @@ test('deep worktrees use a short shared browser scratch directory', async () => 
   assert.equal(typeof lifecycle.browserCaptureScratch, 'function', 'missing browser socket-path correction');
   const scratch = await lifecycle.browserCaptureScratch(root);
   try {
-    assert.ok(Buffer.byteLength(scratch) <= 64, 'Chromium adds a Unix socket suffix to TMPDIR');
+    assert.ok(Buffer.byteLength(join(scratch, 'org.chromium.Chromium.XXXXXX', 'SingletonSocket')) < 108, 'socket plus NUL must fit sun_path');
     assert.ok(!scratch.includes('/.worktrees/'), 'scratch must not inherit worktree depth');
     assert.match(scratch, /\/\.cache\/browser\/run-/);
   } finally { await rm(scratch, { recursive: true, force: true }); }
+});
+
+test('complete Chromium socket byte bound refuses overflow before filesystem writes', async () => {
+  const moduleSource = await readFile(new URL('./browser-lifecycle.mjs', import.meta.url), 'utf8');
+  const source = moduleSource.slice(moduleSource.indexOf('export async function browserCaptureScratch'), moduleSource.indexOf('// Fixed capture switches')).replace(/^export /gm, '');
+  for (const [bytes, unicode] of [[62, false], [63, false], [64, false], [62, true], [63, true]]) {
+    const sample = join('/x', '.cache/browser/run-XXXXXX');
+    const prefix = unicode ? 'é' : '';
+    const checkout = '/' + prefix + 'x'.repeat(bytes - Buffer.byteLength(sample) + 1 - Buffer.byteLength(prefix));
+    const scratch = join(checkout, '.cache/browser/run-XXXXXX');
+    assert.equal(Buffer.byteLength(scratch), bytes);
+    const calls = [];
+    const sandbox = { Buffer, dirname, join, execFileSync: () => join(checkout, '.git'),
+      mkdir: async (...args) => calls.push(['mkdir', ...args]), mkdtemp: async base => { calls.push(['mkdtemp', base]); return base + 'ABCDEF'; } };
+    vm.runInNewContext(source + '\nglobalThis.scratch=browserCaptureScratch;', sandbox);
+    if (bytes <= 62) {
+      await sandbox.scratch('/ignored-linked-worktree');
+      assert.equal(calls.length, 2);
+    } else {
+      await assert.rejects(sandbox.scratch('/ignored-linked-worktree'), /socket path is too long/);
+      assert.deepEqual(calls, [], 'overflow must fail before mkdir or mkdtemp');
+    }
+  }
 });
 
 test('reviewed browser pin uses the public executable path with local capture flags', async () => {

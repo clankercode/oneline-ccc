@@ -26,7 +26,8 @@ Playwright's pinned Chromium into `.cache/tui-visual/browsers`. npm downloads,
 Go scratch stays under `.cache/tui-visual`. Chromium profiles and temporary files
 use a private run directory under the common checkout's `.cache/browser`, shared
 across linked worktrees to avoid Chromium's Unix socket path limit. The complete
-scratch path is bounded before browser launch; unusually deep checkouts need a
+socket pathname, including Chromium's 45-byte suffix and terminating byte, is
+bounded before browser launch; unusually deep checkouts need a
 shorter path. Successful runs remove their private browser scratch.
 No production dependency or `go.mod` change is needed. Bootstrap is the only
 network-dependent step; later captures use bundled local assets and block all
