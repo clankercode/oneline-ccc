@@ -504,7 +504,7 @@ func nativeConsoleJourney(t *testing.T, p *nativeConsoleDriver, scenario string)
 	p.send(t, nativeConsoleKey)
 	p.await(t, p.send(t, "\t"), "Editing key", "> [ ] Persist using backend credential storage")
 	p.await(t, p.send(t, "\x1b[Z"), "Editing key", "> API key: [hidden]")
-	p.await(t, p.send(t, "\x1b"), "Session-only storage is the default; no key reveal.")
+	p.await(t, p.send(t, "\x1b"), "> Enter API key (hidden)")
 	p.palette(t, "Configure selected client", "> [ ] Manage client")
 	p.await(t, p.send(t, " "), "> [x] Manage client")
 	// Focus a text editor with actual input; resize via the OS and require its
