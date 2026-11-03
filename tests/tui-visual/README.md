@@ -59,6 +59,17 @@ child retains the slot; wrapper cancellation does not forcibly terminate it.
 Command supervision fails closed outside Linux or if child-subreaper setup is
 unavailable. This is not a portable POSIX descendant-ownership claim.
 
+Before launching the command, the supervisor narrows its Linux CPU affinity to
+at most the selected `GOMAXPROCS` budget (one CPU by default). It chooses only
+CPUs from its inherited allowed set, retaining an already smaller set. Commands,
+threads and descendants inherit this mask, including Node and owned Chromium
+processes. The caller, shell and unrelated processes keep their own affinity.
+Missing, denied or unverifiable affinity setup refuses command execution and
+releases the slot. This bounds concurrent CPU execution across the owned command
+subtree; it does not reduce algorithmic work or guarantee lower total CPU time.
+It is inherited affinity, not a quota or sandbox: a command that explicitly
+changes its own affinity can escape the bound.
+
 A private pipe reports actual command launch errors and leader exit separately
 from the supervisor's subtree lifetime. PTY capture observes the leader status
 promptly and retains its existing process-group cleanup. Missing executables
@@ -86,9 +97,10 @@ commands and preserves the existing `GOCACHE`, toolchain and build flags. It
 adds the selected package budget to `GOFLAGS`; explicit command-line `-p` still
 takes precedence. Do not nest this wrapper around `capture.py` or
 `run_fault_tests.py`, which already acquire the slot. Commands bypassing these
-entrypoints are outside this cooperative budget. Browser CPU use is not capped
-by `GOMAXPROCS`; serialization bounds overlapping capture jobs, and each batch
-still uses one real browser process.
+entrypoints are outside this cooperative budget. `GOMAXPROCS` alone does not cap
+browser CPU use; the inherited affinity also bounds supervised browser execution.
+Serialization still bounds overlapping capture jobs, and each batch still uses
+one real browser process.
 
 After integration, run the required normal/race/vet and capture/evidence gates
 once for that exact integrated revision. Focused iteration checks do not replace

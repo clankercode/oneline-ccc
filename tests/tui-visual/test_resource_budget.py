@@ -173,6 +173,120 @@ except RuntimeError:
         follower = self.start(self.repo)
         self.assertEqual(self.line(follower.stdout), "entered")
 
+    def check_command_affinity(self, requested, inherited=None):
+        parent = os.sched_getaffinity(0)
+        inherited = parent if inherited is None else inherited
+        grandchild = "import json,os; print(json.dumps(sorted(os.sched_getaffinity(0))))"
+        child = """
+import json, os, subprocess, sys
+grandchild = subprocess.check_output([sys.executable, '-c', sys.argv[1]],
+                                    text=True, start_new_session=True, close_fds=True)
+print(json.dumps({'child': sorted(os.sched_getaffinity(0)),
+                  'grandchild': json.loads(grandchild)}))
+"""
+        wrapper = """
+import json, os, pathlib, sys
+from resource_budget import run_supervised, verification_slot
+os.sched_setaffinity(0, set(json.loads(sys.argv[2])))
+before = sorted(os.sched_getaffinity(0))
+with verification_slot(pathlib.Path(sys.argv[1])):
+    result = run_supervised([sys.executable, '-c', sys.argv[3], sys.argv[4]],
+                            stdout=-1, stderr=-1, text=True)
+result.check_returncode()
+print(json.dumps({'before': before, 'after': sorted(os.sched_getaffinity(0)),
+                  'command': json.loads(result.stdout)}))
+"""
+        env = dict(os.environ)
+        env.pop("GOMAXPROCS", None)
+        if requested is not None:
+            env["GOMAXPROCS"] = str(requested)
+        result = subprocess.run([sys.executable, "-c", wrapper, str(self.repo),
+                                 json.dumps(sorted(inherited)), child, grandchild],
+                                cwd=HERE, env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(os.sched_getaffinity(0), parent, "test caller affinity changed")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        actual = json.loads(result.stdout)
+        self.assertEqual(set(actual["before"]), inherited)
+        self.assertEqual(actual["after"], actual["before"], "wrapper affinity changed")
+        child_mask = set(actual["command"]["child"])
+        grandchild_mask = set(actual["command"]["grandchild"])
+        self.assertEqual(len(child_mask), min(requested or 1, len(inherited)))
+        self.assertLessEqual(child_mask, inherited)
+        self.assertEqual(grandchild_mask, child_mask, "detaching lost inherited affinity")
+
+    def test_default_affinity_bounds_command_and_detached_grandchild(self):
+        self.check_command_affinity(None)
+
+    def test_explicit_lower_affinity_bounds_command_and_detached_grandchild(self):
+        self.check_command_affinity(1)
+
+    def test_explicit_two_cpu_affinity_bounds_command_and_detached_grandchild(self):
+        if len(os.sched_getaffinity(0)) < 2:
+            self.skipTest("two allowed CPUs required")
+        self.check_command_affinity(2)
+
+    def test_affinity_never_widens_constrained_inherited_mask(self):
+        if (os.cpu_count() or 1) < 2:
+            self.skipTest("a valid two-CPU request requires two host CPUs")
+        self.check_command_affinity(2, {max(os.sched_getaffinity(0))})
+
+    def test_affinity_setup_failure_refuses_command_and_releases_slot(self):
+        import resource_budget
+        # Inject faults only into the real supervisor interpreter, retaining its
+        # actual status pipe, lock reference and command-launch boundary.
+        injection = """
+import errno, os, runpy, sys
+from unittest import mock
+mode = sys.argv.pop(1)
+sys.argv = sys.argv[1:]
+def denied(*args):
+    raise OSError(errno.EPERM, 'injected affinity denial')
+target, replacement = {
+    'read-denied': ('sched_getaffinity', denied),
+    'write-denied': ('sched_setaffinity', denied),
+    'ignored-write': ('sched_setaffinity', lambda *args: None),
+    'empty-mask': ('sched_getaffinity', lambda *args: set()),
+    'unavailable': ('sched_setaffinity', None),
+}[mode]
+with mock.patch.object(os, target, replacement):
+    if mode == 'unavailable':
+        del os.sched_setaffinity
+    runpy.run_path(sys.argv[0], run_name='__main__')
+"""
+        parent = os.sched_getaffinity(0)
+        spawn = subprocess.Popen
+        for mode in ["read-denied", "write-denied", "ignored-write", "empty-mask", "unavailable"]:
+            if mode == "ignored-write" and len(parent) == 1:
+                continue  # A no-op already satisfies the requested bound here.
+            with self.subTest(mode=mode):
+                marker = self.root / (mode + ".started")
+                command = [sys.executable, "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()", str(marker)]
+                def inject(argv, **options):
+                    return spawn([argv[0], "-c", injection, mode, *argv[1:]], **options)
+                with self.assertRaisesRegex(resource_budget.BudgetError, "affinity.*command refused"):
+                    with resource_budget.verification_slot(self.repo):
+                        with mock.patch.object(subprocess, "Popen", side_effect=inject), mock.patch.dict(os.environ, {"GOMAXPROCS": "1"}):
+                            resource_budget.run_supervised(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.assertFalse(marker.exists(), "command ran after affinity setup failed")
+                self.assertEqual(os.sched_getaffinity(0), parent)
+                follower = self.start(self.worktree)
+                self.assertEqual(self.line(follower.stdout), "entered", "affinity failure leaked the slot")
+                follower.communicate("release\n", timeout=5)
+
+    def test_invalid_supervised_budget_refuses_command_and_releases_slot(self):
+        import resource_budget
+        for requested in ["", "0", "two", str((os.cpu_count() or 1) + 1)]:
+            with self.subTest(requested=requested):
+                marker = self.root / ("invalid-" + requested + ".started")
+                command = [sys.executable, "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()", str(marker)]
+                with self.assertRaisesRegex(resource_budget.BudgetError, "GOMAXPROCS must be an integer from 1 to"):
+                    with resource_budget.verification_slot(self.repo), mock.patch.dict(os.environ, {"GOMAXPROCS": requested}):
+                        resource_budget.run_supervised(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.assertFalse(marker.exists(), "invalid budget allowed the command to run")
+                follower = self.start(self.worktree)
+                self.assertEqual(self.line(follower.stdout), "entered")
+                follower.communicate("release\n", timeout=5)
+
     def test_supervised_protocol_pty_preserves_cleanup(self):
         from resource_budget import verification_slot
         # Protocol peer only: no native binary, renderer, browser or Go build.

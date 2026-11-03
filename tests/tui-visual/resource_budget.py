@@ -194,6 +194,21 @@ def _send_event(fd, event):
         pass  # Outer wrapper died; keep supervising the owned subtree.
 
 
+def _bound_cpu_affinity():
+    """Narrow only this supervisor; its command subtree inherits the mask."""
+    budget = int(cpu_budget())
+    try:
+        allowed = os.sched_getaffinity(0)
+        selected = set(sorted(allowed)[:budget])
+        if not selected:
+            raise BudgetError("verification CPU affinity has no allowed CPUs; command refused")
+        os.sched_setaffinity(0, selected)
+        if os.sched_getaffinity(0) != selected:
+            raise BudgetError("verification CPU affinity did not match requested bound; command refused")
+    except (AttributeError, OSError) as error:
+        raise BudgetError(f"cannot establish verification CPU affinity: {error}; command refused") from error
+
+
 def _supervise(fd, command, status_fd=None, pass_fds=()):
     # This process outlives a killed wrapper. A detached descendant that closes
     # inherited FDs is still adopted here when its command parent exits.
@@ -205,6 +220,7 @@ def _supervise(fd, command, status_fd=None, pass_fds=()):
     prctl.restype = ctypes.c_int
     if prctl(36, 1, 0, 0, 0):  # PR_SET_CHILD_SUBREAPER
         raise BudgetError("cannot enable verification command child-subreaper; command refused")
+    _bound_cpu_affinity()
     child = subprocess.Popen(command, pass_fds=pass_fds)
     _send_event(status_fd, {"event": "started", "pid": child.pid})
     status = child.wait()
