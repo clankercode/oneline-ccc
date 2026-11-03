@@ -292,6 +292,12 @@ func newNoColorScreen() *noColorScreen {
 			}
 		},
 		HandleCsi: func(cmd ansi.Cmd, params ansi.Params) {
+			if !noColorSupportsCSI(cmd, params) {
+				if s.err == nil {
+					s.err = fmt.Errorf("unsupported terminal cursor operation %q (prefix %q, intermediate %q)", cmd.Final(), cmd.Prefix(), cmd.Intermediate())
+				}
+				return
+			}
 			param := func(i, def int) int { n, _, _ := params.Param(i, def); return n }
 			n := max(1, param(0, 1))
 			x = min(119, x)
@@ -362,10 +368,13 @@ func newNoColorScreen() *noColorScreen {
 					x, y = savedX, savedY
 				}
 			case 'h', 'l':
-				if cmd.Prefix() == '?' && n == 7 {
-					wrap = cmd.Final() == 'h'
+				// Validate the entire mode list before applying any supported state.
+				for _, mode := range params {
+					if mode.Param(-1) == 7 {
+						wrap = cmd.Final() == 'h'
+					}
 				}
-			case 'm', 'c', 'n', 'p', 'q', 't', 'W', 'g': // Styling, queries and tab-stop setup do not move cells.
+			case 'm', 'p', 'W': // Accepted styling, mode queries and default tab-stop setup do not move cells.
 			default:
 				if s.err == nil {
 					s.err = fmt.Errorf("unsupported terminal cursor operation %q", cmd.Final())
@@ -374,6 +383,79 @@ func newNoColorScreen() *noColorScreen {
 		},
 	})
 	return s
+}
+
+func noColorParamsEqual(params ansi.Params, want ...int) bool {
+	if len(params) != len(want) {
+		return false
+	}
+	for i, p := range params {
+		if p.HasMore() || p.Param(-1) != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// This bounded oracle supports standard cursor operations and the exact
+// negotiation/visibility commands observed in its real production journey.
+// Other prefixes or mode parameters may change output semantics (e.g. IRM), so
+// reject them rather than treating a familiar final byte as harmless.
+func noColorSupportsCSI(cmd ansi.Cmd, params ansi.Params) bool {
+	plain := cmd.Prefix() == 0 && cmd.Intermediate() == 0
+	switch cmd.Final() {
+	case 'h', 'l':
+		if cmd.Prefix() != '?' || cmd.Intermediate() != 0 || len(params) == 0 {
+			return false
+		}
+		for _, mode := range params {
+			if mode.HasMore() {
+				return false
+			}
+			switch mode.Param(-1) {
+			case 7, 25, 1049, 2004: // Modeled wrap; visibility, alternate screen and bracketed input.
+			default:
+				return false
+			}
+		}
+		return true
+	case 'u':
+		if cmd.Intermediate() != 0 {
+			return false
+		}
+		switch cmd.Prefix() {
+		case 0, '?': // Restore cursor, or query keyboard protocol.
+			return noColorParamsEqual(params)
+		case '>', '<': // Push/pop the observed keyboard-protocol flags.
+			return noColorParamsEqual(params, 1)
+		}
+		return false
+	case 'm':
+		return plain || cmd.Prefix() == '>' && cmd.Intermediate() == 0 &&
+			(noColorParamsEqual(params, 4) || noColorParamsEqual(params, 4, 2))
+	case 'p':
+		return cmd.Prefix() == '?' && cmd.Intermediate() == '$' &&
+			(noColorParamsEqual(params, 2026) || noColorParamsEqual(params, 2027))
+	case 'W':
+		return cmd.Prefix() == '?' && cmd.Intermediate() == 0 && noColorParamsEqual(params, 5)
+	case 's':
+		return plain && noColorParamsEqual(params)
+	case 'H', 'f', 'r', 'A', 'B', 'e', 'C', 'a', 'D', 'G', '`', 'd', 'I', 'Z', 'J', 'K', 'X', 'L', 'M', 'S', 'T', 'P', '@', 'b':
+		maximum := 1
+		if cmd.Final() == 'H' || cmd.Final() == 'f' || cmd.Final() == 'r' {
+			maximum = 2
+		}
+		if !plain || len(params) > maximum {
+			return false
+		}
+		for _, p := range params {
+			if p.HasMore() {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // Only printing/repeating and horizontal insert/delete can assemble new text
