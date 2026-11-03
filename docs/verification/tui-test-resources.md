@@ -8,7 +8,10 @@ one-CPU setting. A profile of the normal TUI tests showed real rendering work:
 does not show an idle application busy loop.
 
 The reviewed tooling integrated at `e070d7d` defaults to `GOMAXPROCS=1` and one
-Go package worker. An explicit valid CPU budget is honored. Heavy cooperating
+Go package worker. Follow-up `743b837` sets and verifies Linux CPU affinity inside
+the supervisor before command launch. The command subtree, including Node and
+Chromium, inherits at most that many allowed CPUs; an already narrower inherited
+mask stays narrow. Failure to establish the mask refuses command execution. An explicit valid CPU budget is honored. Heavy cooperating
 jobs share one blocking slot through the Git common directory, including all
 worktrees. An independent Linux child subreaper retains that slot through the
 actual command subtree, even when the outer wrapper dies or a descendant
@@ -60,13 +63,26 @@ repeating full race suites and matrices for each presentation edit.
 Limits: the development supervisor requires Linux and must survive. Its own
 SIGKILL/OOM, or escaped descendants after group-wide supervisor cleanup, are
 outside its guarantee. A stuck surviving descendant retains the slot.
-Direct/unwrapped commands do not participate. `GOMAXPROCS` does not cap browser
-CPU. The production Go application's Windows/macOS support is unchanged.
+Direct/unwrapped commands do not participate. Affinity is an inherited execution
+bound, not a CPU-time quota or sandbox; a command deliberately widening its own
+mask can escape it. `GOMAXPROCS` alone does not cap browser CPU. The production Go
+application's Windows/macOS support is unchanged.
 
-The browser lifecycle correction still needs independent approval and actual
-browser verification; a leader exit must not release a job or permit evidence
-publication while its children survive. Actual browser timing, fresh native
-PNG/reference comparisons and the scene-backed fault controller remain open.
+Fresh integrated resource controls at `743b837` pass **35 tests, zero skips,
+4.278 seconds**, including child/grandchild affinity inheritance, constrained
+parent masks, setup refusal and the existing subtree/slot lifetime checks. This
+proves a tested peak-execution bound; no lower aggregate CPU-time or rendering
+algorithm speedup is claimed. The focused resource test suite exercises explicit
+two-CPU cases; run that suite directly rather than inside the one-CPU wrapper.
+
+The reviewed browser fixes at `bcaad1d`/`7359dce` pin Playwright 1.64.0 and
+Chromium 156 and bound complete Unix socket paths under the common checkout.
+The real scene controller passes 16 captures, 44 Python tests and 154 Node
+checks (one optional legacy-fixture skip). A 150-frame base-screen matrix
+was generated and strictly verified on candidate `5564042`; its provenance is
+retained unchanged. Independent pixel/source reviews found usability defects
+that require fresh affected captures after fixes. Browser timing profiles,
+remaining layers/states and full visual acceptance are still open.
 See [capture commands and guarantees](../../tests/tui-visual/README.md), the
 [remediation checkpoint](native-remediation-progress.md) and the
 [remaining items](../plans/remaining-items-so-far.md).

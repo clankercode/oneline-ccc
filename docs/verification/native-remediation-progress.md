@@ -1,12 +1,35 @@
 # Native remediation checkpoint
 
 Recorded 2026-11-03. Integrated terminal source: `418283a`.
-Latest verified composition checkpoint: `889ace7`.
+Latest reviewed source/tooling checkpoint: `743b837`; latest full normal/race/vet
+resource checkpoint: `e070d7d`. The sections below retain historical gate provenance.
 
 **Native visual and interaction acceptance remains open.** This checkpoint
 records the reviewed navigation and terminal corrections. The rejected
 appearance has not been certified against the mockups; the shared presentation
 work and full screen-by-screen visual campaign are still in progress.
+
+## Current bounded progress
+
+- Hosted native run [41552175958](https://github.com/clankercode/oneline-ccc/actions/runs/41552175958)
+  passes Linux, Windows ConPTY, macOS PTY and all six static builds on exact
+  `ea0239d`. This includes the integrated composed-UI fixtures and Linux sticky
+  NO_COLOR transient-exposure oracle. Historical intermittent Darwin RPC cleanup
+  failures remain unexplained; a green run is not a causal resolution.
+- The reviewed browser refresh and socket-path corrections are integrated at
+  `bcaad1d`/`7359dce`. Actual controller: 16 real scenes, 44 Python tests and 154
+  Node checks pass, with one optional legacy-fixture skip. Fresh **150** genuine
+  native base-screen PNGs pass the strict verifier on capture candidate `5564042`.
+  Original source/tool/fixture provenance remains immutable.
+- Independent vision/source inspection of that matrix found concrete compact
+  focus, Review density, Service density, SSH reason and Utilities inventory
+  issues. Those fixes and fresh affected captures are in progress. Dashboard/
+  Models baseline passes and other bounded frame passes do not close P0.
+- Reviewed `743b837` bounds the whole supervised verification command subtree to
+  inherited CPU affinity (one CPU by default), including Node/Chromium. All 35
+  integrated resource controls pass without skips in 4.278 seconds. See the
+  [resource limits and measurements](tui-test-resources.md). This is a peak
+  execution bound, not a total-work speedup.
 
 ## Integrated corrections
 

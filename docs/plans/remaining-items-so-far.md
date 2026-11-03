@@ -444,6 +444,30 @@ These observations cover ten base-screen captures at one size and appearance.
 They do not replace the full screen/editor/overlay/state matrix, alternating
 review loops, real keyboard journeys or final installed-revision acceptance.
 
+### Findings from the five-size base-screen review (A26)
+
+The genuine native matrix at candidate `5564042` contains **150** base-screen
+frames: ten screens, five terminal sizes and dark/light/mono. Strict evidence
+verification passed; independent pixel and source reviews still require the
+following fixes. These belong to item 18 and remain open until the integrated
+fixes have fresh matching-state captures and both review modalities pass.
+
+| Finding | Required result and verification | Current state |
+| --- | --- | --- |
+| Focused wrapped unavailable control loses its explanation at the viewport bottom | Keep the complete focused block visible when it fits; retain explicit paging for oversized blocks and all pane layouts | Fix and regression under review |
+| Compact SSH initially shows Back without unavailable state/reason | Show concrete helper status/reason beside safe Back; condition confirmation instructions on actual availability and preserve access-not-inspected warnings | Fix in progress |
+| Utilities omits herdr, tmux, T3 Code, Paseo and Orca identity inventory | Restore the approved named inventory with truthful identity, installation-not-inspected and lifecycle-unavailable distinctions; compact reason precedes duplicate help routes | Fix in progress |
+| One model change requires eleven acknowledgment pages at 40x12 | Lead with actual before/after; use available body rows and one clear action bar while retaining every identity/value and final explicit acknowledgment | Fix and regression under review |
+| Review separates model/default tier and weakens the diff hierarchy | Adjacent model/default; separate available-tier capability; shared inset and filled diff surface, effective in mono too | Fix under review |
+| Small Jobs receipt shows opaque ID before useful result | Prioritize the actual outcome summary; preserve exact receipt ID in reachable details | Fix in progress |
+| Service repeats unavailable reasons until actions are obscured | Concise disabled labels with one nearby truthful prerequisite; neutral lifecycle heading and prominent available installation review | Fix in progress |
+| Service/Utilities orphan group or notice headings at viewport boundaries | Keep headings with their first useful item/explanation and preserve focus/paging cues | Fix in progress |
+
+Dashboard/Models baseline pixels received a bounded parent pass. Other passing
+base-frame observations do not certify unseen state transitions. Exact-state
+mockup gaps, overlays/editors, alternate color profiles, long/Unicode data and
+native Windows/macOS appearance remain open; do not relabel prior PNG provenance.
+
 ## Other remaining items
 
 1. [ ] **Fix the known terminal shutdown race.** Resolve the Bubble Tea/cancelreader
@@ -679,9 +703,9 @@ review loops, real keyboard journeys or final installed-revision acceptance.
     Profile actual hotspots before changing application behavior. Respect an
     explicitly lower build budget, use a modest default, and coordinate heavy
     verification across worktrees so independent agents do not saturate the
-    machine with simultaneous suites and browser matrices. Current capture
-    tooling hard-codes two Go workers and overrides a lower `GOMAXPROCS`; correct
-    that behavior. Use blocking resource coordination, never CPU polling loops,
+    machine with simultaneous suites and browser matrices. The original capture
+    tooling hard-coded two Go workers and overrode a lower `GOMAXPROCS`; that
+    defect is corrected in the reviewed resource controls. Use blocking resource coordination, never CPU polling loops,
     with safe release on errors and independent repositories remaining separate.
     Reuse warm compiler caches; avoid fresh cache directories and repeated full
     race/matrix runs for every presentation edit. Run focused checks during
@@ -693,10 +717,16 @@ review loops, real keyboard journeys or final installed-revision acceptance.
     closed. Demonstrate the reduction or a measured peak bound, distinguish peak
     concurrency from total work, document the resulting commands and report
     remaining costs honestly. A16's rendering/width profile and resource controls
-    are independently reviewed and integrated at `e070d7d`. The 29 focused
+    are independently reviewed and integrated at `e070d7d`. The original 29 focused
     controls pass, including wrapper-death/detached-descendant slot lifetime,
-    one-CPU hosts and exact command status after wait/timeouts. Full integrated
-    normal/race/vet pass with one CPU. Browser job cleanup, actual screenshot
-    smoke and the scene-backed evidence controller remain open; review found
-    that leader exit alone cannot certify that browser descendants stopped.
+    one-CPU hosts and exact command status after wait/timeouts. Follow-up
+    `743b837` adds verified inherited Linux CPU affinity for the complete
+    supervised command subtree, including Node/Chromium. Fresh integrated
+    controls pass 35 tests, zero skips, in 4.278 seconds. This bounds peak
+    concurrent execution; it is not a CPU-time quota or total-work speedup.
+    Full integrated normal/race/vet passed at the earlier one-CPU checkpoint.
+    Reviewed browser fixes `bcaad1d`/`7359dce` and the actual 16-scene controller
+    now pass; the original browser failures and capture provenance remain
+    retained. Detailed browser timing/resource measurements and remaining
+    visual/state acceptance still need completion.
     See the [measurements and commands](../verification/tui-test-resources.md).
