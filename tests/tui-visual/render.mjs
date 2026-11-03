@@ -5,7 +5,7 @@ import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { validateEvidence } from './evidence.mjs';
-import { browserDeadline, closeBrowserResource, launchOwnedBrowser, pinnedBrowserCommand } from './browser-lifecycle.mjs';
+import { browserDeadline, closeBrowserResource, launchOwnedBrowser, pinnedBrowserCommand, browserCaptureScratch } from './browser-lifecycle.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const cache = join(root, '.cache/tui-visual');
@@ -34,7 +34,7 @@ async function native(manifestPath, browser, finish = async () => {}) {
     fontAssets.push({ name, sha256: hash(data) });
     fontCSS += `@font-face{font-family:CaptureMono;font-style:${style};font-weight:${weight};src:url(data:font/woff2;base64,${data.toString('base64')}) format('woff2');font-display:block}`;
   }
-  const environment = { kind: 'xterm.js DOM renderer', xterm: '5.5.0', playwright: '1.56.1',
+  const environment = { kind: 'xterm.js DOM renderer', xterm: '5.5.0', playwright: '1.64.0',
     chromium: browser.version(), font: 'JetBrains Mono Latin 5.2.8', font_assets: fontAssets,
     xterm_js_sha256: hash(js), xterm_css_sha256: hash(css), font_size: 16, line_height: 1.2, device_scale_factor: 1,
     unicode_fallback: 'Non-Latin glyphs use Chromium host fallback; compare only identical font/browser environments',
@@ -244,16 +244,16 @@ async function main() {
   const [mode, arg, output, theme, screen] = process.argv.slice(2);
   if (!['native', 'preview'].includes(mode) || !arg || mode === 'preview' && !output) throw new Error('Usage: render.mjs native MANIFEST | preview LOCAL_URL OUTPUT [THEME] [SCREEN]');
   if (mode === 'preview') previewRequest(arg, resolve(output), theme, screen);
-  await mkdir(join(cache, 'tmp'), { recursive: true });
+  const scratch = await browserCaptureScratch(root);
   // Playwright creates its profile before spawning Chromium, so set the Node
   // process environment too; a launch-only env would still use /tmp for it.
-  process.env.TMPDIR = join(cache, 'tmp');
+  process.env.TMPDIR = scratch;
   process.env.PLAYWRIGHT_BROWSERS_PATH ??= join(cache, 'browsers');
   const { chromium } = await import(pathToFileURL(join(modules, 'playwright/index.mjs')).href);
   let job, failure;
   try {
-    job = await launchOwnedBrowser(chromium, { scratch: join(cache, 'tmp'), command: profile => pinnedBrowserCommand(modules, profile),
-      env: { ...process.env, TMPDIR: join(cache, 'tmp') } });
+    job = await launchOwnedBrowser(chromium, { scratch, command: profile => pinnedBrowserCommand(modules, profile),
+      env: { ...process.env, TMPDIR: scratch } });
     if (mode === 'native') await native(resolve(arg), job.browser, job.close);
     else await preview(arg, resolve(output), job.browser, theme, screen, job.close);
   } catch (error) { failure = error; }
@@ -265,6 +265,7 @@ async function main() {
         else if (!failure.message.includes(error.message)) failure = Object.assign(new Error(`${failure.message}; ${error.message}`), { code: failure.code });
       }
     }
+    if (!failure) await rm(scratch, { recursive: true, force: true });
   }
   if (failure) {
     if (failure.code === 'RENDERER_PROVENANCE') throw failure;

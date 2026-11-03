@@ -6,6 +6,6 @@
   "dependencies": {
     "@fontsource/jetbrains-mono": "5.2.8",
     "@xterm/xterm": "5.5.0",
-    "playwright": "1.56.1"
+    "playwright": "1.64.0"
   }
 }

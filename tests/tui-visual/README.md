@@ -8,7 +8,7 @@ service. HTML contains an xterm terminal, with no reconstruction of the app UI.
 Generated output is evidence of rendering, **not visual acceptance**.
 
 Run from the repository/worktree root (Go 1.26.1, Python 3.10+ on Linux,
-Node 18+, npm and Playwright's Linux libraries are required):
+Node 20+, npm and Playwright's Linux libraries are required):
 
 ```sh
 python3 tests/tui-visual/capture.py bootstrap
@@ -21,9 +21,13 @@ python3 tests/tui-visual/verify.py artifacts/native-dashboard/manifest.json
 ```
 
 Bootstrap installs the committed lockfile's exact xterm.js 5.5.0, Playwright
-1.56.1 and JetBrains Mono 5.2.8 into `.cache/tui-visual/tools`, and downloads
+1.64.0 and JetBrains Mono 5.2.8 into `.cache/tui-visual/tools`, and downloads
 Playwright's pinned Chromium into `.cache/tui-visual/browsers`. npm downloads,
-Go scratch, Chromium profiles and temporary files stay under `.cache/tui-visual`.
+Go scratch stays under `.cache/tui-visual`. Chromium profiles and temporary files
+use a private run directory under the common checkout's `.cache/browser`, shared
+across linked worktrees to avoid Chromium's Unix socket path limit. The complete
+scratch path is bounded before browser launch; unusually deep checkouts need a
+shorter path. Successful runs remove their private browser scratch.
 No production dependency or `go.mod` change is needed. Bootstrap is the only
 network-dependent step; later captures use bundled local assets and block all
 browser network requests. Do not install packages globally.

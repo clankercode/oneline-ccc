@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { spawn, execFileSync } from 'node:child_process';
+import { readFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 // Bounds promises which Playwright's action timeout does not cover. A timed-out
@@ -34,16 +34,27 @@ export function closeBrowserResource(resource, label = 'late browser resource cl
   return browserDeadline(label, () => resource.close(), browserCleanupTimeout);
 }
 
-// Preserve the pinned launcher's headless executable and Chromium switches.
-// Only its transport changes: a fresh loopback port instead of a pipe. Import
-// pinned tool data explicitly; refuse upgrades until these defaults are reviewed.
+// Chromium appends its own directory and SingletonSocket to TMPDIR. A linked
+// worktree can exceed Linux's 108-byte Unix socket limit before page creation.
+// Use the Git common checkout's cache, then bound the complete generated path.
+export async function browserCaptureScratch(root) {
+  const common = execFileSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
+  const base = join(dirname(common), '.cache', 'browser');
+  if (Buffer.byteLength(join(base, 'run-XXXXXX')) > 64) throw new Error('Browser socket path is too long; use a shorter checkout path');
+  await mkdir(base, { recursive: true, mode: 0o700 });
+  return mkdtemp(join(base, 'run-'));
+}
+
+// Fixed capture switches, not imports from Playwright's private server layout.
+// The public executablePath follows the exact lockfile's Chromium distribution.
+// A fresh private profile and loopback CDP remain owned by the job supervisor.
 export async function pinnedBrowserCommand(modules, profile) {
-  const core = join(modules, 'playwright-core');
-  if (JSON.parse(await readFile(join(core, 'package.json'), 'utf8')).version !== '1.56.1') throw new Error('Unreviewed Playwright launch defaults');
-  const { registry } = await import(pathToFileURL(join(core, 'lib/server/registry/index.js')).href);
-  const { chromiumSwitches } = await import(pathToFileURL(join(core, 'lib/server/chromium/chromiumSwitches.js')).href);
-  return { executable: registry.findExecutable('chromium-headless-shell').executablePath('javascript'),
-    args: [...chromiumSwitches(false), ...(process.platform === 'darwin' ? ['--enable-unsafe-swiftshader'] : []),
+  if (JSON.parse(await readFile(join(modules, 'playwright/package.json'), 'utf8')).version !== '1.64.0') throw new Error('Unreviewed Playwright capture version');
+  const { chromium } = await import(pathToFileURL(join(modules, 'playwright/index.mjs')).href);
+  return { executable: chromium.executablePath(),
+    args: ['--disable-background-networking', '--disable-component-update', '--disable-default-apps',
+      '--disable-extensions', '--disable-sync', '--disable-breakpad', '--no-default-browser-check',
+      '--no-first-run', '--password-store=basic', '--use-mock-keychain', '--force-color-profile=srgb', '--enable-automation',
       '--headless', '--hide-scrollbars', '--mute-audio',
       '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',
       '--no-sandbox', '--disable-dev-shm-usage', `--user-data-dir=${profile}`,
